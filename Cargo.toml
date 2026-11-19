@@ -1,0 +1,21 @@
+[package]
+name = "anpdf"
+version = "0.1.0-alpha.1"
+edition = "2024"
+license = "Apache-2.0"
+description = "Local agent-native PDF toolkit"
+rust-version = "1.90"
+
+[dependencies]
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+jsonschema = { version = "0.33", default-features = false }
+libc = "0.2"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

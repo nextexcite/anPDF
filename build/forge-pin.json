@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/cloudflare/forge",
+  "version": "0.2.0",
+  "revision": "b8d74e2cbe41e4afaf2acaec2903add0bc11b116",
+  "rustToolchain": "1.99.0",
+  "artifactSha256": null,
+  "status": "source-pinned; binary and generation qualification pending"
+}
