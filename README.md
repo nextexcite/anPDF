@@ -24,7 +24,7 @@ The goal is to **own the interface and the workflow**, while reusing proven PDF 
 | Merge PDFs in input order | `merge` | `POST /v1/merge` | `mergePdf` |
 | Extract selected pages into a new PDF | `extract` | `POST /v1/extract` | `extractPdf` |
 
-All three surfaces use the same validated operation contract. The Rust runtime uses **qpdf 12.4.2** for PDF processing; pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Linux amd64 has local test evidence. macOS/arm64 and OCI execution remain qualification targets.
+All three surfaces use the same validated operation contract. The Rust runtime uses **qpdf 12.4.2** for PDF processing; pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Hosted CI qualifies `ubuntu-26.04` (Linux amd64) and `macos-26` (macOS arm64); preliminary publication targets the `linux/amd64` OCI image (GHCR) and the native `macos/arm64` binary (GitHub prerelease). See [qualification and open gates](docs/QUALIFICATION.md) and [OCI/build](docs/BUILD.md).
 
 Transforms currently **reject** encrypted, signed, form/XFA-bearing, or preservation-unknown PDFs. Inspection is structural—not visual, cryptographic, PDF/A, or malware certification.
 

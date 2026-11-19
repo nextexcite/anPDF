@@ -1,20 +1,32 @@
-name: Preliminary OCI build (no publish)
+name: Preliminary OCI and release publish
 on: [workflow_dispatch]
 permissions:
   contents: read
 jobs:
   image:
     runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Build local image for restricted execution
+      - name: Resolve GHCR image name
+        id: meta
+        run: |
+          owner=$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          printf 'image=ghcr.io/%s/anpdf\n' "$owner" >> "$GITHUB_OUTPUT"
+      - name: Build local linux/amd64 image for restricted execution
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: containers/Dockerfile
+          platforms: linux/amd64
           load: true
           push: false
           tags: anpdf:0.1.0-alpha.1-${{ github.sha }}
@@ -22,21 +34,116 @@ jobs:
           sbom: false
       - name: Non-root, read-only, network-none smoke test
         run: sh containers/smoke.sh anpdf:0.1.0-alpha.1-${{ github.sha }}
-      - name: Prepare export directory
-        run: mkdir -p build/artifacts
-      - name: Export OCI and minimal provenance
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push linux/amd64 OCI image to GHCR
+        id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: containers/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:0.1.0-alpha.1-${{ github.sha }}
+            ${{ steps.meta.outputs.image }}:0.1.0-alpha.1
+            ${{ steps.meta.outputs.image }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=min
+          sbom: false
+      - name: Prepare export directory
+        run: mkdir -p build/artifacts
+      - name: Export OCI archive for SBOM scan
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: containers/Dockerfile
+          platforms: linux/amd64
           push: false
-          tags: anpdf:0.1.0-alpha.1-${{ github.sha }}
+          tags: ${{ steps.meta.outputs.image }}:0.1.0-alpha.1-${{ github.sha }}
           outputs: type=oci,dest=build/artifacts/anpdf.oci.tar
           provenance: mode=min
           sbom: false
-      - name: Generate actual image SBOM and checksums
+      - name: Generate actual image SBOM, digest record, and checksums
         run: |
           python3 build/get-tool.py syft build/work/syft
-          build/work/syft/syft scan oci-archive:build/artifacts/anpdf.oci.tar -o spdx-json=build/artifacts/anpdf.spdx.json
-          sha256sum build/artifacts/anpdf.oci.tar build/artifacts/anpdf.spdx.json > build/artifacts/SHA256SUMS
-      # Artifact upload intentionally waits for the separate publication/privacy gate.
+          build/work/syft/syft scan oci-archive:build/artifacts/anpdf.oci.tar -o spdx-json=build/artifacts/anpdf-linux-amd64.spdx.json
+          printf '%s@%s\n' '${{ steps.meta.outputs.image }}' '${{ steps.push.outputs.digest }}' > build/artifacts/oci-digest.txt
+          (cd build/artifacts && sha256sum anpdf-linux-amd64.spdx.json oci-digest.txt > SHA256SUMS-oci.txt)
+      - name: Upload OCI SBOM and digest artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oci-linux-amd64
+          path: |
+            build/artifacts/anpdf-linux-amd64.spdx.json
+            build/artifacts/oci-digest.txt
+            build/artifacts/SHA256SUMS-oci.txt
+  macos-arm64:
+    runs-on: macos-26
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain and cargo-auditable
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          cargo install cargo-auditable --version 0.7.7 --locked
+      - name: Build release macOS arm64 binary
+        env:
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src --remap-path-prefix=${{ runner.temp }}=/tmp
+        run: cargo auditable build --release --locked
+      - name: Smoke test release binary with pinned qpdf
+        run: |
+          mkdir -p build/work
+          python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
+          python3 fixtures/generate.py build/work/fixtures
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf operations | python3 -c 'import json,sys; v=json.load(sys.stdin); assert len(v["operations"])>=3'
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf merge --root build/work/fixtures --request-json '{"inputs":[{"path":"three.pdf"},{"path":"one.pdf"}],"output":{"path":"merged.pdf"}}' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert v["result"]["pageCount"]==4'
+      - name: Package macOS arm64 tarball and checksums
+        run: |
+          stage="build/artifacts/anpdf-0.1.0-alpha.1-macos-arm64"
+          mkdir -p "$stage"
+          cp target/release/anpdf LICENSE NOTICE license-manifest.json README.md "$stage/"
+          cp -R THIRD_PARTY_LICENSES "$stage/"
+          tar -C build/artifacts -czf build/artifacts/anpdf-0.1.0-alpha.1-macos-arm64.tar.gz anpdf-0.1.0-alpha.1-macos-arm64
+          (cd build/artifacts && shasum -a 256 anpdf-0.1.0-alpha.1-macos-arm64.tar.gz > SHA256SUMS-macos-arm64.txt)
+      - name: Upload macOS arm64 release artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-arm64
+          path: |
+            build/artifacts/anpdf-0.1.0-alpha.1-macos-arm64.tar.gz
+            build/artifacts/SHA256SUMS-macos-arm64.txt
+  release:
+    needs: [image, macos-arm64]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish v0.1.0-alpha.1 prerelease assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.image.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          tag="v0.1.0-alpha.1"
+          notes=$(printf 'Preliminary `0.1.0-alpha.1` build from `%s`.\n\n- **OCI (`linux/amd64`):** `%s@%s`\n  - Tags: `0.1.0-alpha.1-%s`, `0.1.0-alpha.1`, `latest`\n- **Native (`macos/arm64`):** `anpdf-0.1.0-alpha.1-macos-arm64.tar.gz` (requires qpdf 12.4.2 on PATH or `ANPDF_QPDF`)\n' \
+            "${GITHUB_SHA}" "$IMAGE" "$DIGEST" "${GITHUB_SHA}")
+          if gh release view "$tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "$tag" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --notes "$notes" --prerelease
+            gh release upload "$tag" --repo "${GITHUB_REPOSITORY}" --clobber release-assets/*
+          else
+            gh release create "$tag" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "anPDF ${tag}" --notes "$notes" --prerelease release-assets/*
+          fi

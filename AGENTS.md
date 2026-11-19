@@ -15,7 +15,7 @@ Examples and fixtures must be entirely generic: synthetic reports, blank forms, 
 - `0.1.0-alpha.1`: Rust 1.100.0 runtime; qpdf **12.4.2** adapter; inspect/validate, merge, and selected-page extract.
 - CLI JSON, optional authenticated **loopback-only** HTTP, and local MCP stdio use the same validated dispatcher.
 - `contracts/v1/openapi.json` is canonical. Pinned upstream Cloudflare **Forge 0.2.0** generates qualified TypeScript/MCP/Cap'n Web artifacts at build time. The Rust runtime adapters are **handwritten**, not Forge-generated Rust.
-- Linux amd64 has preliminary local test evidence. A macOS release, remote HTTP hosting, and OCI runtime qualification have **not** been established. See `docs/QUALIFICATION.md` for what actually passed.
+- Hosted CI qualifies `ubuntu-26.04` (Linux amd64) and `macos-26` (macOS arm64), plus Forge output probes and full-history privacy checks. Preliminary publication (`.github/workflows/oci.yml`) targets the `linux/amd64` OCI image (GHCR) and the native `macos/arm64` release tarball (GitHub prerelease). `linux/arm64` OCI, remote HTTP hosting, and full production release gates have **not** been established. See `docs/QUALIFICATION.md` and `docs/BUILD.md` for what actually passed.
 - Compression, page removal/reorder, forms, signatures, OCR, and existing-text replacement are **not implemented**. State that explicitly in API discovery, docs, and reports.
 
 ## Repository map
