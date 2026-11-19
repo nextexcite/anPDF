@@ -22,6 +22,8 @@ pub struct Dispatcher {
     workspace: Workspace,
     backend: Arc<dyn Backend>,
     active: AtomicUsize,
+    shutdown: std::sync::atomic::AtomicBool,
+    controls: std::sync::Mutex<Vec<std::sync::Weak<std::sync::atomic::AtomicBool>>>,
 }
 struct Permit<'a>(&'a AtomicUsize);
 impl Drop for Permit<'_> {
@@ -38,7 +40,24 @@ impl Dispatcher {
             workspace: Workspace::new(root)?,
             backend,
             active: AtomicUsize::new(0),
+            shutdown: std::sync::atomic::AtomicBool::new(false),
+            controls: std::sync::Mutex::new(Vec::new()),
         })
+    }
+    pub fn cancel_all(&self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+        let mut controls = self.controls.lock().unwrap();
+        controls.retain(|c| {
+            if let Some(c) = c.upgrade() {
+                c.store(true, Ordering::Relaxed);
+                true
+            } else {
+                false
+            }
+        });
+    }
+    pub fn active_count(&self) -> usize {
+        self.active.load(Ordering::SeqCst)
     }
     pub fn dispatch(
         &self,
@@ -63,6 +82,14 @@ impl Dispatcher {
             return Err(Error("LIMIT_EXCEEDED"));
         }
         let _permit = Permit(&self.active);
+        {
+            let mut controls = self.controls.lock().unwrap();
+            controls.retain(|c| c.strong_count() > 0);
+            controls.push(Arc::downgrade(&control.cancelled));
+        }
+        if self.shutdown.load(Ordering::SeqCst) {
+            control.cancelled.store(true, Ordering::Relaxed);
+        }
         control.check()?;
         let specs = if id == "mergePdf" {
             request["inputs"].as_array().unwrap().clone()

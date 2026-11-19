@@ -114,3 +114,67 @@ fn backend_output_is_validated() {
         "INTERNAL"
     );
 }
+
+#[test]
+fn process_timeout_and_output_limits() {
+    use crate::backend::{Backend, Control, Qpdf};
+    use std::time::{Duration, Instant};
+    let root = tempfile::tempdir().unwrap();
+    let exe = root.path().join("backend");
+    fs::write(&exe, "#!/usr/bin/python3\nimport time\ntime.sleep(10)\n").unwrap();
+    fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
+    let q = Qpdf {
+        executable: exe.clone(),
+    };
+    let c = Control {
+        deadline: Instant::now() + Duration::from_millis(40),
+        ..Control::default()
+    };
+    let start = Instant::now();
+    assert_eq!(q.inspect(&exe, &c).unwrap_err().0, "TIMEOUT");
+    assert!(start.elapsed() < Duration::from_secs(2));
+    fs::write(
+        &exe,
+        "#!/usr/bin/python3\nimport sys\nsys.stdout.buffer.write(b'x'*(40*1024*1024))\n",
+    )
+    .unwrap();
+    assert_eq!(
+        q.inspect(&exe, &Control::default()).unwrap_err().0,
+        "LIMIT_EXCEEDED"
+    );
+}
+#[test]
+fn atomic_competing_outputs_and_sparse_limit() {
+    use std::sync::Arc;
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    fs::write(&source, b"complete result").unwrap();
+    let w = Arc::new(Workspace::new(root.path()).unwrap());
+    let mut workers = Vec::new();
+    for _ in 0..2 {
+        let w = w.clone();
+        let source = source.clone();
+        workers.push(std::thread::spawn(move || {
+            w.destination("out", false, &[])
+                .and_then(|d| d.commit(&source, &[]))
+        }));
+    }
+    let results = workers
+        .into_iter()
+        .map(|w| w.join().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    assert_eq!(
+        fs::read(root.path().join("out")).unwrap(),
+        b"complete result"
+    );
+    let f = fs::File::create(root.path().join("large")).unwrap();
+    f.set_len(crate::filesystem::FILE_LIMIT + 1).unwrap();
+    assert_eq!(w.input("large").err().unwrap().0, "LIMIT_EXCEEDED");
+    assert!(!fs::read_dir(root.path()).unwrap().any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".anpdf-")
+    }));
+}

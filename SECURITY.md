@@ -1,0 +1,50 @@
+# Security scope
+
+This is a preliminary structural PDF tool. Untrusted PDF metadata and embedded
+actions remain data. qpdf does not execute embedded actions; anPDF does not fetch
+URLs, attachments, or external services. Ordinary CLI/MCP use starts no listener.
+HTTP is optional, loopback-only, bearer-authenticated, with Host/Origin enforcement.
+
+Filesystem resolution uses open directory descriptors and no-follow component
+opens. Regular-file input descriptors are hashed and copied to private staging;
+the staged bytes are verified too. Paths are relative, without traversal or URL
+syntax. Directories must be owned by the effective user or root and deny
+other/group writes. The configured root and its namespace must be controlled by
+the operator; this is not isolation from another process with the same privileges
+that can mutate the entire workspace namespace.
+
+Inputs are re-opened and identities/hashes rechecked before publication. Outputs
+cannot alias inputs by device/inode. New outputs use an atomic no-clobber hardlink
+commit of a synced destination-filesystem temporary file. Explicit replacement
+atomically renames a complete file over a distinct output. Parent directory
+handles remain pinned; no check-then-rename is used for exclusive creation.
+Workspace roots require a local filesystem supporting these primitives. Cleanup
+is attempted after failures/cancellation; abrupt SIGKILL/host loss can leave
+private staging, so a bounded disposable temporary filesystem is recommended.
+
+Limits: 100 MiB/input, 250 MiB total input and output, 20 files, 2,000 total pages,
+two active jobs, 60 seconds/job, bounded JSON requests and subprocess capture.
+qpdf runs without a shell, with cleared environment, private staged absolute
+paths, a new process group, and CPU/file-size/open-file/address-space limits.
+Timeout/cancellation kills the process group. Directory/input hashing is bounded;
+portable wall-time interruption of a blocked filesystem I/O call is not promised.
+The temporary-filesystem quota and OS/container PID/memory constraints supplement
+these limits. Linux is locally qualified; macOS resource semantics remain a gate.
+
+The Rust process is not an OS network sandbox. Inspection was tested inside a
+network namespace with no interfaces/routes to external services. OCI recipes
+use `--network=none`, read-only rootfs, numeric non-root UID, dropped capabilities,
+no-new-privileges, PID/memory/CPU limits and bounded private tmpfs. OCI execution
+is still unqualified in this environment; see the qualification report.
+
+Encrypted inputs fail explicitly. Transformations refuse detected signatures,
+AcroForms/XFA, or unknown preservation status. Signature presence detection is
+conservative structural detection, not certificate trust evaluation. qpdf's warning
+exit is retained as a canonical warning; fatal structural failures never commit
+outputs. Do not interpret structural success as appearance, PDF/A, or malware
+assurance. Expensive malformed/object/stream-bomb testing remains a release gate.
+
+Do not place sensitive examples, keys, credentials, logs, account identifiers, or
+workstation paths in source, fixtures, commits or artifacts. Security issues should
+be retained locally for maintainers until an approved reporting destination exists;
+no fabricated contact address is provided.

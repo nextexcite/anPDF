@@ -110,19 +110,25 @@ async fn main() {
     let result=async{
         let o=options()?;
         if o.command=="operations"{return Ok(Some(contract::discovery()))}
-        if o.command=="schema"{return contract::operation(o.schema.as_deref().unwrap()).map(|v|Some(serde_json::json!({"operation":v,"inputSchema":contract::input(o.schema.as_deref().unwrap()),"errorSchema":contract::resolve(&contract::document()["components"]["schemas"]["Error"])}))).ok_or(Error("UNSUPPORTED_OPERATION"))}
+        if o.command=="schema"{return contract::operation(o.schema.as_deref().unwrap()).map(|v|Some(serde_json::json!({"operation":v,"inputSchema":contract::input(o.schema.as_deref().unwrap()),"outputSchema":contract::resolve(&v["responses"]["200"]["content"]["application/json"]["schema"]),"errorSchema":contract::resolve(&contract::document()["components"]["schemas"]["Error"])}))).ok_or(Error("UNSUPPORTED_OPERATION"))}
         if !o.qpdf.is_absolute(){return Err(Error("INVALID_REQUEST"))}
         let d=Arc::new(Dispatcher::new(&o.root,o.qpdf)?);
         match o.command.as_str(){
             "serve"=>{let file=o.token_file.ok_or(Error("INVALID_REQUEST"))?;let token=read(std::fs::File::open(file)?)?.trim().to_string();anpdf::http::serve(d,o.port,token).await?;Ok(None)},
-            "mcp"=>{tokio::task::spawn_blocking(move||anpdf::mcp::serve(d)).await.map_err(|_|Error("INTERNAL"))??;Ok(None)},
+            "mcp"=>{
+                let worker_dispatcher=d.clone();let mut worker=tokio::task::spawn_blocking(move||anpdf::mcp::serve(worker_dispatcher));
+                tokio::select!{
+                    r=&mut worker=>{r.map_err(|_|Error("INTERNAL"))??;Ok(None)},
+                    _=anpdf::http::shutdown_signal()=>{d.cancel_all();while d.active_count()>0{tokio::time::sleep(std::time::Duration::from_millis(10)).await;}std::process::exit(130)}
+                }
+            },
             _=>{
                 let request:Value=serde_json::from_str(&match o.request{Some(s)=>s,None=>read(std::io::stdin())?}).map_err(|_|Error("INVALID_REQUEST"))?;
                 let control=Control::default();let cancel=control.clone();
                 let mut task=tokio::task::spawn_blocking(move||d.dispatch(op,&request,o.dry,&control));
                 tokio::select!{
                     result=&mut task=>result.map_err(|_|Error("INTERNAL"))?.map(Some),
-                    _=tokio::signal::ctrl_c()=>{cancel.cancelled.store(true,Ordering::Relaxed);let _=task.await;std::process::exit(130)}
+                    _=anpdf::http::shutdown_signal()=>{cancel.cancelled.store(true,Ordering::Relaxed);let _=task.await;eprintln!("{}",Error("TIMEOUT").envelope(op));std::process::exit(130)}
                 }
             }
         }

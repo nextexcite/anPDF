@@ -1,0 +1,75 @@
+name: Rust and contract qualification
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            experimental: false
+          - runner: ubuntu-24.04-arm
+            experimental: true
+          - runner: macos-15
+            experimental: true
+          - runner: macos-15-intel
+            experimental: true
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
+      - name: Qualify Rust code and checked-in generation
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo build --locked
+      - name: Install independent PDF test tooling
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo apt-get install -y poppler-utils
+          else
+            brew install poppler
+          fi
+          mkdir -p build/work
+          python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
+      - name: Cross-surface corpus
+        shell: bash
+        run: ANPDF_QPDF="$(cat build/work/qpdf-path)" python3 tests/integration.py
+  forge-output:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+      - name: Compile official generated targets and probe fidelity
+        run: |
+          npm ci --ignore-scripts --prefix build/qualification
+          mkdir -p build/qualification/work
+          cp -R generated/ts generated/mcp generated/capnweb build/qualification/work/
+          build/qualification/node_modules/.bin/tsc -p build/qualification/tsconfig.json
+          node --import ./build/qualification/register-hooks.mjs build/qualification/probe.mjs
+  privacy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Scan complete independent history
+        run: |
+          python3 build/get-tool.py gitleaks build/work/gitleaks
+          build/work/gitleaks/gitleaks git --redact --no-banner --log-opts=--all
+          python3 build/privacy.py --ci

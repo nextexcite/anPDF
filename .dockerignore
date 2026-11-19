@@ -15,3 +15,6 @@ build/*
 !NOTICE
 !containers/
 !containers/Dockerfile
+!license-manifest.json
+!THIRD_PARTY_LICENSES/
+!THIRD_PARTY_LICENSES/**

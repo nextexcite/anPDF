@@ -100,6 +100,11 @@ async fn handle(State(state): State<App>, request: Request) -> Response {
         Err(_) => fail("INTERNAL"),
     }
 }
+pub async fn shutdown_signal() {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("signal registration");
+    tokio::select! { _=tokio::signal::ctrl_c()=>{}, _=terminate.recv()=>{} }
+}
 pub async fn serve(dispatcher: Arc<Dispatcher>, port: u16, token: String) -> Result<()> {
     if token.len() < 32 || !token.bytes().all(|b| b.is_ascii_graphic()) {
         return Err(Error("INVALID_REQUEST"));
@@ -112,14 +117,16 @@ pub async fn serve(dispatcher: Arc<Dispatcher>, port: u16, token: String) -> Res
         .local_addr()
         .map_err(|_| Error("INTERNAL"))?
         .to_string();
+    let shutdown_dispatcher = dispatcher.clone();
     let app = Router::new().fallback(handle).with_state(App {
         dispatcher,
         bearer: format!("Bearer {token}"),
         host,
     });
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            shutdown_dispatcher.cancel_all();
         })
         .await
         .map_err(|_| Error("INTERNAL"))

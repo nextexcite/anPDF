@@ -9,13 +9,15 @@ COPY contracts contracts
 COPY generated generated
 COPY src src
 ENV RUSTFLAGS="--remap-path-prefix=/build=/src --remap-path-prefix=/usr/local/cargo=/cargo"
-RUN cargo build --release --locked && /opt/qpdf/bin/qpdf --version
+RUN cargo install cargo-auditable --version 0.7.7 --locked && cargo auditable build --release --locked && /opt/qpdf/bin/qpdf --version
 
 FROM debian:13.6-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
-RUN rm -f /etc/apt/sources.list.d/* && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20261118T000000Z/ trixie main\n' > /etc/apt/sources.list && apt-get update && apt-get install -y --no-install-recommends libjpeg62-turbo libssl3t64 zlib1g && rm -rf /var/lib/apt/lists/* && mkdir -p /data/in /data/out && chmod 755 /data /data/in && chown 65532:65532 /data/out && chmod 700 /data/out
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN rm -f /etc/apt/sources.list.d/* && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20261118T000000Z/ trixie main\n' > /etc/apt/sources.list && apt-get update && apt-get install -y --no-install-recommends ca-certificates libjpeg62-turbo libssl3t64 zlib1g && rm -rf /var/lib/apt/lists/* && mkdir -p /data/in /data/out && chmod 755 /data /data/in && chown 65532:65532 /data/out && chmod 700 /data/out
 COPY --from=build /opt/qpdf /opt/qpdf
 COPY --from=build /build/target/release/anpdf /usr/local/bin/anpdf
-COPY LICENSE NOTICE /usr/share/licenses/anpdf/
+COPY LICENSE NOTICE license-manifest.json /usr/share/licenses/anpdf/
+COPY THIRD_PARTY_LICENSES /usr/share/licenses/anpdf/dependencies
 COPY --from=build /tmp/qpdf-12.4.2/LICENSE.txt /usr/share/licenses/qpdf/LICENSE.txt
 ENV ANPDF_QPDF=/opt/qpdf/bin/qpdf
 LABEL org.opencontainers.image.title="anPDF" org.opencontainers.image.version="0.1.0-alpha.1" org.opencontainers.image.licenses="Apache-2.0"
