@@ -1,0 +1,17 @@
+*
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!build/
+build/*
+!build/forge-pin.json
+!contracts/
+!contracts/**
+!generated/
+!generated/**
+!src/
+!src/**
+!LICENSE
+!NOTICE
+!containers/
+!containers/Dockerfile

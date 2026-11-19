@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "revision": "b8d74e2cbe41e4afaf2acaec2903add0bc11b116",
   "rustToolchain": "1.99.0",
-  "artifactSha256": null,
-  "status": "source-pinned; binary and generation qualification pending"
+  "artifactSha256": "63ae2afb7e66b8263d6c95e7217ae65fe866e8e2c47747394d332abc56e8d4c3",
+  "status": "official build/package/generator stages executed; schema fidelity gaps documented",
+  "platform": "linux-x64; locally built GNU ABI"
 }

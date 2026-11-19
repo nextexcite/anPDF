@@ -2,3 +2,6 @@
 /build/work/
 /build/artifacts/
 *.tgz
+node_modules/
+__pycache__/
+/build/qualification/work/

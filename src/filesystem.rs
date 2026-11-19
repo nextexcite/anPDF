@@ -78,10 +78,15 @@ pub fn hash(file: &mut File) -> Result<String> {
     file.seek(SeekFrom::Start(0))?;
     let mut h = Sha256::new();
     let mut buf = [0; 65536];
+    let mut total = 0u64;
     loop {
         let n = file.read(&mut buf)?;
         if n == 0 {
             break;
+        }
+        total += n as u64;
+        if total > TOTAL_LIMIT {
+            return Err(Error("LIMIT_EXCEEDED"));
         }
         h.update(&buf[..n]);
     }
@@ -155,11 +160,12 @@ impl Input {
         self.file.seek(SeekFrom::Start(0))?;
         let mut out = std::fs::OpenOptions::new()
             .write(true)
+            .read(true)
             .create_new(true)
             .mode(0o600)
             .open(path)?;
         let n = std::io::copy(&mut (&mut self.file).take(FILE_LIMIT + 1), &mut out)?;
-        if n != self.bytes || hash(&mut self.file)? != self.hash {
+        if n != self.bytes || hash(&mut self.file)? != self.hash || hash(&mut out)? != self.hash {
             return Err(Error("INPUT_CHANGED"));
         }
         out.sync_all()?;

@@ -1,0 +1,31 @@
+{
+  "generator": {
+    "repository": "https://github.com/cloudflare/forge",
+    "version": "0.2.0",
+    "revision": "b8d74e2cbe41e4afaf2acaec2903add0bc11b116",
+    "rustToolchain": "1.99.0",
+    "artifactSha256": "63ae2afb7e66b8263d6c95e7217ae65fe866e8e2c47747394d332abc56e8d4c3",
+    "status": "official build/package/generator stages executed; schema fidelity gaps documented",
+    "platform": "linux-x64; locally built GNU ABI"
+  },
+  "contractSha256": "b2a71f499b8e6bec241a7bc34302315a03af037964fedf3f51a7c85204e975db",
+  "files": {
+    "capnweb/index.ts": "9428095c2d8b63700d5f70344bb03e0b567cf03729f18369eb4fdfd586ad9c2a",
+    "capnweb/options.ts": "363a0fca5553be36261e10e95f356e8bb6200827873933ce6e8184c93b9fa7c0",
+    "capnweb/server.ts": "dabbaaa6af0fbeac2c9ff026303cb51f286f15275329673f88c99189e8b6d156",
+    "mcp/_/tool.ts": "bd7638f9aca52e57aeb2bb6e17e3884a9e9d6c2d5440f59a5cc4168cfe506714",
+    "mcp/index.ts": "ac8241615fbf7bde0b3f0a188ad05c1e87b505e6b92b9018a67b9b86f1da2b5c",
+    "mcp/outputs.ts": "89b5deb355546d1ed76dc587b89b28c4b8379651945aaddbc70acb0ec7c2a7f5",
+    "mcp/schemas.ts": "19f3dd0d5ee23ebed0657474f0c32bee04ca069a0b8a0b276ad732dd9763c02e",
+    "mcp/tools.ts": "0f75381b48090a647e4ece7f9fb1c21ee4794274649c6372cfed4547ce74efb6",
+    "operation-index.json": "b2aa60ea56a6fbe35dd61342dd0a72d336c81d4593f75601608331e16d20ea2e",
+    "ts/_/codec.ts": "5c5e458fc4cfe3269e14cced96fe1ae67a02475dfea5d0dd1adfc54055a34b2d",
+    "ts/_/error.ts": "85de46a83deaae7109c277eea1b8bcecc35e4340a9d05db6ca0884394220641f",
+    "ts/_/hooks/envelope.ts": "08398bfca35d5f9f55bb56d3a1fb697d75fbf2cf236b0ddd018175e054eab5a0",
+    "ts/_/index.ts": "8367f6cbeb52df5c69d2c5ef9228fa0ad24b3190a4b73f5ceeff7dfdd84f8d02",
+    "ts/_/transport.ts": "ca4efd8e1fd9c90ac07228f79698cebe1ba90a6db64a2e5e980988ad5394c98d",
+    "ts/client.ts": "01f09cafba48a2d6107bcd4f68620f314b600a3d2761774ccffbdcb3855cb3cf",
+    "ts/index.ts": "f095dcd5bdcfafb2a2e6819c3244c07bb4a381948ef594033d4fae48b85ebc91",
+    "ts/models.ts": "6effe1cbef797d6c7d40944f630a30abe655cb89d6cee18cd506c4f672cf7152"
+  }
+}

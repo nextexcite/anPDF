@@ -1,5 +1,10 @@
 anPDF
 Copyright anPDF Contributors
 Original project code is licensed under Apache-2.0.
-Cloudflare Forge is a build-time tool; generated artifacts require a separate
-license and fidelity review before inclusion. No Forge output is included yet.
+
+Generated TypeScript files under generated/ are produced by Cloudflare Forge,
+Apache-2.0, https://github.com/cloudflare/forge, revision
+b8d74e2cbe41e4afaf2acaec2903add0bc11b116. Their runtime helper source originates
+in that project. The build wrapper adds provenance comments only; emitted code
+is otherwise unmodified. The Apache-2.0 license is provided in LICENSE.
+These TypeScript files are build/qualification artifacts, not a product runtime.
