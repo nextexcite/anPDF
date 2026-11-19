@@ -70,7 +70,7 @@ fn options() -> Result<Options> {
         return Err(Error("INVALID_REQUEST"));
     }
     let allowed: &[&str] = match o.command.as_str() {
-        "inspect" | "validate" | "merge" | "extract" => &[
+        "inspect" | "validate" | "merge" | "extract" | "split" => &[
             "--root",
             "--qpdf",
             "--request-json",
@@ -100,6 +100,7 @@ fn id(command: &str) -> &'static str {
         "inspect" | "validate" => "inspectPdf",
         "merge" => "mergePdf",
         "extract" => "extractPdf",
+        "split" => "splitPdf",
         _ => "unknown",
     }
 }

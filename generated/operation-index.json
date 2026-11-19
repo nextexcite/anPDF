@@ -1,5 +1,6 @@
 [
   "extractPdf",
   "inspectPdf",
-  "mergePdf"
+  "mergePdf",
+  "splitPdf"
 ]

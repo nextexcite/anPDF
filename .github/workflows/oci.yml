@@ -8,6 +8,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      # Build-record bundles are not release artifacts; never upload them.
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+      DOCKER_BUILD_SUMMARY: "false"
     outputs:
       image: ${{ steps.meta.outputs.image }}
       digest: ${{ steps.push.outputs.digest }}
@@ -57,6 +61,11 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
           provenance: mode=min
           sbom: false
+      - name: Pull published digest and repeat the restricted smoke test
+        run: |
+          ref='${{ steps.meta.outputs.image }}@${{ steps.push.outputs.digest }}'
+          docker pull --platform linux/amd64 "$ref"
+          sh containers/smoke.sh "$ref"
       - name: Prepare export directory
         run: mkdir -p build/artifacts
       - name: Export OCI archive for SBOM scan

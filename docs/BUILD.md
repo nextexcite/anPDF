@@ -12,7 +12,9 @@ Each manual run of `.github/workflows/oci.yml` builds, smoke-tests, and publishe
 1. **`linux/amd64` OCI image (GHCR):** `ghcr.io/<owner>/anpdf` with tags
    `0.1.0-alpha.1-<sha>`, `0.1.0-alpha.1`, and `latest`, minimal BuildKit provenance, and
    a Syft SPDX image SBOM (`anpdf-linux-amd64.spdx.json`) + recorded digest (`oci-digest.txt`).
-   Push only happens after the non-root, read-only, `--network=none` smoke test passes.
+   Push only happens after the non-root, read-only, `--network=none` smoke test passes;
+   the published digest is then pulled back and smoke-tested again (`DOCKER_BUILD_RECORD_UPLOAD=false`
+   keeps build-record bundles off the release).
 2. **`macos/arm64` native binary (GitHub Prerelease + artifact):**
    `anpdf-0.1.0-alpha.1-macos-arm64.tar.gz` and `SHA256SUMS-macos-arm64.txt`, built with
    pinned Rust `1.100.0` and `cargo-auditable 0.7.7`, smoke-tested against pinned qpdf `12.4.2`,

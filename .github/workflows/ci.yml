@@ -49,8 +49,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26.13.1
-      - name: Compile official generated targets and probe fidelity
+      - name: Verify pinned Forge regeneration and probe fidelity
         run: |
+          mkdir -p build/work
+          python3 build/get-forge.py build/work/forge.tgz
+          python3 build/generate.py --archive build/work/forge.tgz --out build/work/regen
+          diff -ruN generated build/work/regen
           npm ci --ignore-scripts --prefix build/qualification
           mkdir -p build/qualification/work
           cp -R generated/ts generated/mcp generated/capnweb build/qualification/work/

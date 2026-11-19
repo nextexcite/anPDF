@@ -103,21 +103,30 @@ impl Dispatcher {
         if inputs.iter().map(|i| i.bytes).sum::<u64>() > TOTAL_LIMIT {
             return Err(Error("LIMIT_EXCEEDED"));
         }
+        let mut parts: Option<Vec<(Vec<u64>, String, filesystem::Destination)>> = None;
         let pages = if id == "extractPdf" {
-            let p = request["pages"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|v| v.as_u64().unwrap())
-                .collect::<Vec<_>>();
-            if p.windows(2).any(|w| w[0] >= w[1]) {
-                return Err(Error("INVALID_REQUEST"));
-            }
+            let p = parse_pages(&request["pages"])?;
             Some(p)
         } else {
             None
         };
-        let destination = if id != "inspectPdf" {
+        let destination = if id == "splitPdf" {
+            let mut parsed = Vec::new();
+            for part in request["parts"].as_array().unwrap() {
+                let p = parse_pages(&part["pages"])?;
+                let out_path = part["output"]["path"].as_str().unwrap().to_string();
+                let replace = part["output"]["replaceExisting"].as_bool().unwrap_or(false);
+                let dest = self.workspace.destination(&out_path, replace, &inputs)?;
+                for (_, _, existing) in &parsed {
+                    if dest.same_target(existing)? {
+                        return Err(Error("INVALID_REQUEST"));
+                    }
+                }
+                parsed.push((p, out_path, dest));
+            }
+            parts = Some(parsed);
+            None
+        } else if id != "inspectPdf" {
             Some(
                 self.workspace.destination(
                     request["output"]["path"].as_str().unwrap(),
@@ -185,6 +194,48 @@ impl Dispatcher {
             reports.push(report);
             paths.push(path);
         }
+        if let Some(parts) = parts {
+            let mut staged_outputs = Vec::with_capacity(parts.len());
+            let mut artifacts = Vec::with_capacity(parts.len());
+            let mut total_output_bytes = 0u64;
+            for (idx, (part_pages, rel_path, _)) in parts.iter().enumerate() {
+                if part_pages.last().copied().unwrap_or(0) > total_pages {
+                    return Err(Error("INVALID_REQUEST"));
+                }
+                let out = staging.path().join(format!("output-{idx}.pdf"));
+                let (artifact, bytes) = transform_artifact(
+                    self.backend.as_ref(),
+                    &paths,
+                    Some(part_pages),
+                    total_pages,
+                    &out,
+                    rel_path,
+                    control,
+                    &mut warnings,
+                )?;
+                total_output_bytes += bytes;
+                if total_output_bytes > TOTAL_LIMIT {
+                    return Err(Error("LIMIT_EXCEEDED"));
+                }
+                artifacts.push(artifact);
+                staged_outputs.push(out);
+            }
+            let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":{"outputs":artifacts},"warnings":warnings});
+            if !contract::valid_output(id, &envelope) {
+                return Err(Error("INTERNAL"));
+            }
+            self.workspace.unchanged(&mut inputs)?;
+            control.check()?;
+            for (idx, (_, _, dest)) in parts.iter().enumerate() {
+                if let Err(e) = dest.commit(&staged_outputs[idx], &inputs) {
+                    for (_, _, committed) in &parts[..idx] {
+                        committed.rollback_new();
+                    }
+                    return Err(e);
+                }
+            }
+            return Ok(envelope);
+        }
         let result = if let Some(destination) = destination {
             if pages
                 .as_ref()
@@ -193,25 +244,16 @@ impl Dispatcher {
                 return Err(Error("INVALID_REQUEST"));
             }
             let out = staging.path().join("output.pdf");
-            warnings.extend(
-                self.backend
-                    .transform(&paths, pages.as_deref(), &out, control)?,
-            );
-            let (report, w) = self.backend.inspect(&out, control)?;
-            warnings.extend(w);
-            let expected = pages.as_ref().map_or(total_pages, |p| p.len() as u64);
-            if report["pageCount"] != expected
-                || report["forms"] != "absent"
-                || report["signatures"] != "absent"
-            {
-                return Err(Error("PRESERVATION_UNKNOWN"));
-            }
-            let mut file = std::fs::File::open(&out)?;
-            let bytes = file.metadata()?.len();
-            if bytes > TOTAL_LIMIT {
-                return Err(Error("LIMIT_EXCEEDED"));
-            }
-            let result = json!({"path":request["output"]["path"],"sha256":filesystem::hash(&mut file)?,"bytes":bytes,"pageCount":expected});
+            let (result, _) = transform_artifact(
+                self.backend.as_ref(),
+                &paths,
+                pages.as_deref(),
+                total_pages,
+                &out,
+                request["output"]["path"].as_str().unwrap(),
+                control,
+                &mut warnings,
+            )?;
             let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
             if !contract::valid_output(id, &envelope) {
                 return Err(Error("INTERNAL"));
@@ -231,6 +273,51 @@ impl Dispatcher {
         }
         Ok(value)
     }
+}
+
+fn parse_pages(value: &Value) -> Result<Vec<u64>> {
+    let pages = value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap())
+        .collect::<Vec<_>>();
+    if pages.windows(2).any(|w| w[0] >= w[1]) {
+        return Err(Error("INVALID_REQUEST"));
+    }
+    Ok(pages)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn transform_artifact(
+    backend: &dyn Backend,
+    paths: &[PathBuf],
+    pages: Option<&[u64]>,
+    total_input_pages: u64,
+    out: &Path,
+    rel_path: &str,
+    control: &Control,
+    warnings: &mut Vec<Value>,
+) -> Result<(Value, u64)> {
+    warnings.extend(backend.transform(paths, pages, out, control)?);
+    let (report, w) = backend.inspect(out, control)?;
+    warnings.extend(w);
+    let expected = pages.map_or(total_input_pages, |p| p.len() as u64);
+    if report["pageCount"] != expected
+        || report["forms"] != "absent"
+        || report["signatures"] != "absent"
+    {
+        return Err(Error("PRESERVATION_UNKNOWN"));
+    }
+    let mut file = std::fs::File::open(out)?;
+    let bytes = file.metadata()?.len();
+    if bytes > TOTAL_LIMIT {
+        return Err(Error("LIMIT_EXCEEDED"));
+    }
+    Ok((
+        json!({"path":rel_path,"sha256":filesystem::hash(&mut file)?,"bytes":bytes,"pageCount":expected}),
+        bytes,
+    ))
 }
 
 #[cfg(test)]

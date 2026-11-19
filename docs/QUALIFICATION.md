@@ -7,13 +7,13 @@ slice and artifact publication; they do not establish a production V0 release.
 | Check | Observed result |
 |---|---|
 | Canonical OpenAPI 3.0.3 | Independent openapi-spec-validator passed |
-| Rust | Build, five safety/schema tests, format and Clippy with warnings denied passed on Linux amd64 and macOS arm64 |
-| Shared corpus | Cross-surface cases through CLI/HTTP/MCP passed with complete domain envelope equality on `ubuntu-26.04` and `macos-26` |
+| Rust | Build, six safety/schema tests, format and Clippy with warnings denied passed on Linux amd64 and macOS arm64 |
+| Shared corpus | 38 cross-surface cases (inspect, merge, extract, split) through CLI/HTTP/MCP passed with complete domain envelope equality on `ubuntu-26.04` and `macos-26` |
 | Preservation/order | Every corpus input hash preserved; independent Poppler text order passed |
 | HTTP | Loopback binding, bearer, Host/Origin, discovery and JSON error checks passed |
 | MCP | Initialization, discovery, calls, error wrapping and stdout framing passed |
 | qpdf | Exact 12.4.2 official archive matched published checksum; actual structural/transform commands ran on Linux amd64 and macOS arm64 |
-| Forge | Official source build, official package stage, three native generators, repeated output and TS compilation passed; fidelity gaps documented |
+| Forge | Official multi-platform 0.2.0 package (`b8d74e2`), three native generators, deterministic regeneration, and TS compilation passed; fidelity gaps documented |
 | Edge fixtures | Embedded CJK text survived extraction; identical rendered pixels; synthetic signing and tampering independently verified; both refused by product |
 | Offline | Native inspection passed in an isolated Linux network namespace |
 | Process/filesystem | Timeout, capture overflow, sparse-file limit, symlink/alias rejection, atomic competing outputs and cleanup tests passed (`RLIMIT_AS` is Linux-only; XNU rejects it with `EINVAL`) |

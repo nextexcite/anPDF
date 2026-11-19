@@ -392,6 +392,134 @@
           }
         }
       }
+    },
+    "/v1/split": {
+      "post": {
+        "operationId": "splitPdf",
+        "summary": "Split a PDF into multiple page-subset outputs",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validated domain result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/splitPdfSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid HTTP bearer credential; transport-level failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -490,6 +618,68 @@
           "input",
           "pages",
           "output"
+        ]
+      },
+      "SplitPart": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2000,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Strictly increasing 1-based page numbers within source bounds."
+          },
+          "output": {
+            "$ref": "#/components/schemas/Output"
+          }
+        },
+        "required": [
+          "pages",
+          "output"
+        ]
+      },
+      "SplitRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "parts": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/SplitPart"
+            }
+          }
+        },
+        "required": [
+          "input",
+          "parts"
+        ]
+      },
+      "SplitResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "outputs": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            }
+          }
+        },
+        "required": [
+          "outputs"
         ]
       },
       "Warning": {
@@ -682,6 +872,39 @@
           },
           "result": {
             "$ref": "#/components/schemas/Artifact"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Warning"
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "operationId",
+          "result",
+          "warnings"
+        ]
+      },
+      "splitPdfSuccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "1.0.0"
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "enum": [
+              "splitPdf"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/SplitResult"
           },
           "warnings": {
             "type": "array",

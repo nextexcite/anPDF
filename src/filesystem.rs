@@ -173,6 +173,41 @@ impl Input {
     }
 }
 impl Destination {
+    pub fn same_target(&self, other: &Self) -> Result<bool> {
+        let a_dir = self.dir.metadata()?;
+        let b_dir = other.dir.metadata()?;
+        if a_dir.dev() == b_dir.dev() && a_dir.ino() == b_dir.ino() {
+            let a_name = self.name.to_string_lossy();
+            let b_name = other.name.to_string_lossy();
+            #[cfg(target_os = "macos")]
+            let same_name = a_name.eq_ignore_ascii_case(&b_name);
+            #[cfg(not(target_os = "macos"))]
+            let same_name = a_name == b_name;
+            if same_name {
+                return Ok(true);
+            }
+        }
+        if let (Ok(a_file), Ok(b_file)) = (
+            open_at(&self.dir, &self.name, libc::O_RDONLY | libc::O_NONBLOCK, 0),
+            open_at(
+                &other.dir,
+                &other.name,
+                libc::O_RDONLY | libc::O_NONBLOCK,
+                0,
+            ),
+        ) {
+            let (am, bm) = (a_file.metadata()?, b_file.metadata()?);
+            if am.dev() == bm.dev() && am.ino() == bm.ino() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    pub fn rollback_new(&self) {
+        if !self.replace {
+            let _ = unsafe { libc::unlinkat(self.dir.as_raw_fd(), self.name.as_ptr(), 0) };
+        }
+    }
     fn check(&self, inputs: &[Input]) -> Result<()> {
         match open_at(&self.dir, &self.name, libc::O_RDONLY | libc::O_NONBLOCK, 0) {
             Ok(f) => {

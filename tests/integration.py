@@ -61,6 +61,15 @@ def run():
           ('inspect',{'input':{'path':'warning.pdf'}},None),
           ('merge',{'inputs':[{'path':'three.pdf'},{'path':'one.pdf'}],'output':{'path':'merged.pdf'}},None),
           ('extract',{'input':{'path':'three.pdf'},'pages':[1,3],'output':{'path':'subset.pdf'}},None),
+          ('split',{'input':{'path':'three.pdf'},'parts':[{'pages':[1,2],'output':{'path':'split-a.pdf'}},{'pages':[3],'output':{'path':'split-b.pdf'}}]},None),
+          ('split',{'input':{'path':'three.pdf'},'parts':[{'pages':[1],'output':{'path':'split-a.pdf','replaceExisting':True}},{'pages':[2,3],'output':{'path':'split-c.pdf'}}]},None),
+          ('split',{'input':{'path':'three.pdf'},'parts':[{'pages':[1],'output':{'path':'split-rollback.pdf'}},{'pages':[2],'output':{'path':'split-b.pdf'}}]},'OUTPUT_EXISTS'),
+          ('split',{'input':{'path':'three.pdf'},'parts':[{'pages':[1],'output':{'path':'split-dup.pdf','replaceExisting':True}},{'pages':[2],'output':{'path':'split-dup.pdf','replaceExisting':True}}]},'INVALID_REQUEST'),
+          ('split',{'input':{'path':'three.pdf'},'parts':[{'pages':[2,1],'output':{'path':'bad1.pdf'}},{'pages':[3],'output':{'path':'bad2.pdf'}}]},'INVALID_REQUEST'),
+          ('split',{'input':{'path':'three.pdf'},'parts':[{'pages':[1],'output':{'path':'bad1.pdf'}},{'pages':[4],'output':{'path':'bad2.pdf'}}]},'INVALID_REQUEST'),
+          ('split',{'input':{'path':'one.pdf'},'parts':[{'pages':[1],'output':{'path':'alias.pdf','replaceExisting':True}},{'pages':[1],'output':{'path':'bad2.pdf'}}]},'ACCESS_DENIED'),
+          ('split',{'input':{'path':'form.pdf'},'parts':[{'pages':[1],'output':{'path':'bad1.pdf'}},{'pages':[1],'output':{'path':'bad2.pdf'}}]},'FORM_UNSUPPORTED'),
+          ('split',{'input':{'path':'signature-marker.pdf'},'parts':[{'pages':[1],'output':{'path':'bad1.pdf'}},{'pages':[1],'output':{'path':'bad2.pdf'}}]},'SIGNED_UNSUPPORTED'),
           ('merge',{'inputs':[{'path':'three.pdf'},{'path':'one.pdf'}],'output':{'path':'merged.pdf'}},'OUTPUT_EXISTS'),
           ('extract',{'input':{'path':'three.pdf'},'pages':[2],'output':{'path':'subset.pdf','replaceExisting':True}},None),
           ('inspect',{'input':{'path':'damaged.pdf'}},'INVALID_PDF'),
@@ -88,7 +97,7 @@ def run():
               ('extract',{'input':{'path':'tampered.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED')])
         originals={surface:{f.name:digest(f) for f in root.glob('*.pdf')} for surface,root in roots.items()}
         for n,(command,request,error) in enumerate(corpus,10):
-            op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf'}[command]
+            op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf','split':'splitPdf'}[command]
             cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps(request)],capture_output=True,text=True)
             assert bool(cli.returncode)==bool(error),(n,command,cli.returncode,cli.stderr,cli.stdout);a=json.loads(cli.stderr if error else cli.stdout)
             assert not (cli.stdout if error else cli.stderr),(n,'framing')
@@ -106,9 +115,14 @@ def run():
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'merged.pdf'),'-']).decode()
         assert [text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C','PAGE-ONE']]==sorted(text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C','PAGE-ONE'])
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'subset.pdf'),'-']).decode();assert 'PAGE-B' in text and 'PAGE-A' not in text
+        text=subprocess.check_output(['pdftotext',str(roots['cli']/'split-a.pdf'),'-']).decode();assert 'PAGE-A' in text and 'PAGE-B' not in text
+        text=subprocess.check_output(['pdftotext',str(roots['cli']/'split-c.pdf'),'-']).decode();assert text.index('PAGE-B')<text.index('PAGE-C') and 'PAGE-A' not in text
+        for root in roots.values():assert not (root/'split-rollback.pdf').exists()
         # Surface controls: request files, stdin, dry-run, invalid flags and malformed JSON.
         req={'input':{'path':'three.pdf'},'pages':[1],'output':{'path':'dry.pdf'}}
         result=subprocess.run([str(BIN),'extract','--root',str(roots['cli']),'--dry-run'],input=json.dumps(req),text=True,capture_output=True);assert result.returncode==0 and json.loads(result.stdout)['dryRun'];assert not (roots['cli']/'dry.pdf').exists()
+        sreq={'input':{'path':'three.pdf'},'parts':[{'pages':[1],'output':{'path':'dry-1.pdf'}},{'pages':[2,3],'output':{'path':'dry-2.pdf'}}]}
+        result=subprocess.run([str(BIN),'split','--root',str(roots['cli']),'--dry-run'],input=json.dumps(sreq),text=True,capture_output=True);assert result.returncode==0 and json.loads(result.stdout)['dryRun'];assert not (roots['cli']/'dry-1.pdf').exists() and not (roots['cli']/'dry-2.pdf').exists()
         for args in [['inspect','--bogus'],['inspect','--request-json','{'],['compress']]:
             r=subprocess.run([str(BIN),*args],capture_output=True,text=True);assert r.returncode and not r.stdout;json.loads(r.stderr)
         mcp_send(mcp,{'jsonrpc':'2.0','id':100,'method':'tools/call','params':{'name':'compress','arguments':{}}});assert mcp_read(mcp)['error']['code']==-32602

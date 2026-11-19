@@ -22,9 +22,25 @@ fn schema_rejects_unknown_properties_and_bad_pages() {
         "mergePdf",
         &json!({"inputs":[],"output":{"path":"b"}})
     ));
+    assert!(contract::valid_input(
+        "splitPdf",
+        &json!({"input":{"path":"a.pdf"},"parts":[{"pages":[1],"output":{"path":"p1.pdf"}},{"pages":[2],"output":{"path":"p2.pdf"}}]})
+    ));
+    assert!(!contract::valid_input(
+        "splitPdf",
+        &json!({"input":{"path":"a.pdf"},"parts":[{"pages":[1],"output":{"path":"p1.pdf"}}]})
+    ));
+    assert!(!contract::valid_input(
+        "splitPdf",
+        &json!({"input":{"path":"a.pdf"},"parts":[{"pages":[1],"output":{"path":"p1.pdf","extra":1}},{"pages":[2],"output":{"path":"p2.pdf"}}]})
+    ));
     assert!(!contract::valid_output(
         "inspectPdf",
         &json!({"result":{"pageCount":-1}})
+    ));
+    assert!(!contract::valid_output(
+        "splitPdf",
+        &json!({"contractVersion":"1.0.0","operationId":"splitPdf","result":{"outputs":[{"path":"p1.pdf","sha256":"0".repeat(64),"bytes":1,"pageCount":1}]},"warnings":[]})
     ));
     for code in
         contract::document()["components"]["schemas"]["Error"]["properties"]["error"]["properties"]
@@ -177,4 +193,122 @@ fn atomic_competing_outputs_and_sparse_limit() {
             .to_string_lossy()
             .starts_with(".anpdf-")
     }));
+}
+
+#[test]
+fn split_destination_collision_and_rollback() {
+    struct MockSplit;
+    impl crate::backend::Backend for MockSplit {
+        fn inspect(
+            &self,
+            path: &std::path::Path,
+            _: &crate::backend::Control,
+        ) -> crate::error::Result<(serde_json::Value, Vec<serde_json::Value>)> {
+            let pages = if path.file_name().and_then(|s| s.to_str()) == Some("input-0.pdf") {
+                3
+            } else {
+                1
+            };
+            Ok((
+                json!({
+                    "sha256": "0".repeat(64),
+                    "bytes": 1,
+                    "pageCount": pages,
+                    "structuralStatus": "valid",
+                    "encrypted": false,
+                    "forms": "absent",
+                    "signatures": "absent",
+                    "signatureValidity": "notChecked"
+                }),
+                vec![],
+            ))
+        }
+        fn transform(
+            &self,
+            _: &[std::path::PathBuf],
+            pages: Option<&[u64]>,
+            out: &std::path::Path,
+            _: &crate::backend::Control,
+        ) -> crate::error::Result<Vec<serde_json::Value>> {
+            fs::write(out, format!("pages:{pages:?}")).unwrap();
+            Ok(vec![])
+        }
+    }
+
+    let t = tempfile::tempdir().unwrap();
+    fs::write(t.path().join("in.pdf"), b"pdf").unwrap();
+    fs::write(t.path().join("existing-a.pdf"), b"a").unwrap();
+    fs::hard_link(
+        t.path().join("existing-a.pdf"),
+        t.path().join("existing-b.pdf"),
+    )
+    .unwrap();
+    let d = crate::Dispatcher::with_backend(t.path(), std::sync::Arc::new(MockSplit)).unwrap();
+
+    // Same destination path in two parts is rejected even on dry-run.
+    assert_eq!(
+        d.dispatch(
+            "splitPdf",
+            &json!({
+                "input": {"path": "in.pdf"},
+                "parts": [
+                    {"pages": [1], "output": {"path": "out.pdf"}},
+                    {"pages": [2], "output": {"path": "out.pdf"}}
+                ]
+            }),
+            true,
+            &crate::backend::Control::default()
+        )
+        .unwrap_err()
+        .0,
+        "INVALID_REQUEST"
+    );
+
+    // Distinct paths that are hardlinked to the same target file are rejected.
+    assert_eq!(
+        d.dispatch(
+            "splitPdf",
+            &json!({
+                "input": {"path": "in.pdf"},
+                "parts": [
+                    {"pages": [1], "output": {"path": "existing-a.pdf", "replaceExisting": true}},
+                    {"pages": [2], "output": {"path": "existing-b.pdf", "replaceExisting": true}}
+                ]
+            }),
+            true,
+            &crate::backend::Control::default()
+        )
+        .unwrap_err()
+        .0,
+        "INVALID_REQUEST"
+    );
+
+    // Multi-output commit succeeds and preserves input.
+    let ok = d
+        .dispatch(
+            "splitPdf",
+            &json!({
+                "input": {"path": "in.pdf"},
+                "parts": [
+                    {"pages": [1], "output": {"path": "p1.pdf"}},
+                    {"pages": [2], "output": {"path": "p2.pdf"}}
+                ]
+            }),
+            false,
+            &crate::backend::Control::default(),
+        )
+        .unwrap();
+    assert_eq!(ok["result"]["outputs"].as_array().unwrap().len(), 2);
+    assert!(t.path().join("p1.pdf").exists());
+    assert!(t.path().join("p2.pdf").exists());
+
+    // Rollback unlinks newly created files but keeps existing replaceable ones.
+    let w = Workspace::new(t.path()).unwrap();
+    let src = t.path().join("src.pdf");
+    fs::write(&src, b"new").unwrap();
+    let new_dest = w.destination("rollback-new.pdf", false, &[]).unwrap();
+    new_dest.commit(&src, &[]).unwrap();
+    assert!(t.path().join("rollback-new.pdf").exists());
+    new_dest.rollback_new();
+    assert!(!t.path().join("rollback-new.pdf").exists());
 }

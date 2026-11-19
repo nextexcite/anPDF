@@ -10,6 +10,7 @@ status, and explicit unsupported/excluded capabilities.
 | inspectPdf | inspect / validate | POST /v1/inspect | inspectPdf |
 | mergePdf | merge | POST /v1/merge | mergePdf |
 | extractPdf | extract | POST /v1/extract | extractPdf |
+| splitPdf | split | POST /v1/split | splitPdf |
 
 Authenticated HTTP discovery: GET `/v1/operations` and `/v1/openapi.json`.
 A canonical error is `{contractVersion, operationId, error:{code,message,retryable}}`.

@@ -3,13 +3,13 @@
 Mandatory build-time adoption: official Cloudflare Forge 0.2.0, source revision
 `b8d74e2cbe41e4afaf2acaec2903add0bc11b116`.
 
-The exact upstream source was built using Rust 1.99.0 with
-`cargo build --release --locked --features wasm`. Frozen upstream build dependencies
-were installed with pnpm 11.25.0. Official `packages/forge/scripts/archive.mjs`
-packed the native Linux x64 binary under Node 26.13.1. The resulting local artifact
-SHA-256 is recorded in `build/forge-pin.json`; it is a GNU-ABI local qualification
-artifact, not a verified cross-platform binary distribution or reproducible release.
-The npm placeholder distribution was not used.
+The exact upstream source at revision `b8d74e2cbe41e4afaf2acaec2903add0bc11b116`
+is built by upstream CI with Rust 1.99.0 (`cargo build --release --locked --features wasm`,
+pnpm workspace, and `packages/forge/scripts/archive.mjs`) into the multi-platform
+`@cloudflare/forge` `0.2.0` preview package (`darwin-arm64`, `darwin-x64`, `linux-arm64`,
+`linux-x64`, `win32-arm64`, `win32-x64`). Its SHA-256 is pinned in `build/forge-pin.json`
+and fetched/verified by `build/get-forge.py`; the source revision remains independently
+rebuildable from upstream Git. The npm registry `0.0.0` placeholder is not used.
 
 Official `ts`, `capnweb`, and `mcp` generation stages ran successfully twice on the
 canonical contract. The wrapper added provenance comments and hashes; it did not
@@ -32,7 +32,8 @@ validation for every domain request and response. They are handwritten, not
 represented as Forge-generated Rust. No replacement generator is used.
 
 ```sh
-python3 build/generate.py --archive /path/to/the-pinned-forge.tgz
+python3 build/get-forge.py build/work/forge.tgz
+python3 build/generate.py --archive build/work/forge.tgz
 npm ci --ignore-scripts --prefix build/qualification
 mkdir -p build/qualification/work
 cp -R generated/ts generated/mcp generated/capnweb build/qualification/work/

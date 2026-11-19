@@ -23,6 +23,7 @@ The goal is to **own the interface and the workflow**, while reusing proven PDF 
 | Inspect / structurally validate a PDF | `inspect` / `validate` | `POST /v1/inspect` | `inspectPdf` |
 | Merge PDFs in input order | `merge` | `POST /v1/merge` | `mergePdf` |
 | Extract selected pages into a new PDF | `extract` | `POST /v1/extract` | `extractPdf` |
+| Split a PDF into multiple page-subset outputs | `split` | `POST /v1/split` | `splitPdf` |
 
 All three surfaces use the same validated operation contract. The Rust runtime uses **qpdf 12.4.2** for PDF processing; pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Hosted CI qualifies `ubuntu-26.04` (Linux amd64) and `macos-26` (macOS arm64); preliminary publication targets the `linux/amd64` OCI image (GHCR) and the native `macos/arm64` binary (GitHub prerelease). See [qualification and open gates](docs/QUALIFICATION.md) and [OCI/build](docs/BUILD.md).
 
@@ -46,7 +47,7 @@ Use `./target/debug/anpdf mcp --root build/work/fixtures` for local stdio MCP. H
 ## Roadmap
 
 1. **Foundation and portability:** qualify reproducible Forge generation, multi-platform binaries, OCI builds, security limits, and cross-surface contract tests.
-2. **Everyday PDF operations:** page deletion/reordering, multi-output splitting, better structural repair, and **quality-aware compression** with measurable fidelity.
+2. **Everyday PDF operations:** page deletion/reordering, better structural repair, and **quality-aware compression** with measurable fidelity.
 3. **Documents and signatures:** inspect/fill AcroForms, add visual signatures, and separately support certificate-based digital signing/validation with preservation checks.
 4. **Richer capabilities and integration:** OCR, extraction, and cautious existing-text editing where fidelity can be demonstrated; optional backends and agent/desktop/cloud integration.
 

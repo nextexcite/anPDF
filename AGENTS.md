@@ -12,7 +12,7 @@ Examples and fixtures must be entirely generic: synthetic reports, blank forms, 
 
 ## Current baseline (do not overclaim)
 
-- `0.1.0-alpha.1`: Rust 1.100.0 runtime; qpdf **12.4.2** adapter; inspect/validate, merge, and selected-page extract.
+- `0.1.0-alpha.1`: Rust 1.100.0 runtime; qpdf **12.4.2** adapter; inspect/validate, merge, selected-page extract, and multi-output split.
 - CLI JSON, optional authenticated **loopback-only** HTTP, and local MCP stdio use the same validated dispatcher.
 - `contracts/v1/openapi.json` is canonical. Pinned upstream Cloudflare **Forge 0.2.0** generates qualified TypeScript/MCP/Cap'n Web artifacts at build time. The Rust runtime adapters are **handwritten**, not Forge-generated Rust.
 - Hosted CI qualifies `ubuntu-26.04` (Linux amd64) and `macos-26` (macOS arm64), plus Forge output probes and full-history privacy checks. Preliminary publication (`.github/workflows/oci.yml`) targets the `linux/amd64` OCI image (GHCR) and the native `macos/arm64` release tarball (GitHub prerelease). `linux/arm64` OCI, remote HTTP hosting, and full production release gates have **not** been established. See `docs/QUALIFICATION.md` and `docs/BUILD.md` for what actually passed.
@@ -40,7 +40,7 @@ Examples and fixtures must be entirely generic: synthetic reports, blank forms, 
 
 ## Practical usage scenarios
 
-- **Local/desktop automation:** one-shot `anpdf inspect|merge|extract` in a private, dedicated workspace; JSON result to stdout, canonical error to stderr. No background worker.
+- **Local/desktop automation:** one-shot `anpdf inspect|merge|extract|split` in a private, dedicated workspace; JSON result to stdout, canonical error to stderr. No background worker.
 - **Coding/personal-agent tool use:** `anpdf operations` / `anpdf schema <operationId>` for discovery, then `anpdf mcp --root <workspace>` using stdio. Agent requests must be schema-valid, scoped to that root, and checked for side effects.
 - **Local service integration:** `anpdf serve --root <workspace> --token-file <private-file>` on 127.0.0.1; keep credentials and client configuration outside the repository.
 - **OCI and future cloud:** run against explicitly mounted inputs/outputs, as non-root with network disabled by default. Remote multi-user hosting is a **future security and architecture project**, not today's loopback listener.
