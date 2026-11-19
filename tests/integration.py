@@ -23,6 +23,8 @@ def run():
     for root in roots.values():
         gen.generate(root)
         subprocess.run([str(QPDF),'--encrypt','','synthetic-only','256','--',str(root/'one.pdf'),str(root/'encrypted.pdf')],check=True,capture_output=True)
+        if os.environ.get('ANPDF_EDGE_FIXTURES'):
+            for name in ['chinese.pdf','signed.pdf','tampered.pdf']:shutil.copyfile(pathlib.Path(os.environ['ANPDF_EDGE_FIXTURES'])/name,root/name)
         (root/'alias.pdf').hardlink_to(root/'one.pdf');(root/'symlink.pdf').symlink_to('one.pdf')
     token='synthetic-loopback-test-credential-only';token_file=base/'http-credential';token_file.write_text(token);token_file.chmod(0o600)
     with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
@@ -76,6 +78,14 @@ def run():
           ('extract',{'input':{'path':'xfa.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'FORM_UNSUPPORTED'),
           ('extract',{'input':{'path':'signature-marker.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED'),
         ]
+        if os.environ.get('ANPDF_EDGE_FIXTURES'):
+            corpus.extend([
+              ('inspect',{'input':{'path':'chinese.pdf'}},None),
+              ('extract',{'input':{'path':'chinese.pdf'},'pages':[1],'output':{'path':'cjk-output.pdf'}},None),
+              ('inspect',{'input':{'path':'signed.pdf'}},None),
+              ('inspect',{'input':{'path':'tampered.pdf'}},None),
+              ('extract',{'input':{'path':'signed.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED'),
+              ('extract',{'input':{'path':'tampered.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED')])
         originals={surface:{f.name:digest(f) for f in root.glob('*.pdf')} for surface,root in roots.items()}
         for n,(command,request,error) in enumerate(corpus,10):
             op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf'}[command]
