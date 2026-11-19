@@ -34,6 +34,7 @@ impl Control {
         }
     }
 }
+#[cfg(target_os = "macos")]
 const RSS_LIMIT_BYTES: u64 = 768 * 1024 * 1024;
 const MAX_JSON_OBJECTS: usize = 200_000;
 const MAX_WALK_NODES: usize = 2_000_000;
