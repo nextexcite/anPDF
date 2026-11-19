@@ -63,6 +63,6 @@ pub fn discovery() -> Value {
     })).collect();
     json!({"contractVersion":VERSION,"operations":ops,
         "limits":{"inputBytes":104857600,"totalInputBytes":262144000,"outputBytes":262144000,"pages":2000,"files":20,"wallSeconds":60,"concurrency":2},
-        "unsupported":["removePages","reorderPages","compress","fillForms","visualSigning","certificateSigning"],
+        "unsupported":["reorderPages","fillForms","visualSigning","certificateSigning"],
         "excluded":["ocr","fullTextReplacement"]})
 }

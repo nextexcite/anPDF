@@ -34,12 +34,25 @@ impl Control {
         }
     }
 }
+#[derive(Clone, Copy)]
+pub enum CompressMode {
+    Lossless,
+    Lossy { jpeg_quality: u8 },
+}
+
 pub trait Backend: Send + Sync {
     fn inspect(&self, path: &Path, control: &Control) -> Result<(Value, Vec<Value>)>;
     fn transform(
         &self,
         paths: &[PathBuf],
         pages: Option<&[u64]>,
+        out: &Path,
+        control: &Control,
+    ) -> Result<Vec<Value>>;
+    fn compress(
+        &self,
+        path: &Path,
+        mode: CompressMode,
         out: &Path,
         control: &Control,
     ) -> Result<Vec<Value>>;
@@ -389,6 +402,34 @@ impl Backend for Qpdf {
             );
         }
         args.push("--".into());
+        args.push(out.to_str().ok_or(Error("ACCESS_DENIED"))?.into());
+        let (code, _) = self.run(&args, control)?;
+        if code != 0 && code != 3 {
+            return Err(Error("INVALID_PDF"));
+        }
+        Ok(warning(code))
+    }
+    fn compress(
+        &self,
+        path: &Path,
+        mode: CompressMode,
+        out: &Path,
+        control: &Control,
+    ) -> Result<Vec<Value>> {
+        let mut args = vec![
+            "--deterministic-id".into(),
+            "--compress-streams=y".into(),
+            "--recompress-flate".into(),
+            "--compression-level=9".into(),
+            "--object-streams=generate".into(),
+            "--remove-unreferenced-resources=yes".into(),
+        ];
+        if let CompressMode::Lossy { jpeg_quality } = mode {
+            args.push("--optimize-images".into());
+            args.push(format!("--jpeg-quality={jpeg_quality}"));
+        }
+        args.push("--".into());
+        args.push(path.to_str().ok_or(Error("ACCESS_DENIED"))?.into());
         args.push(out.to_str().ok_or(Error("ACCESS_DENIED"))?.into());
         let (code, _) = self.run(&args, control)?;
         if code != 0 && code != 3 {

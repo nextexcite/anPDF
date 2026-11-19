@@ -42,6 +42,26 @@ fn schema_rejects_unknown_properties_and_bad_pages() {
         "splitPdf",
         &json!({"contractVersion":"1.0.0","operationId":"splitPdf","result":{"outputs":[{"path":"p1.pdf","sha256":"0".repeat(64),"bytes":1,"pageCount":1}]},"warnings":[]})
     ));
+    assert!(contract::valid_input(
+        "removePages",
+        &json!({"input":{"path":"a.pdf"},"pages":[2],"output":{"path":"out.pdf"}})
+    ));
+    assert!(!contract::valid_input(
+        "removePages",
+        &json!({"input":{"path":"a.pdf"},"pages":[],"output":{"path":"out.pdf"}})
+    ));
+    assert!(contract::valid_input(
+        "compressPdf",
+        &json!({"input":{"path":"a.pdf"},"output":{"path":"out.pdf"}})
+    ));
+    assert!(contract::valid_input(
+        "compressPdf",
+        &json!({"input":{"path":"a.pdf"},"output":{"path":"out.pdf"},"mode":"lossy","jpegQuality":85})
+    ));
+    assert!(!contract::valid_input(
+        "compressPdf",
+        &json!({"input":{"path":"a.pdf"},"output":{"path":"out.pdf"},"mode":"lossy","jpegQuality":101})
+    ));
     for code in
         contract::document()["components"]["schemas"]["Error"]["properties"]["error"]["properties"]
             ["code"]["enum"]
@@ -109,6 +129,15 @@ fn backend_output_is_validated() {
             &self,
             _: &[std::path::PathBuf],
             _: Option<&[u64]>,
+            _: &std::path::Path,
+            _: &crate::backend::Control,
+        ) -> crate::error::Result<Vec<serde_json::Value>> {
+            unreachable!()
+        }
+        fn compress(
+            &self,
+            _: &std::path::Path,
+            _: crate::backend::CompressMode,
             _: &std::path::Path,
             _: &crate::backend::Control,
         ) -> crate::error::Result<Vec<serde_json::Value>> {
@@ -242,6 +271,15 @@ fn split_destination_collision_and_rollback() {
             fs::write(out, format!("pages:{pages:?}")).unwrap();
             Ok(vec![])
         }
+        fn compress(
+            &self,
+            _: &std::path::Path,
+            _: crate::backend::CompressMode,
+            _: &std::path::Path,
+            _: &crate::backend::Control,
+        ) -> crate::error::Result<Vec<serde_json::Value>> {
+            unreachable!()
+        }
     }
 
     let t = tempfile::tempdir().unwrap();
@@ -320,4 +358,30 @@ fn split_destination_collision_and_rollback() {
     assert!(t.path().join("rollback-new.pdf").exists());
     new_dest.rollback_new();
     assert!(!t.path().join("rollback-new.pdf").exists());
+
+    // removePages rejects removing every page of the input.
+    assert_eq!(
+        d.dispatch(
+            "removePages",
+            &json!({"input": {"path": "in.pdf"}, "pages": [1, 2, 3], "output": {"path": "none.pdf"}}),
+            false,
+            &crate::backend::Control::default()
+        )
+        .unwrap_err()
+        .0,
+        "INVALID_REQUEST"
+    );
+
+    // compressPdf rejects jpegQuality in lossless mode.
+    assert_eq!(
+        d.dispatch(
+            "compressPdf",
+            &json!({"input": {"path": "in.pdf"}, "output": {"path": "c.pdf"}, "mode": "lossless", "jpegQuality": 80}),
+            true,
+            &crate::backend::Control::default()
+        )
+        .unwrap_err()
+        .0,
+        "INVALID_REQUEST"
+    );
 }

@@ -47,6 +47,8 @@ COMMANDS:\n\
   merge                Merge 2..20 PDFs in input order\n\
   extract              Extract an ascending unique page subset\n\
   split                Split a PDF into 2..20 page-subset outputs\n\
+  remove-pages         Remove selected pages and keep the remaining pages\n\
+  compress             Compress PDF streams (lossless) or images (lossy)\n\
   operations           Print supported operations, schemas, limits, and unsupported list\n\
   schema <operationId> Print JSON schemas for one operation\n\
   serve                Run authenticated loopback HTTP server (127.0.0.1)\n\
@@ -89,6 +91,18 @@ Request: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[1,3],\"output\":{\"path\":
             "USAGE: anpdf split [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
 Operation: splitPdf (2..20 parts)\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"},\"parts\":[{\"pages\":[1],\"output\":{\"path\":\"p1.pdf\"}},{\"pages\":[2,3],\"output\":{\"path\":\"p2.pdf\"}}]}\n"
+                .into()
+        }
+        Some("remove-pages") => {
+            "USAGE: anpdf remove-pages [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
+Operation: removePages (strictly increasing 1-based pages to remove; at least 1 page must remain)\n\
+Request: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[2],\"output\":{\"path\":\"trimmed.pdf\"}}\n"
+                .into()
+        }
+        Some("compress") => {
+            "USAGE: anpdf compress [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
+Operation: compressPdf (mode: lossless | lossy, optional jpegQuality 0..100 in lossy mode)\n\
+Request: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"compressed.pdf\"},\"mode\":\"lossless\"}\n"
                 .into()
         }
         Some("serve") => "USAGE: anpdf serve --token-file <file> [--root <dir>] [--qpdf <abs-path>] [--port <port>]\n".into(),
@@ -185,6 +199,8 @@ fn parse_action() -> Result<Action> {
                 | "merge"
                 | "extract"
                 | "split"
+                | "remove-pages"
+                | "compress"
                 | "serve"
                 | "mcp"
                 | "operations"
@@ -248,7 +264,7 @@ fn parse_action() -> Result<Action> {
         return Err(Error("INVALID_REQUEST"));
     }
     let allowed: &[&str] = match o.command.as_str() {
-        "inspect" | "validate" | "merge" | "extract" | "split" => &[
+        "inspect" | "validate" | "merge" | "extract" | "split" | "remove-pages" | "compress" => &[
             "--root",
             "--qpdf",
             "--request-json",
@@ -288,6 +304,8 @@ fn id(command: &str) -> &'static str {
         "merge" => "mergePdf",
         "extract" => "extractPdf",
         "split" => "splitPdf",
+        "remove-pages" => "removePages",
+        "compress" => "compressPdf",
         _ => "unknown",
     }
 }

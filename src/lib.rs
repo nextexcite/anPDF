@@ -6,7 +6,7 @@ pub mod error;
 pub mod filesystem;
 pub mod http;
 pub mod mcp;
-use backend::{Backend, Control, Qpdf};
+use backend::{Backend, CompressMode, Control, Qpdf};
 use error::{Error, Result};
 use filesystem::{TOTAL_LIMIT, Workspace};
 use serde_json::{Value, json};
@@ -104,9 +104,25 @@ impl Dispatcher {
             return Err(Error("LIMIT_EXCEEDED"));
         }
         let mut parts: Option<Vec<(Vec<u64>, String, filesystem::Destination)>> = None;
-        let pages = if id == "extractPdf" {
-            let p = parse_pages(&request["pages"])?;
-            Some(p)
+        let pages = if matches!(id, "extractPdf" | "removePages") {
+            Some(parse_pages(&request["pages"])?)
+        } else {
+            None
+        };
+        let compress_opts = if id == "compressPdf" {
+            let mode_str = request["mode"].as_str().unwrap_or("lossless");
+            let jpeg_quality = request["jpegQuality"].as_u64();
+            let mode = if mode_str == "lossless" {
+                if jpeg_quality.is_some() {
+                    return Err(Error("INVALID_REQUEST"));
+                }
+                CompressMode::Lossless
+            } else {
+                CompressMode::Lossy {
+                    jpeg_quality: jpeg_quality.unwrap_or(80) as u8,
+                }
+            };
+            Some((mode_str.to_string(), mode))
         } else {
             None
         };
@@ -237,17 +253,78 @@ impl Dispatcher {
             return Ok(envelope);
         }
         let result = if let Some(destination) = destination {
+            if let Some((mode_str, compress_mode)) = compress_opts {
+                let out = staging.path().join("output.pdf");
+                warnings.extend(
+                    self.backend
+                        .compress(&paths[0], compress_mode, &out, control)?,
+                );
+                let (report, w) = self.backend.inspect(&out, control)?;
+                warnings.extend(w);
+                if report["pageCount"] != total_pages
+                    || report["forms"] != "absent"
+                    || report["signatures"] != "absent"
+                {
+                    return Err(Error("PRESERVATION_UNKNOWN"));
+                }
+                let mut file = std::fs::File::open(&out)?;
+                let bytes = file.metadata()?.len();
+                if bytes > TOTAL_LIMIT {
+                    return Err(Error("LIMIT_EXCEEDED"));
+                }
+                let input_bytes = inputs[0].bytes;
+                let saved_bytes = input_bytes as i64 - bytes as i64;
+                let ratio = if input_bytes > 0 {
+                    ((bytes as f64 / input_bytes as f64) * 10000.0).round() / 10000.0
+                } else {
+                    0.0
+                };
+                if bytes >= input_bytes {
+                    warnings.push(json!({
+                        "code": "NO_SIZE_REDUCTION",
+                        "message": "Output size is not smaller than input; input may already be compact."
+                    }));
+                }
+                let result = json!({
+                    "path": request["output"]["path"],
+                    "sha256": filesystem::hash(&mut file)?,
+                    "bytes": bytes,
+                    "pageCount": total_pages,
+                    "inputBytes": input_bytes,
+                    "savedBytes": saved_bytes,
+                    "compressionRatio": ratio,
+                    "mode": mode_str,
+                });
+                let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
+                if !contract::valid_output(id, &envelope) {
+                    return Err(Error("INTERNAL"));
+                }
+                self.workspace.unchanged(&mut inputs)?;
+                control.check()?;
+                destination.commit(&out, &inputs)?;
+                return Ok(envelope);
+            }
             if pages
                 .as_ref()
                 .is_some_and(|p| p.last().copied().unwrap_or(0) > total_pages)
             {
                 return Err(Error("INVALID_REQUEST"));
             }
+            let selected_pages = if id == "removePages" {
+                let remove = pages.as_ref().unwrap();
+                let kept: Vec<u64> = (1..=total_pages).filter(|p| !remove.contains(p)).collect();
+                if kept.is_empty() {
+                    return Err(Error("INVALID_REQUEST"));
+                }
+                Some(kept)
+            } else {
+                pages
+            };
             let out = staging.path().join("output.pdf");
             let (result, _) = transform_artifact(
                 self.backend.as_ref(),
                 &paths,
-                pages.as_deref(),
+                selected_pages.as_deref(),
                 total_pages,
                 &out,
                 request["output"]["path"].as_str().unwrap(),

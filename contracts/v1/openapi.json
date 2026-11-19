@@ -520,6 +520,262 @@
           }
         }
       }
+    },
+    "/v1/remove-pages": {
+      "post": {
+        "operationId": "removePages",
+        "summary": "Remove selected pages and write the remaining pages",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemovePagesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validated domain result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/removePagesSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid HTTP bearer credential; transport-level failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/compress": {
+      "post": {
+        "operationId": "compressPdf",
+        "summary": "Compress PDF streams and optionally optimize embedded images",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompressRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validated domain result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/compressPdfSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid HTTP bearer credential; transport-level failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -680,6 +936,117 @@
         },
         "required": [
           "outputs"
+        ]
+      },
+      "RemovePagesRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "pages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2000,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Strictly increasing 1-based page numbers to remove; at least one page must remain."
+          },
+          "output": {
+            "$ref": "#/components/schemas/Output"
+          }
+        },
+        "required": [
+          "input",
+          "pages",
+          "output"
+        ]
+      },
+      "CompressRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "output": {
+            "$ref": "#/components/schemas/Output"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "lossless",
+              "lossy"
+            ],
+            "default": "lossless",
+            "description": "Lossless recompresses streams and object streams; lossy additionally optimizes eligible images with JPEG."
+          },
+          "jpegQuality": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "JPEG quality (0-100, default 80) when mode is lossy; rejected in lossless mode."
+          }
+        },
+        "required": [
+          "input",
+          "output"
+        ]
+      },
+      "CompressResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Relative regular-file path inside a configured workspace root; URLs, traversal and symlink escape forbidden."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pageCount": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "inputBytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "savedBytes": {
+            "type": "integer"
+          },
+          "compressionRatio": {
+            "type": "number",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "lossless",
+              "lossy"
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "sha256",
+          "bytes",
+          "pageCount",
+          "inputBytes",
+          "savedBytes",
+          "compressionRatio",
+          "mode"
         ]
       },
       "Warning": {
@@ -993,6 +1360,72 @@
           },
           "result": {
             "$ref": "#/components/schemas/SplitResult"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Warning"
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "operationId",
+          "result",
+          "warnings"
+        ]
+      },
+      "removePagesSuccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "1.0.0"
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "enum": [
+              "removePages"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Warning"
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "operationId",
+          "result",
+          "warnings"
+        ]
+      },
+      "compressPdfSuccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "1.0.0"
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "enum": [
+              "compressPdf"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/CompressResult"
           },
           "warnings": {
             "type": "array",
