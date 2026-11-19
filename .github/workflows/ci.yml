@@ -8,9 +8,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
+          - runner: ubuntu-26.04
             experimental: false
-          - runner: macos-15
+          - runner: macos-26
             experimental: true
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.experimental }}
@@ -31,7 +31,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             sudo apt-get update
-            sudo apt-get install -y poppler-utils
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends poppler-utils
           else
             brew install poppler
           fi
@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: ANPDF_QPDF="$(cat build/work/qpdf-path)" python3 tests/integration.py
   forge-output:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,7 +57,7 @@ jobs:
           build/qualification/node_modules/.bin/tsc -p build/qualification/tsconfig.json
           node --import ./build/qualification/register-hooks.mjs build/qualification/probe.mjs
   privacy:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
