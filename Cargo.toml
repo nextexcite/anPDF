@@ -4,7 +4,7 @@ version = "0.1.0-alpha.1"
 edition = "2024"
 license = "Apache-2.0"
 description = "Local agent-native PDF toolkit"
-rust-version = "1.90"
+rust-version = "1.100"
 
 [dependencies]
 serde_json = "1"
