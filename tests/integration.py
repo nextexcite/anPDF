@@ -1,5 +1,5 @@
 """Real qpdf cross-surface qualification. Requires built anpdf, qpdf 12.4.2, Poppler."""
-import hashlib,importlib.util,json,os,pathlib,shutil,socket,subprocess,tempfile,time,urllib.request,urllib.error
+import hashlib,importlib.util,json,os,pathlib,shutil,socket,subprocess,tempfile,time,urllib.request,urllib.error,zlib
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BIN=pathlib.Path(os.environ.get('ANPDF_BINARY',ROOT/'target/debug/anpdf')).resolve()
 QPDF=pathlib.Path(os.environ.get('ANPDF_QPDF') or shutil.which('qpdf') or '/usr/bin/qpdf').resolve()
@@ -17,12 +17,42 @@ def http(port,token,path,data=None,extra=None):
         with urllib.request.urlopen(r,timeout=15) as r:return r.status,json.load(r)
     except urllib.error.HTTPError as e:return e.code,json.load(e)
 
+def build_pdf(objs):
+    res=bytearray(b'%PDF-1.7\n');offs=[0]
+    for i,o in enumerate(objs,1):offs.append(len(res));res.extend(f'{i} 0 obj\n'.encode()+o+b'\nendobj\n')
+    xref=len(res);res.extend(f'xref\n0 {len(objs)+1}\n0000000000 65535 f \n'.encode())
+    for o in offs[1:]:res.extend(f'{o:010d} 00000 n \n'.encode())
+    res.extend(f'trailer\n<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode());return bytes(res)
+
 def run():
  with tempfile.TemporaryDirectory(prefix='anpdf-tests-') as t:
     base=pathlib.Path(t);roots={s:base/s for s in ['cli','http','mcp']}
+    bomb_data=b' '*(40*1024*1024)
+    for _ in range(3):bomb_data=zlib.compress(bomb_data,9)
+    bomb_pdf=build_pdf([
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << >> /Contents 4 0 R >>',
+        b'<< /Filter [/FlateDecode /FlateDecode /FlateDecode] /Length '+str(len(bomb_data)).encode()+b' >>\nstream\n'+bomb_data+b'\nendstream',
+    ])
+    bad_filter_pdf=build_pdf([
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << >> /Contents 4 0 R >>',
+        b'<< /Filter /UnknownDecode /Length 4 >>\nstream\nabcd\nendstream',
+    ])
+    cyclic_pdf=build_pdf([
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Count 1 /Kids [2 0 R] /Parent 2 0 R >>',
+    ])
     for root in roots.values():
         gen.generate(root)
         subprocess.run([str(QPDF),'--encrypt','','synthetic-only','256','--',str(root/'one.pdf'),str(root/'encrypted.pdf')],check=True,capture_output=True)
+        (root/'truncated.pdf').write_bytes(b'%PDF-1.7\n1 0 obj\n<< /Type /Catalog')
+        (root/'bad-header.pdf').write_bytes(b'NOT-A-PDF-HEADER\x00\xff')
+        (root/'bad-filter.pdf').write_bytes(bad_filter_pdf)
+        (root/'cyclic.pdf').write_bytes(cyclic_pdf)
+        (root/'flate-bomb.pdf').write_bytes(bomb_pdf)
         if os.environ.get('ANPDF_EDGE_FIXTURES'):
             for name in ['chinese.pdf','signed.pdf','tampered.pdf']:shutil.copyfile(pathlib.Path(os.environ['ANPDF_EDGE_FIXTURES'])/name,root/name)
         (root/'alias.pdf').hardlink_to(root/'one.pdf');(root/'symlink.pdf').symlink_to('one.pdf')
@@ -84,6 +114,12 @@ def run():
           ('merge',{'inputs':[{'path':'three.pdf'},{'path':'one.pdf'}],'output':{'path':'merged.pdf'}},'OUTPUT_EXISTS'),
           ('extract',{'input':{'path':'three.pdf'},'pages':[2],'output':{'path':'subset.pdf','replaceExisting':True}},None),
           ('inspect',{'input':{'path':'damaged.pdf'}},'INVALID_PDF'),
+          ('inspect',{'input':{'path':'truncated.pdf'}},'INVALID_PDF'),
+          ('inspect',{'input':{'path':'bad-header.pdf'}},'INVALID_PDF'),
+          ('inspect',{'input':{'path':'bad-filter.pdf'}},'INVALID_PDF'),
+          ('inspect',{'input':{'path':'cyclic.pdf'}},'INVALID_PDF'),
+          ('inspect',{'input':{'path':'flate-bomb.pdf'}},None),
+          ('compress',{'input':{'path':'flate-bomb.pdf'},'output':{'path':'bomb-recompressed.pdf'}},None),
           ('inspect',{'input':{'path':'encrypted.pdf'}},'ENCRYPTED_UNSUPPORTED'),
           ('inspect',{'input':{'path':'missing.pdf'}},'NOT_FOUND'),
           ('inspect',{'input':{'path':'../one.pdf'}},'ACCESS_DENIED'),

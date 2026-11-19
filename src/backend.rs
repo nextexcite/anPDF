@@ -34,6 +34,31 @@ impl Control {
         }
     }
 }
+const RSS_LIMIT_BYTES: u64 = 768 * 1024 * 1024;
+const MAX_JSON_OBJECTS: usize = 200_000;
+const MAX_WALK_NODES: usize = 2_000_000;
+
+#[cfg(target_os = "macos")]
+fn child_rss_exceeded(pid: i32) -> bool {
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    let rc = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTASKINFO,
+            0,
+            (&mut info as *mut libc::proc_taskinfo).cast::<libc::c_void>(),
+            size,
+        )
+    };
+    rc == size && info.pti_resident_size > RSS_LIMIT_BYTES
+}
+
+#[cfg(not(target_os = "macos"))]
+fn child_rss_exceeded(_pid: i32) -> bool {
+    false
+}
+
 #[derive(Clone, Copy)]
 pub enum CompressMode {
     Lossless,
@@ -121,12 +146,13 @@ impl Qpdf {
         let f = overflow.clone();
         let err = std::thread::spawn(move || bounded(stderr, 65536, f));
         let status = loop {
-            if control.check().is_err() || overflow.load(Ordering::Relaxed) {
+            let mem_exceeded = child_rss_exceeded(pid);
+            if control.check().is_err() || overflow.load(Ordering::Relaxed) || mem_exceeded {
                 unsafe { libc::kill(-pid, libc::SIGKILL) };
                 let _ = child.wait();
                 let _ = out.join();
                 let _ = err.join();
-                return Err(Error(if overflow.load(Ordering::Relaxed) {
+                return Err(Error(if mem_exceeded || overflow.load(Ordering::Relaxed) {
                     "LIMIT_EXCEEDED"
                 } else {
                     "TIMEOUT"
@@ -173,25 +199,40 @@ fn warning(code: i32) -> Vec<Value> {
         vec![]
     }
 }
-fn walk(v: &Value, key: &str) -> bool {
-    match v {
-        Value::Object(m) => m.contains_key(key) || m.values().any(|v| walk(v, key)),
-        Value::Array(a) => a.iter().any(|v| walk(v, key)),
-        _ => false,
-    }
-}
-fn sig(v: &Value) -> bool {
-    match v {
-        Value::Object(m) => {
-            m.get("/Type").is_some_and(|x| x == "/Sig")
-                || m.get("/FT").is_some_and(|x| x == "/Sig")
-                || m.contains_key("/ByteRange")
-                || m.contains_key("/Perms")
-                || m.values().any(sig)
+fn walk_any(
+    root: &Value,
+    mut pred: impl FnMut(&serde_json::Map<String, Value>) -> bool,
+) -> Result<bool> {
+    let mut stack = vec![root];
+    let mut visited = 0usize;
+    while let Some(node) = stack.pop() {
+        visited += 1;
+        if visited > MAX_WALK_NODES {
+            return Err(Error("LIMIT_EXCEEDED"));
         }
-        Value::Array(a) => a.iter().any(sig),
-        _ => false,
+        match node {
+            Value::Object(m) => {
+                if pred(m) {
+                    return Ok(true);
+                }
+                stack.extend(m.values());
+            }
+            Value::Array(a) => stack.extend(a.iter()),
+            _ => {}
+        }
     }
+    Ok(false)
+}
+fn walk(v: &Value, key: &str) -> Result<bool> {
+    walk_any(v, |m| m.contains_key(key))
+}
+fn sig(v: &Value) -> Result<bool> {
+    walk_any(v, |m| {
+        m.get("/Type").is_some_and(|x| x == "/Sig")
+            || m.get("/FT").is_some_and(|x| x == "/Sig")
+            || m.contains_key("/ByteRange")
+            || m.contains_key("/Perms")
+    })
 }
 fn resolve_obj<'a>(objs: &'a Value, r: &str) -> Option<&'a Value> {
     objs.get(format!("obj:{r}")).and_then(|o| o.get("value"))
@@ -291,6 +332,74 @@ fn extract_pages(v: &Value, objs: &Value) -> Vec<Value> {
     }
     out
 }
+fn inspect_json(v: &Value, warn_code: i32) -> Result<(Value, Vec<Value>)> {
+    let pages = v["pages"]
+        .as_array()
+        .ok_or(Error("PRESERVATION_UNKNOWN"))?
+        .len();
+    if pages > 2000 {
+        return Err(Error("LIMIT_EXCEEDED"));
+    }
+    let objs = v["qpdf"]
+        .as_array()
+        .and_then(|a| a.get(1))
+        .unwrap_or(&Value::Null);
+    if objs.as_object().is_some_and(|m| m.len() > MAX_JSON_OBJECTS) {
+        return Err(Error("LIMIT_EXCEEDED"));
+    }
+    let known = objs.is_object();
+    let pdf_version = v["qpdf"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|m| m["pdfversion"].as_str())
+        .unwrap_or("");
+    let forms = if walk(&v["qpdf"], "/AcroForm")?
+        || walk(&v["qpdf"], "/XFA")?
+        || v["acroform"]["hasacroform"] == true
+    {
+        "present"
+    } else if known && v["acroform"]["hasacroform"] == false {
+        "absent"
+    } else {
+        "unknown"
+    };
+    let signatures = if sig(&v["qpdf"])? {
+        "present"
+    } else if known {
+        "absent"
+    } else {
+        "unknown"
+    };
+    let actions = if walk(&v["qpdf"], "/OpenAction")? || walk(&v["qpdf"], "/AA")? {
+        "present"
+    } else if known {
+        "absent"
+    } else {
+        "unknown"
+    };
+    let has_outline = v["outlines"].as_array().is_some_and(|a| !a.is_empty());
+    let has_attachments = v["attachments"].as_object().is_some_and(|m| !m.is_empty());
+    let metadata = extract_metadata(objs);
+    let page_infos = extract_pages(v, objs);
+    let warnings = warning(warn_code);
+    Ok((
+        json!({
+            "pageCount": pages,
+            "pdfVersion": pdf_version,
+            "structuralStatus": if warnings.is_empty() { "valid" } else { "warnings" },
+            "encrypted": false,
+            "forms": forms,
+            "signatures": signatures,
+            "signatureValidity": "notChecked",
+            "actions": actions,
+            "hasOutline": has_outline,
+            "hasAttachments": has_attachments,
+            "metadata": metadata,
+            "pages": page_infos,
+        }),
+        warnings,
+    ))
+}
 impl Backend for Qpdf {
     fn inspect(&self, path: &Path, control: &Control) -> Result<(Value, Vec<Value>)> {
         self.qualified(control)?;
@@ -315,71 +424,7 @@ impl Backend for Qpdf {
             return Err(Error("INVALID_PDF"));
         }
         let v: Value = serde_json::from_slice(&data).map_err(|_| Error("INVALID_PDF"))?;
-        let pages = v["pages"]
-            .as_array()
-            .ok_or(Error("PRESERVATION_UNKNOWN"))?
-            .len();
-        if pages > 2000 {
-            return Err(Error("LIMIT_EXCEEDED"));
-        }
-        let known = v["qpdf"]
-            .as_array()
-            .is_some_and(|a| a.len() >= 2 && a[1].is_object());
-        let pdf_version = v["qpdf"]
-            .as_array()
-            .and_then(|a| a.first())
-            .and_then(|m| m["pdfversion"].as_str())
-            .unwrap_or("");
-        let forms = if walk(&v["qpdf"], "/AcroForm")
-            || walk(&v["qpdf"], "/XFA")
-            || v["acroform"]["hasacroform"] == true
-        {
-            "present"
-        } else if known && v["acroform"]["hasacroform"] == false {
-            "absent"
-        } else {
-            "unknown"
-        };
-        let signatures = if sig(&v["qpdf"]) {
-            "present"
-        } else if known {
-            "absent"
-        } else {
-            "unknown"
-        };
-        let actions = if walk(&v["qpdf"], "/OpenAction") || walk(&v["qpdf"], "/AA") {
-            "present"
-        } else if known {
-            "absent"
-        } else {
-            "unknown"
-        };
-        let has_outline = v["outlines"].as_array().is_some_and(|a| !a.is_empty());
-        let has_attachments = v["attachments"].as_object().is_some_and(|m| !m.is_empty());
-        let objs = v["qpdf"]
-            .as_array()
-            .and_then(|a| a.get(1))
-            .unwrap_or(&Value::Null);
-        let metadata = extract_metadata(objs);
-        let page_infos = extract_pages(&v, objs);
-        let warnings = warning(if check == 3 || code == 3 { 3 } else { 0 });
-        Ok((
-            json!({
-                "pageCount": pages,
-                "pdfVersion": pdf_version,
-                "structuralStatus": if warnings.is_empty() { "valid" } else { "warnings" },
-                "encrypted": false,
-                "forms": forms,
-                "signatures": signatures,
-                "signatureValidity": "notChecked",
-                "actions": actions,
-                "hasOutline": has_outline,
-                "hasAttachments": has_attachments,
-                "metadata": metadata,
-                "pages": page_infos,
-            }),
-            warnings,
-        ))
+        inspect_json(&v, if check == 3 || code == 3 { 3 } else { 0 })
     }
     fn transform(
         &self,
@@ -442,7 +487,7 @@ impl Backend for Qpdf {
 #[cfg(test)]
 mod tests {
     use super::{extract_metadata, extract_pages};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     #[test]
     fn metadata_and_inherited_page_geometry() {
@@ -486,5 +531,35 @@ mod tests {
             extract_pages(&v, &v["qpdf"][1]),
             vec![json!({"pageNumber": 1, "rotation": 0})]
         );
+    }
+
+    #[test]
+    fn deep_nesting_nonfinite_mediabox_and_object_bomb_limits() {
+        use super::{MAX_JSON_OBJECTS, inspect_json, walk};
+        let mut nested = json!({"/Sig": true});
+        for _ in 0..300 {
+            nested = json!({"child": nested});
+        }
+        assert!(walk(&nested, "/Sig").unwrap());
+
+        let huge_box = json!({
+            "pages": [{"object": "1 0 R", "pageposfrom1": 1, "label": null}],
+            "acroform": {"hasacroform": false},
+            "outlines": [],
+            "attachments": {},
+            "qpdf": [
+                {"pdfversion": "1.7"},
+                {"obj:1 0 R": {"value": {"/Type": "/Page", "/MediaBox": [-1e308, 0.0, 1e308, 100.0]}}}
+            ]
+        });
+        let (res, _) = inspect_json(&huge_box, 0).unwrap();
+        assert_eq!(res["pages"], json!([{"pageNumber": 1, "rotation": 0}]));
+
+        let mut objs = serde_json::Map::new();
+        for i in 0..=MAX_JSON_OBJECTS {
+            objs.insert(format!("obj:{i} 0 R"), json!({}));
+        }
+        let bomb = json!({"pages": [], "qpdf": [{"pdfversion": "1.7"}, Value::Object(objs)]});
+        assert_eq!(inspect_json(&bomb, 0).unwrap_err().0, "LIMIT_EXCEEDED");
     }
 }

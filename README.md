@@ -16,7 +16,7 @@ The goal is to **own the interface and the workflow**, while reusing proven PDF 
 
 ## What works today
 
-**Version:** `0.1.0-alpha.1` — preliminary, **not production-qualified**.
+**Version:** `0.1.0-alpha.2` — preliminary, **not production-qualified**.
 
 | Operation | CLI | HTTP | MCP |
 | --- | --- | --- | --- |

@@ -1,9 +1,33 @@
-name: Preliminary OCI and release publish
-on: [workflow_dispatch]
+name: Release OCI and native artifacts
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 permissions:
   contents: read
 jobs:
+  prepare:
+    runs-on: ubuntu-26.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read and validate release version
+        id: meta
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')
+          tag="v${version}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "$tag" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}" >&2
+            exit 1
+          fi
+          printf 'version=%s\ntag=%s\n' "$version" "$tag" >> "$GITHUB_OUTPUT"
   image:
+    needs: prepare
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -31,13 +55,38 @@ jobs:
           context: .
           file: containers/Dockerfile
           platforms: linux/amd64
+          build-args: APP_VERSION=${{ needs.prepare.outputs.version }}
           load: true
           push: false
-          tags: anpdf:0.1.0-alpha.1-${{ github.sha }}
+          tags: anpdf:${{ needs.prepare.outputs.version }}-${{ github.sha }}
           provenance: false
           sbom: false
       - name: Non-root, read-only, network-none smoke test
-        run: sh containers/smoke.sh anpdf:0.1.0-alpha.1-${{ github.sha }}
+        run: sh containers/smoke.sh anpdf:${{ needs.prepare.outputs.version }}-${{ github.sha }}
+      - name: Prepare export directory
+        run: mkdir -p build/artifacts
+      - name: Export OCI archive for SBOM and vulnerability scan
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: containers/Dockerfile
+          platforms: linux/amd64
+          build-args: APP_VERSION=${{ needs.prepare.outputs.version }}
+          push: false
+          tags: ${{ steps.meta.outputs.image }}:${{ needs.prepare.outputs.version }}-${{ github.sha }}
+          outputs: type=oci,dest=build/artifacts/anpdf.oci.tar
+          provenance: mode=min
+          sbom: false
+      - name: Scan OCI SBOM, licenses, and vulnerabilities before push
+        run: |
+          python3 build/get-tool.py syft build/work/syft
+          python3 build/get-tool.py grype build/work/grype
+          build/work/syft/syft scan oci-archive:build/artifacts/anpdf.oci.tar -o spdx-json=build/artifacts/anpdf-linux-amd64.spdx.json
+          build/work/grype/grype oci-archive:build/artifacts/anpdf.oci.tar -o json > build/artifacts/anpdf-linux-amd64.grype.json
+          python3 build/oci-audit.py \
+            --sbom build/artifacts/anpdf-linux-amd64.spdx.json \
+            --grype build/artifacts/anpdf-linux-amd64.grype.json \
+            --out build/artifacts/oci-audit-report.json
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -51,10 +100,11 @@ jobs:
           context: .
           file: containers/Dockerfile
           platforms: linux/amd64
+          build-args: APP_VERSION=${{ needs.prepare.outputs.version }}
           push: true
           tags: |
-            ${{ steps.meta.outputs.image }}:0.1.0-alpha.1-${{ github.sha }}
-            ${{ steps.meta.outputs.image }}:0.1.0-alpha.1
+            ${{ steps.meta.outputs.image }}:${{ needs.prepare.outputs.version }}-${{ github.sha }}
+            ${{ steps.meta.outputs.image }}:${{ needs.prepare.outputs.version }}
             ${{ steps.meta.outputs.image }}:latest
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -66,34 +116,22 @@ jobs:
           ref='${{ steps.meta.outputs.image }}@${{ steps.push.outputs.digest }}'
           docker pull --platform linux/amd64 "$ref"
           sh containers/smoke.sh "$ref"
-      - name: Prepare export directory
-        run: mkdir -p build/artifacts
-      - name: Export OCI archive for SBOM scan
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: containers/Dockerfile
-          platforms: linux/amd64
-          push: false
-          tags: ${{ steps.meta.outputs.image }}:0.1.0-alpha.1-${{ github.sha }}
-          outputs: type=oci,dest=build/artifacts/anpdf.oci.tar
-          provenance: mode=min
-          sbom: false
-      - name: Generate actual image SBOM, digest record, and checksums
+      - name: Record digest and checksums
         run: |
-          python3 build/get-tool.py syft build/work/syft
-          build/work/syft/syft scan oci-archive:build/artifacts/anpdf.oci.tar -o spdx-json=build/artifacts/anpdf-linux-amd64.spdx.json
           printf '%s@%s\n' '${{ steps.meta.outputs.image }}' '${{ steps.push.outputs.digest }}' > build/artifacts/oci-digest.txt
-          (cd build/artifacts && sha256sum anpdf-linux-amd64.spdx.json oci-digest.txt > SHA256SUMS-oci.txt)
-      - name: Upload OCI SBOM and digest artifacts
+          (cd build/artifacts && sha256sum anpdf-linux-amd64.spdx.json anpdf-linux-amd64.grype.json oci-audit-report.json oci-digest.txt > SHA256SUMS-oci.txt)
+      - name: Upload OCI SBOM, scan, and digest artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oci-linux-amd64
           path: |
             build/artifacts/anpdf-linux-amd64.spdx.json
+            build/artifacts/anpdf-linux-amd64.grype.json
+            build/artifacts/oci-audit-report.json
             build/artifacts/oci-digest.txt
             build/artifacts/SHA256SUMS-oci.txt
   macos-arm64:
+    needs: prepare
     runs-on: macos-26
     permissions:
       contents: read
@@ -114,25 +152,29 @@ jobs:
           mkdir -p build/work
           python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
           python3 fixtures/generate.py build/work/fixtures
-          ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf operations | python3 -c 'import json,sys; v=json.load(sys.stdin); assert len(v["operations"])>=3'
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf --version
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf operations | python3 -c 'import json,sys; v=json.load(sys.stdin); assert len(v["operations"])>=6'
           ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf merge --root build/work/fixtures --request-json '{"inputs":[{"path":"three.pdf"},{"path":"one.pdf"}],"output":{"path":"merged.pdf"}}' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert v["result"]["pageCount"]==4'
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf compress --root build/work/fixtures --request-json '{"input":{"path":"three.pdf"},"output":{"path":"compressed.pdf"}}' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert v["result"]["pageCount"]==3 and v["result"]["savedBytes"]>0'
       - name: Package macOS arm64 tarball and checksums
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          stage="build/artifacts/anpdf-0.1.0-alpha.1-macos-arm64"
+          stage="build/artifacts/anpdf-${VERSION}-macos-arm64"
           mkdir -p "$stage"
           cp target/release/anpdf LICENSE NOTICE license-manifest.json README.md "$stage/"
           cp -R THIRD_PARTY_LICENSES "$stage/"
-          tar -C build/artifacts -czf build/artifacts/anpdf-0.1.0-alpha.1-macos-arm64.tar.gz anpdf-0.1.0-alpha.1-macos-arm64
-          (cd build/artifacts && shasum -a 256 anpdf-0.1.0-alpha.1-macos-arm64.tar.gz > SHA256SUMS-macos-arm64.txt)
+          tar -C build/artifacts -czf "build/artifacts/anpdf-${VERSION}-macos-arm64.tar.gz" "anpdf-${VERSION}-macos-arm64"
+          (cd build/artifacts && shasum -a 256 "anpdf-${VERSION}-macos-arm64.tar.gz" > SHA256SUMS-macos-arm64.txt)
       - name: Upload macOS arm64 release artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos-arm64
           path: |
-            build/artifacts/anpdf-0.1.0-alpha.1-macos-arm64.tar.gz
+            build/artifacts/anpdf-${{ needs.prepare.outputs.version }}-macos-arm64.tar.gz
             build/artifacts/SHA256SUMS-macos-arm64.txt
   release:
-    needs: [image, macos-arm64]
+    needs: [prepare, image, macos-arm64]
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -141,18 +183,19 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
-      - name: Publish v0.1.0-alpha.1 prerelease assets
+      - name: Publish prerelease assets
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
           IMAGE: ${{ needs.image.outputs.image }}
           DIGEST: ${{ needs.image.outputs.digest }}
         run: |
-          tag="v0.1.0-alpha.1"
-          notes=$(printf 'Preliminary `0.1.0-alpha.1` build from `%s`.\n\n- **OCI (`linux/amd64`):** `%s@%s`\n  - Tags: `0.1.0-alpha.1-%s`, `0.1.0-alpha.1`, `latest`\n- **Native (`macos/arm64`):** `anpdf-0.1.0-alpha.1-macos-arm64.tar.gz` (requires qpdf 12.4.2 on PATH or `ANPDF_QPDF`)\n' \
-            "${GITHUB_SHA}" "$IMAGE" "$DIGEST" "${GITHUB_SHA}")
-          if gh release view "$tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release edit "$tag" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --notes "$notes" --prerelease
-            gh release upload "$tag" --repo "${GITHUB_REPOSITORY}" --clobber release-assets/*
+          notes=$(printf 'Preliminary `%s` build from `%s`.\n\n- **OCI (`linux/amd64`):** `%s@%s`\n  - Tags: `%s-%s`, `%s`, `latest`\n- **Native (`macos/arm64`):** `anpdf-%s-macos-arm64.tar.gz` (requires qpdf 12.4.2 on PATH or `ANPDF_QPDF`)\n- **Verification evidence:** Syft SPDX SBOM, Grype vulnerability report, and license/crate audit (`oci-audit-report.json`)\n' \
+            "$VERSION" "${GITHUB_SHA}" "$IMAGE" "$DIGEST" "$VERSION" "${GITHUB_SHA}" "$VERSION" "$VERSION")
+          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --notes "$notes" --prerelease
+            gh release upload "$TAG" --repo "${GITHUB_REPOSITORY}" --clobber release-assets/*
           else
-            gh release create "$tag" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "anPDF ${tag}" --notes "$notes" --prerelease release-assets/*
+            gh release create "$TAG" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "anPDF ${TAG}" --notes "$notes" --prerelease release-assets/*
           fi

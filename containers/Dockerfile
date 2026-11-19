@@ -19,8 +19,9 @@ COPY --from=build /build/target/release/anpdf /usr/local/bin/anpdf
 COPY LICENSE NOTICE license-manifest.json /usr/share/licenses/anpdf/
 COPY THIRD_PARTY_LICENSES /usr/share/licenses/anpdf/dependencies
 COPY --from=build /tmp/qpdf-12.4.2/LICENSE.txt /usr/share/licenses/qpdf/LICENSE.txt
+ARG APP_VERSION=0.1.0-alpha.2
 ENV ANPDF_QPDF=/opt/qpdf/bin/qpdf
-LABEL org.opencontainers.image.title="anPDF" org.opencontainers.image.version="0.1.0-alpha.1" org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.title="anPDF" org.opencontainers.image.version="${APP_VERSION}" org.opencontainers.image.licenses="Apache-2.0"
 USER 65532:65532
 WORKDIR /data
 ENTRYPOINT ["/usr/local/bin/anpdf"]

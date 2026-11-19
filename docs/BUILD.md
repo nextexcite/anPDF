@@ -2,23 +2,27 @@
 
 CI and release workflows run on GitHub-hosted runners (`ubuntu-26.04` for Linux amd64 and
 `macos-26` for Apple Silicon arm64). The OCI and release publication workflow
-(`.github/workflows/oci.yml`) is manual-only (`workflow_dispatch`) so untrusted PRs never
-receive package or release write permissions.
+(`.github/workflows/oci.yml`) triggers on `v*` tag pushes and `workflow_dispatch`,
+reading the authoritative version from `Cargo.toml` (and asserting tag alignment on
+tag pushes), so untrusted PRs never receive package or release write permissions.
 
 ## Published preliminary artifacts (until further notice)
 
-Each manual run of `.github/workflows/oci.yml` builds, smoke-tests, and publishes:
+Each release run of `.github/workflows/oci.yml` builds, scans, smoke-tests, and publishes:
 
 1. **`linux/amd64` OCI image (GHCR):** `ghcr.io/<owner>/anpdf` with tags
-   `0.1.0-alpha.1-<sha>`, `0.1.0-alpha.1`, and `latest`, minimal BuildKit provenance, and
-   a Syft SPDX image SBOM (`anpdf-linux-amd64.spdx.json`) + recorded digest (`oci-digest.txt`).
-   Push only happens after the non-root, read-only, `--network=none` smoke test passes;
+   `<version>-<sha>`, `<version>`, and `latest`, minimal BuildKit provenance,
+   Syft SPDX image SBOM (`anpdf-linux-amd64.spdx.json`), Grype vulnerability report
+   (`anpdf-linux-amd64.grype.json`), license/crate policy audit (`oci-audit-report.json`),
+   and recorded digest (`oci-digest.txt`). Push only happens after the non-root,
+   read-only, `--network=none` smoke test AND `build/oci-audit.py` (disallowing AGPL,
+   checking uninventoried Rust crates, and blocking fixable High/Critical CVEs) pass;
    the published digest is then pulled back and smoke-tested again (`DOCKER_BUILD_RECORD_UPLOAD=false`
    keeps build-record bundles off the release).
 2. **`macos/arm64` native binary (GitHub Prerelease + artifact):**
-   `anpdf-0.1.0-alpha.1-macos-arm64.tar.gz` and `SHA256SUMS-macos-arm64.txt`, built with
+   `anpdf-<version>-macos-arm64.tar.gz` and `SHA256SUMS-macos-arm64.txt`, built with
    pinned Rust `1.100.0` and `cargo-auditable 0.7.7`, smoke-tested against pinned qpdf `12.4.2`,
-   and attached to the `v0.1.0-alpha.1` GitHub prerelease alongside the OCI SBOM and digest.
+   and attached to the `v<version>` GitHub prerelease alongside the OCI SBOM, scan reports, and digest.
 
 `linux/arm64` OCI images are not built or published in this round.
 
@@ -34,8 +38,8 @@ is embedded with pinned `cargo-auditable 0.7.7` for actual binary SBOM discovery
 images carry license notices and retain distribution package copyright records.
 
 ```sh
-docker build -f containers/Dockerfile -t anpdf:0.1.0-alpha.1-local .
-sh containers/smoke.sh anpdf:0.1.0-alpha.1-local
+docker build -f containers/Dockerfile -t anpdf:0.1.0-alpha.2-local .
+sh containers/smoke.sh anpdf:0.1.0-alpha.2-local
 ```
 
 The smoke test uses numeric non-root UID `65532`, read-only rootfs, `--network=none`,

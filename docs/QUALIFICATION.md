@@ -1,14 +1,14 @@
 # Preliminary qualification evidence
 
 Observed locally and on hosted GitHub Actions runners (`ubuntu-26.04` amd64 and
-`macos-26` arm64). These checks establish a preliminary `0.1.0-alpha.1` vertical
+`macos-26` arm64). These checks establish a preliminary `0.1.0-alpha.2` vertical
 slice and artifact publication; they do not establish a production V0 release.
 
 | Check | Observed result |
 |---|---|
 | Canonical OpenAPI 3.0.3 | Independent openapi-spec-validator passed |
 | Rust | Build, unit safety/schema/inspect/discovery tests, format and Clippy with warnings denied passed on Linux amd64 and macOS arm64 |
-| Shared corpus | 49 cross-surface cases (inspect, merge, extract, split, remove-pages, compress) through CLI/HTTP/MCP passed with complete domain envelope equality on `ubuntu-26.04` and `macos-26` |
+| Shared corpus | 55 cross-surface cases (inspect, merge, extract, split, remove-pages, compress, malformed/stream-bomb) through CLI/HTTP/MCP passed with complete domain envelope equality on `ubuntu-26.04` and `macos-26` |
 | Preservation/order | Every corpus input hash preserved; independent Poppler text order passed |
 | HTTP | Loopback binding, bearer, Host/Origin, discovery and JSON error checks passed |
 | MCP | Initialization, discovery, calls, error wrapping and stdout framing passed |
@@ -16,10 +16,10 @@ slice and artifact publication; they do not establish a production V0 release.
 | Forge | Official multi-platform 0.2.0 package (`b8d74e2`), three native generators, deterministic regeneration, and TS compilation passed; fidelity gaps documented |
 | Edge fixtures | Embedded CJK text survived extraction; identical rendered pixels; synthetic signing and tampering independently verified; both refused by product |
 | Offline | Native inspection passed in an isolated Linux network namespace |
-| Process/filesystem | Timeout, capture overflow, sparse-file limit, symlink/alias rejection, atomic competing outputs and cleanup tests passed (`RLIMIT_AS` is Linux-only; XNU rejects it with `EINVAL`) |
+| Process/filesystem | Timeout, stdout/stderr capture overflow, object-count/deep-nesting/non-finite-MediaBox guards, sparse-file limit, symlink/alias rejection, atomic competing outputs, and cleanup tests passed (`RLIMIT_AS` on Linux; `proc_pidinfo` RSS watchdog on macOS) |
 | Native artifact | Auditable release binary and actual Syft SPDX SBOM produced; `macos-arm64` release tarball packaged and smoke-tested on `macos-26` |
 | GitHub workflows | Hosted `ci.yml` (`ubuntu-26.04`, `macos-26`, `forge-output`, `privacy`) and `oci.yml` passed |
-| OCI (`linux/amd64`) | Built on `ubuntu-26.04`, passed non-root/read-only/`--network=none` smoke test, exported OCI archive + minimal provenance + Syft SPDX SBOM, and published to GHCR |
+| OCI (`linux/amd64`) | Built on `ubuntu-26.04`, passed non-root/read-only/`--network=none` smoke test, Syft SPDX SBOM, Grype vulnerability gate, and `build/oci-audit.py` license/crate audit before GHCR push + post-push pull check |
 
 Synthetic recipes contain no personal data or external documents. CJK testing uses
 an exact checksum/revision-pinned OFL-1.1 font; the ephemeral test certificate/key
@@ -30,10 +30,8 @@ evidence, not a rendering/signing product feature.
 
 Remaining release gates:
 
-- Multi-arch `linux/arm64` OCI build/runtime verification, complete image vulnerability
-  scanning, and formal OS/backend license sign-off.
-- macOS memory-limit semantics (`RLIMIT_AS` is not enforced on XNU; `RLIMIT_CPU`,
-  `RLIMIT_FSIZE`, and `RLIMIT_NOFILE` remain active).
+- Multi-arch `linux/arm64` OCI build/runtime verification and formal OS/backend license sign-off.
+- macOS virtual-address vs RSS limits (`RLIMIT_AS` is rejected by XNU; `proc_pidinfo` enforces a 768 MiB RSS limit during polling, alongside kernel `RLIMIT_CPU`, `RLIMIT_FSIZE`, and `RLIMIT_NOFILE`).
 - Reproducible redistributable Forge artifact and wider generator/schema regression
   qualification; generated schema fidelity remains insufficient for validation.
 - Extended malformed/object/stream bombs, namespace mutation/race stress, HTTP

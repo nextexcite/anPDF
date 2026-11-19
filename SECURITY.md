@@ -25,11 +25,14 @@ private staging, so a bounded disposable temporary filesystem is recommended.
 Limits: 100 MiB/input, 250 MiB total input and output, 20 files, 2,000 total pages,
 two active jobs, 60 seconds/job, bounded JSON requests and subprocess capture.
 qpdf runs without a shell, with cleared environment, private staged absolute
-paths, a new process group, and CPU/file-size/open-file/address-space limits.
+paths, a new process group, and CPU/file-size/open-file limits (plus in-kernel
+`RLIMIT_AS` on Linux and a 768 MiB `proc_pidinfo` RSS watchdog on macOS),
+alongside bounded 200,000-object / 2,000,000-node iterative JSON inspection.
 Timeout/cancellation kills the process group. Directory/input hashing is bounded;
 portable wall-time interruption of a blocked filesystem I/O call is not promised.
 The temporary-filesystem quota and OS/container PID/memory constraints supplement
-these limits. Linux is locally qualified; macOS resource semantics remain a gate.
+these limits. Linux and macOS unit/integration checks are active; macOS relies on
+polling for the RSS watchdog rather than kernel `RLIMIT_AS`.
 
 The Rust process is not an OS network sandbox. Inspection was tested inside a
 network namespace with no interfaces/routes to external services. OCI recipes
@@ -42,7 +45,9 @@ AcroForms/XFA, or unknown preservation status. Signature presence detection is
 conservative structural detection, not certificate trust evaluation. qpdf's warning
 exit is retained as a canonical warning; fatal structural failures never commit
 outputs. Do not interpret structural success as appearance, PDF/A, or malware
-assurance. Expensive malformed/object/stream-bomb testing remains a release gate.
+assurance. Baseline truncated, bad-header, bad-filter, cyclic-tree, and nested
+Flate stream-bomb cases are covered in the integration corpus; wider multi-gigabyte
+fuzzing and stress testing remain ongoing release gates.
 
 Do not place sensitive examples, keys, credentials, logs, account identifiers, or
 workstation paths in source, fixtures, commits or artifacts. Security issues should

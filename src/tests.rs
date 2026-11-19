@@ -187,6 +187,15 @@ fn process_timeout_and_output_limits() {
         q.inspect(&exe, &Control::default()).unwrap_err().0,
         "LIMIT_EXCEEDED"
     );
+    fs::write(
+        &exe,
+        "#!/usr/bin/python3\nimport sys\nsys.stderr.buffer.write(b'e'*100000)\n",
+    )
+    .unwrap();
+    assert_eq!(
+        q.inspect(&exe, &Control::default()).unwrap_err().0,
+        "LIMIT_EXCEEDED"
+    );
 }
 #[test]
 fn atomic_competing_outputs_and_sparse_limit() {

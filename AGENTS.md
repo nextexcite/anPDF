@@ -12,7 +12,7 @@ Examples and fixtures must be entirely generic: synthetic reports, blank forms, 
 
 ## Current baseline (do not overclaim)
 
-- `0.1.0-alpha.1`: Rust 1.100.0 runtime; qpdf **12.4.2** adapter; inspect/validate, merge, selected-page extract, multi-output split, page removal, and lossless/lossy compression.
+- `0.1.0-alpha.2`: Rust 1.100.0 runtime; qpdf **12.4.2** adapter; inspect/validate, merge, selected-page extract, multi-output split, page removal, and lossless/lossy compression.
 - CLI JSON, optional authenticated **loopback-only** HTTP, and local MCP stdio use the same validated dispatcher.
 - `contracts/v1/openapi.json` is canonical. Pinned upstream Cloudflare **Forge 0.2.0** generates qualified TypeScript/MCP/Cap'n Web artifacts at build time. The Rust runtime adapters are **handwritten**, not Forge-generated Rust.
 - Hosted CI qualifies `ubuntu-26.04` (Linux amd64) and `macos-26` (macOS arm64), plus Forge output probes and full-history privacy checks. Preliminary publication (`.github/workflows/oci.yml`) targets the `linux/amd64` OCI image (GHCR) and the native `macos/arm64` release tarball (GitHub prerelease). `linux/arm64` OCI, remote HTTP hosting, and full production release gates have **not** been established. See `docs/QUALIFICATION.md` and `docs/BUILD.md` for what actually passed.
