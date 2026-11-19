@@ -12,6 +12,9 @@ status, and explicit unsupported/excluded capabilities.
 | extractPdf | extract | POST /v1/extract | extractPdf |
 | splitPdf | split | POST /v1/split | splitPdf |
 
+CLI discovery/utility commands: `operations`, `schema <operationId>`, `help [command]` / `--help` / `-h`, `version` / `--version` / `-V`.
+When neither `--qpdf` nor `ANPDF_QPDF` is set, the CLI/server checks standard system paths (`/opt/qpdf/bin/qpdf`, `/usr/bin/qpdf`, `/opt/homebrew/bin/qpdf`, `/usr/local/bin/qpdf`) and trusted `PATH` directories (absolute, owned by the effective user or root, without group/other write bits).
+
 Authenticated HTTP discovery: GET `/v1/operations` and `/v1/openapi.json`.
 A canonical error is `{contractVersion, operationId, error:{code,message,retryable}}`.
 Messages never include raw backend output, absolute input paths, or credentials.

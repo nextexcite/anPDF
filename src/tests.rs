@@ -209,16 +209,25 @@ fn split_destination_collision_and_rollback() {
             } else {
                 1
             };
+            let page_infos = (1..=pages)
+                .map(|n| json!({"pageNumber": n, "rotation": 0, "widthPoints": 300.0, "heightPoints": 200.0}))
+                .collect::<Vec<_>>();
             Ok((
                 json!({
                     "sha256": "0".repeat(64),
                     "bytes": 1,
                     "pageCount": pages,
+                    "pdfVersion": "1.7",
                     "structuralStatus": "valid",
                     "encrypted": false,
                     "forms": "absent",
                     "signatures": "absent",
-                    "signatureValidity": "notChecked"
+                    "signatureValidity": "notChecked",
+                    "actions": "absent",
+                    "hasOutline": false,
+                    "hasAttachments": false,
+                    "metadata": {},
+                    "pages": page_infos
                 }),
                 vec![],
             ))

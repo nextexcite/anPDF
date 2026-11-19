@@ -57,7 +57,7 @@ pub fn valid_output(id: &str, value: &Value) -> bool {
 pub fn discovery() -> Value {
     let ops: Vec<Value> = operations().into_iter().map(|(path, op)| json!({
         "operationId": op["operationId"], "description": op["summary"], "path":path,
-        "status":"implemented; backend qualification required", "inputSchema":input(op["operationId"].as_str().unwrap()),
+        "status":"implemented; qpdf 12.4.2 backend required", "inputSchema":input(op["operationId"].as_str().unwrap()),
         "outputSchema":resolve(&op["responses"]["200"]["content"]["application/json"]["schema"]),
         "errorSchema":resolve(&document()["components"]["schemas"]["Error"])
     })).collect();

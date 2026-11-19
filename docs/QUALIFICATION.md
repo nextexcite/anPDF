@@ -7,7 +7,7 @@ slice and artifact publication; they do not establish a production V0 release.
 | Check | Observed result |
 |---|---|
 | Canonical OpenAPI 3.0.3 | Independent openapi-spec-validator passed |
-| Rust | Build, six safety/schema tests, format and Clippy with warnings denied passed on Linux amd64 and macOS arm64 |
+| Rust | Build, unit safety/schema/inspect/discovery tests, format and Clippy with warnings denied passed on Linux amd64 and macOS arm64 |
 | Shared corpus | 38 cross-surface cases (inspect, merge, extract, split) through CLI/HTTP/MCP passed with complete domain envelope equality on `ubuntu-26.04` and `macos-26` |
 | Preservation/order | Every corpus input hash preserved; independent Poppler text order passed |
 | HTTP | Loopback binding, bearer, Host/Origin, discovery and JSON error checks passed |

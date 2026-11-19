@@ -728,6 +728,61 @@
           "pageCount"
         ]
       },
+      "DocumentMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "creator": {
+            "type": "string"
+          },
+          "producer": {
+            "type": "string"
+          }
+        }
+      },
+      "PageInfo": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pageNumber": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "widthPoints": {
+            "type": "number",
+            "minimum": 0
+          },
+          "heightPoints": {
+            "type": "number",
+            "minimum": 0
+          },
+          "rotation": {
+            "type": "integer",
+            "enum": [
+              0,
+              90,
+              180,
+              270
+            ]
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pageNumber",
+          "rotation"
+        ]
+      },
       "InspectResult": {
         "type": "object",
         "additionalProperties": false,
@@ -743,6 +798,9 @@
           "pageCount": {
             "type": "integer",
             "minimum": 0
+          },
+          "pdfVersion": {
+            "type": "string"
           },
           "structuralStatus": {
             "type": "string",
@@ -775,17 +833,47 @@
             "enum": [
               "notChecked"
             ]
+          },
+          "actions": {
+            "type": "string",
+            "enum": [
+              "present",
+              "absent",
+              "unknown"
+            ]
+          },
+          "hasOutline": {
+            "type": "boolean"
+          },
+          "hasAttachments": {
+            "type": "boolean"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/DocumentMetadata"
+          },
+          "pages": {
+            "type": "array",
+            "maxItems": 2000,
+            "items": {
+              "$ref": "#/components/schemas/PageInfo"
+            }
           }
         },
         "required": [
           "sha256",
           "bytes",
           "pageCount",
+          "pdfVersion",
           "structuralStatus",
           "encrypted",
           "forms",
           "signatures",
-          "signatureValidity"
+          "signatureValidity",
+          "actions",
+          "hasOutline",
+          "hasAttachments",
+          "metadata",
+          "pages"
         ]
       },
       "inspectPdfSuccess": {
@@ -987,7 +1075,7 @@
       }
     }
   },
-  "x-anpdf-status": "planning-contract; implementation qualification pending",
+  "x-anpdf-status": "preliminary 0.1.0-alpha.1 contract; qpdf 12.4.2 backend required",
   "security": [
     {
       "localBearer": []

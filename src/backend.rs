@@ -180,6 +180,104 @@ fn sig(v: &Value) -> bool {
         _ => false,
     }
 }
+fn resolve_obj<'a>(objs: &'a Value, r: &str) -> Option<&'a Value> {
+    objs.get(format!("obj:{r}")).and_then(|o| o.get("value"))
+}
+fn inherited_attr<'a>(objs: &'a Value, start: &'a Value, key: &str) -> Option<&'a Value> {
+    let mut cur = Some(start);
+    let mut seen = Vec::new();
+    for _ in 0..32 {
+        let dict = cur?;
+        if let Some(v) = dict.get(key) {
+            return Some(v);
+        }
+        let parent_ref = dict.get("/Parent").and_then(Value::as_str)?;
+        if seen.contains(&parent_ref) {
+            return None;
+        }
+        seen.push(parent_ref);
+        cur = resolve_obj(objs, parent_ref);
+    }
+    None
+}
+fn qpdf_text(v: &Value) -> Option<String> {
+    let s = v.as_str()?;
+    if let Some(u) = s.strip_prefix("u:") {
+        Some(u.to_string())
+    } else if s.starts_with("b:") {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+fn extract_metadata(objs: &Value) -> Value {
+    let mut map = serde_json::Map::new();
+    let info = match objs
+        .get("trailer")
+        .and_then(|t| t.get("value"))
+        .and_then(|t| t.get("/Info"))
+    {
+        Some(Value::String(r)) => resolve_obj(objs, r),
+        Some(v @ Value::Object(_)) => Some(v),
+        _ => None,
+    };
+    if let Some(info) = info {
+        for (pdf_key, json_key) in [
+            ("/Title", "title"),
+            ("/Author", "author"),
+            ("/Subject", "subject"),
+            ("/Creator", "creator"),
+            ("/Producer", "producer"),
+        ] {
+            if let Some(text) = info.get(pdf_key).and_then(qpdf_text) {
+                map.insert(json_key.to_string(), Value::String(text));
+            }
+        }
+    }
+    Value::Object(map)
+}
+fn extract_pages(v: &Value, objs: &Value) -> Vec<Value> {
+    let Some(pages) = v["pages"].as_array() else {
+        return vec![];
+    };
+    let mut out = Vec::with_capacity(pages.len().min(2000));
+    for (idx, page) in pages.iter().take(2000).enumerate() {
+        let num = page["pageposfrom1"].as_u64().unwrap_or((idx + 1) as u64);
+        let mut entry = serde_json::Map::new();
+        entry.insert("pageNumber".into(), json!(num));
+        let dict = page["object"].as_str().and_then(|r| resolve_obj(objs, r));
+        let rot = dict
+            .and_then(|d| inherited_attr(objs, d, "/Rotate"))
+            .and_then(Value::as_i64)
+            .map(|r| r.rem_euclid(360))
+            .filter(|r| matches!(r, 0 | 90 | 180 | 270))
+            .unwrap_or(0);
+        entry.insert("rotation".into(), json!(rot));
+        if let Some(arr) = dict
+            .and_then(|d| inherited_attr(objs, d, "/MediaBox"))
+            .and_then(Value::as_array)
+            .filter(|a| a.len() == 4)
+            && let (Some(x0), Some(y0), Some(x1), Some(y1)) = (
+                arr[0].as_f64(),
+                arr[1].as_f64(),
+                arr[2].as_f64(),
+                arr[3].as_f64(),
+            )
+        {
+            let w = (x1 - x0).abs();
+            let h = (y1 - y0).abs();
+            if w.is_finite() && h.is_finite() {
+                entry.insert("widthPoints".into(), json!(w));
+                entry.insert("heightPoints".into(), json!(h));
+            }
+        }
+        if let Some(label) = page["label"].as_str() {
+            entry.insert("label".into(), json!(label));
+        }
+        out.push(Value::Object(entry));
+    }
+    out
+}
 impl Backend for Qpdf {
     fn inspect(&self, path: &Path, control: &Control) -> Result<(Value, Vec<Value>)> {
         self.qualified(control)?;
@@ -214,6 +312,11 @@ impl Backend for Qpdf {
         let known = v["qpdf"]
             .as_array()
             .is_some_and(|a| a.len() >= 2 && a[1].is_object());
+        let pdf_version = v["qpdf"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|m| m["pdfversion"].as_str())
+            .unwrap_or("");
         let forms = if walk(&v["qpdf"], "/AcroForm")
             || walk(&v["qpdf"], "/XFA")
             || v["acroform"]["hasacroform"] == true
@@ -231,9 +334,37 @@ impl Backend for Qpdf {
         } else {
             "unknown"
         };
+        let actions = if walk(&v["qpdf"], "/OpenAction") || walk(&v["qpdf"], "/AA") {
+            "present"
+        } else if known {
+            "absent"
+        } else {
+            "unknown"
+        };
+        let has_outline = v["outlines"].as_array().is_some_and(|a| !a.is_empty());
+        let has_attachments = v["attachments"].as_object().is_some_and(|m| !m.is_empty());
+        let objs = v["qpdf"]
+            .as_array()
+            .and_then(|a| a.get(1))
+            .unwrap_or(&Value::Null);
+        let metadata = extract_metadata(objs);
+        let page_infos = extract_pages(&v, objs);
         let warnings = warning(if check == 3 || code == 3 { 3 } else { 0 });
         Ok((
-            json!({"pageCount":pages,"structuralStatus":if warnings.is_empty(){"valid"}else{"warnings"},"encrypted":false,"forms":forms,"signatures":signatures,"signatureValidity":"notChecked"}),
+            json!({
+                "pageCount": pages,
+                "pdfVersion": pdf_version,
+                "structuralStatus": if warnings.is_empty() { "valid" } else { "warnings" },
+                "encrypted": false,
+                "forms": forms,
+                "signatures": signatures,
+                "signatureValidity": "notChecked",
+                "actions": actions,
+                "hasOutline": has_outline,
+                "hasAttachments": has_attachments,
+                "metadata": metadata,
+                "pages": page_infos,
+            }),
             warnings,
         ))
     }
@@ -264,5 +395,55 @@ impl Backend for Qpdf {
             return Err(Error("INVALID_PDF"));
         }
         Ok(warning(code))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_metadata, extract_pages};
+    use serde_json::json;
+
+    #[test]
+    fn metadata_and_inherited_page_geometry() {
+        let v = json!({
+            "pages": [
+                {"object": "3 0 R", "pageposfrom1": 1, "label": "i"},
+                {"object": "4 0 R", "pageposfrom1": 2, "label": null}
+            ],
+            "qpdf": [
+                {"pdfversion": "1.7"},
+                {
+                    "obj:2 0 R": {"value": {"/Type": "/Pages", "/MediaBox": [0, 0, 612, 792], "/Rotate": -90}},
+                    "obj:3 0 R": {"value": {"/Type": "/Page", "/Parent": "2 0 R"}},
+                    "obj:4 0 R": {"value": {"/Type": "/Page", "/Parent": "2 0 R", "/MediaBox": [10, 20, 310, 420], "/Rotate": 180}},
+                    "obj:5 0 R": {"value": {"/Title": "u:Report", "/Author": "u:Alice", "/Subject": "b:deadbeef", "/Producer": "anPDF"}},
+                    "trailer": {"value": {"/Info": "5 0 R"}}
+                }
+            ]
+        });
+        let objs = &v["qpdf"][1];
+        assert_eq!(
+            extract_metadata(objs),
+            json!({"title": "Report", "author": "Alice", "producer": "anPDF"})
+        );
+        assert_eq!(
+            extract_pages(&v, objs),
+            vec![
+                json!({"pageNumber": 1, "rotation": 270, "widthPoints": 612.0, "heightPoints": 792.0, "label": "i"}),
+                json!({"pageNumber": 2, "rotation": 180, "widthPoints": 300.0, "heightPoints": 400.0})
+            ]
+        );
+    }
+
+    #[test]
+    fn circular_parent_does_not_loop() {
+        let v = json!({
+            "pages": [{"object": "1 0 R", "pageposfrom1": 1, "label": null}],
+            "qpdf": [{}, {"obj:1 0 R": {"value": {"/Parent": "2 0 R"}}, "obj:2 0 R": {"value": {"/Parent": "1 0 R"}}}]
+        });
+        assert_eq!(
+            extract_pages(&v, &v["qpdf"][1]),
+            vec![json!({"pageNumber": 1, "rotation": 0})]
+        );
     }
 }

@@ -31,7 +31,7 @@ Transforms currently **reject** encrypted, signed, form/XFA-bearing, or preserva
 
 ## Try it locally
 
-Requires Rust 1.100.0, Python 3, and qpdf 12.4.2 on your PATH.
+Requires Rust 1.100.0, Python 3, and qpdf 12.4.2 (auto-discovered from standard paths or trusted `PATH` directories, or overridden via `ANPDF_QPDF` / `--qpdf`). On macOS with Homebrew: `brew install qpdf`.
 
 ```sh
 cargo build --locked
