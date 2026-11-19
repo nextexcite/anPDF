@@ -6,7 +6,7 @@ if system=='macos' and arch=='aarch64':arch='arm64'
 root=pathlib.Path(sys.argv[1]).resolve();root.mkdir(parents=True,exist_ok=True)
 name=f'qpdf-12.4.2-bin-{system}-{arch}.zip';base='https://github.com/qpdf/qpdf/releases/download/v12.4.2/'
 checks=urllib.request.urlopen(base+'qpdf-12.4.2.sha256',timeout=60).read().decode();data=urllib.request.urlopen(base+name,timeout=120).read();digest=hashlib.sha256(data).hexdigest()
-assert any(line.split()[-1].lstrip('*')==name and line.split()[0]==digest for line in checks.splitlines()),'qpdf checksum mismatch'
+assert any(len(parts)==2 and parts[1].lstrip('*')==name and parts[0]==digest for parts in (line.split() for line in checks.splitlines())),'qpdf checksum mismatch'
 import io
 with zipfile.ZipFile(io.BytesIO(data)) as archive:
  for info in archive.infolist():

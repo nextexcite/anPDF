@@ -84,6 +84,7 @@ impl Qpdf {
                     (libc::RLIMIT_CPU, 60),
                     (libc::RLIMIT_FSIZE, 250 * 1024 * 1024),
                     (libc::RLIMIT_NOFILE, 64),
+                    #[cfg(not(target_os = "macos"))]
                     (libc::RLIMIT_AS, 768 * 1024 * 1024),
                 ] {
                     let r = libc::rlimit {
