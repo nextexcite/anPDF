@@ -12,14 +12,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Isolated adapter whose worker executable must handle the `pdfium-worker` subcommand.
 pub struct PdfiumProvider {
     pub library: PathBuf,
+    pub worker_executable: PathBuf,
 }
 
 impl PdfiumProvider {
     fn run(&self, request: Value, control: &Control) -> Result<Value> {
-        let executable = std::env::current_exe().map_err(|_| Error("BACKEND_UNAVAILABLE"))?;
-        let (code, bytes) = Qpdf { executable }.run(
+        let (code, bytes) = Qpdf {
+            executable: self.worker_executable.clone(),
+        }
+        .run(
             &[
                 "pdfium-worker".into(),
                 self.library
@@ -148,7 +152,11 @@ fn process(library: &Path, request: &Value) -> Result<Value> {
                     spans.push(span);
                 }
             }
-            let text: String = text.chars().iter().filter_map(|c| c.unicode_char()).collect();
+            let text: String = text
+                .chars()
+                .iter()
+                .filter_map(|c| c.unicode_char())
+                .collect();
             budget += text.len();
             if budget > MAX_TEXT_RESPONSE_BYTES / 2 {
                 return Err(Error("LIMIT_EXCEEDED"));
@@ -219,6 +227,7 @@ mod tests {
         );
         let provider = PdfiumProvider {
             library: "/nonexistent/libpdfium.so".into(),
+            worker_executable: "/nonexistent/anpdf".into(),
         };
         let control = Control::default();
         control
@@ -230,6 +239,20 @@ mod tests {
                 .unwrap_err()
                 .0,
             "TIMEOUT"
+        );
+    }
+    #[test]
+    fn explicit_worker_path_is_used_by_library_callers() {
+        let provider = PdfiumProvider {
+            library: "/nonexistent/libpdfium.so".into(),
+            worker_executable: "/nonexistent/anpdf-worker".into(),
+        };
+        assert_eq!(
+            provider
+                .extract_text(Path::new("input.pdf"), &[1], &Control::default())
+                .unwrap_err()
+                .0,
+            "BACKEND_UNAVAILABLE"
         );
     }
     #[test]

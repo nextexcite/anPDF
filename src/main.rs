@@ -566,13 +566,18 @@ fn id(command: &str) -> &'static str {
     }
 }
 
-fn configured_registry(executable: PathBuf, exact: bool, library: Option<PathBuf>) -> BackendRegistry {
+fn configured_registry(executable: PathBuf, exact: bool, library: Option<PathBuf>) -> Result<BackendRegistry> {
     let registry = BackendRegistry::with_qpdf_exact(executable, exact);
     #[cfg(feature = "pdfium")]
     {
         let mut registry = registry;
         if let Some(library) = library {
-            let provider = Arc::new(anpdf::pdfium::PdfiumProvider { library });
+            let worker_executable =
+                std::env::current_exe().map_err(|_| Error("BACKEND_UNAVAILABLE"))?;
+            let provider = Arc::new(anpdf::pdfium::PdfiumProvider {
+                library,
+                worker_executable,
+            });
             registry
                 .register_text("pdfium", provider.clone())
                 .expect("unique engine");
@@ -580,12 +585,12 @@ fn configured_registry(executable: PathBuf, exact: bool, library: Option<PathBuf
                 .register_renderer("pdfium", provider)
                 .expect("unique engine");
         }
-        registry
+        Ok(registry)
     }
     #[cfg(not(feature = "pdfium"))]
     {
         let _ = library;
-        registry
+        Ok(registry)
     }
 }
 
@@ -617,7 +622,7 @@ async fn async_main() {
             }
             Action::Run(o) => {
                 if o.command == "operations" {
-                    return Ok(Some(contract::discovery_with(&configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib))));
+                    return Ok(Some(contract::discovery_with(&configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib)?)));
                 }
                 if o.command == "schema" {
                     return contract::operation(o.schema.as_deref().unwrap())
@@ -631,7 +636,7 @@ async fn async_main() {
                         })
                         .ok_or(Error("UNSUPPORTED_OPERATION"));
                 }
-                let d = Arc::new(Dispatcher::with_registry(&o.root, configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib))?);
+                let d = Arc::new(Dispatcher::with_registry(&o.root, configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib)?)?);
                 match o.command.as_str() {
                     "serve" => {
                         let file = o.token_file.ok_or(Error("INVALID_REQUEST"))?;
