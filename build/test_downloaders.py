@@ -96,7 +96,7 @@ class CachedDownloaderPaths(unittest.TestCase):
                 self.assertEqual((restored / 'bin/qpdf').stat().st_mode & 0o777, 0o755)
                 self.assertEqual((restored / 'lib/libqpdf-link').readlink(), pathlib.Path('libqpdf-version'))
                 for name, relative in [('qpdf', 'bin/qpdf'), ('pdfium', 'lib/libpdfium.dylib' if system == 'Darwin' else 'lib/libpdfium.so')]:
-                    self.assertEqual(self.query(name, restored, system), str(restored / relative))
+                    self.assertEqual(self.query(name, restored, system), str(restored.resolve() / relative))
 
 
 if __name__ == '__main__':
