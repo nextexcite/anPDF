@@ -82,7 +82,7 @@ impl Shell {
     case "$cmd" in
         inspect|validate|merge|extract|split|remove-pages|compress|extract-text|render-page)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --pdfium-lib --request-json --request-file --dry-run --output -o --replace --preserve --mode --jpeg-quality --level --max-bytes --on-target-miss --allow-larger --engine --dpi --help -h" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --pdfium-lib --request-json --request-file --dry-run --json --output -o --replace --preserve --mode --jpeg-quality --level --max-bytes --on-target-miss --allow-larger --engine --dpi --pages --help -h" -- "$cur") )
             else
                 COMPREPLY=( $(compgen -f -- "$cur") )
             fi
@@ -142,6 +142,7 @@ _anpdf() {
         '--request-json[Inline JSON request payload]:json:'
         '--request-file[Read JSON request payload from file]:file:_files'
         '--dry-run[Validate request and destination policy without processing the PDF]'
+        '--json[Print the JSON result envelope on a terminal]'
         '(-o --output)'{-o,--output}'[Output path]:file:_files'
         '--replace[Allow replacing an existing output]'
         '--preserve[Required preserved aspects]:aspects:'
@@ -243,6 +244,7 @@ complete -c anpdf -n "__fish_seen_subcommand_from operations" -l pdfium-lib -r -
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-json -r -d 'Inline JSON request payload'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-file -r -F -d 'Read JSON request from file'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l dry-run -d 'Validate request without processing the PDF'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l json -d 'Print the JSON result envelope on a terminal'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" --force-files
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -s o -l output -r -F -d 'Output path'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l replace -d 'Allow replacing an existing output'
@@ -284,6 +286,7 @@ struct Options {
     pdfium_lib: Option<PathBuf>,
     request: Option<String>,
     dry: bool,
+    json: bool,
     port: u16,
     token_file: Option<PathBuf>,
     schema: Option<String>,
@@ -339,6 +342,7 @@ COMMON OPTIONS:\n\
   --request-json <str> Inline JSON request payload (or pass JSON on stdin)\n\
   --request-file <f>   Read JSON request payload from file\n\
   --dry-run            Validate request and destination policy without processing the PDF\n\
+  --json               On a terminal, print the JSON result envelope instead of the summary\n\
   --                   End of flags; following arguments are positional paths\n\n\
 SERVER OPTIONS:\n\
   --port <port>        Loopback HTTP port for serve (default: 8787)\n\
@@ -1127,6 +1131,7 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
         pdfium_lib: None,
         request: None,
         dry: false,
+        json: false,
         port: 8787,
         token_file: None,
         schema: None,
@@ -1187,6 +1192,7 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
                 request_file = Some(PathBuf::from(args.next().ok_or(need(canonical))?))
             }
             "--dry-run" => o.dry = true,
+            "--json" => o.json = true,
             "--port" => {
                 o.port = args
                     .next()
@@ -1270,6 +1276,7 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
         "--request-json",
         "--request-file",
         "--dry-run",
+        "--json",
     ];
     let allowed: &[&str] = match o.command.as_str() {
         "inspect" | "validate" => base,
@@ -1474,16 +1481,200 @@ fn main() {
     async_main();
 }
 
+/// Compact human byte size: `616 B`, `12.0 KiB`, `1.5 MiB`.
+fn fmt_bytes(b: u64) -> String {
+    if b >= 1024 * 1024 {
+        format!("{:.1} MiB", b as f64 / 1_048_576.0)
+    } else if b >= 1024 {
+        format!("{:.1} KiB", b as f64 / 1024.0)
+    } else {
+        format!("{b} B")
+    }
+}
+
+fn str_field<'v>(v: &'v Value, k: &str) -> &'v str {
+    v.get(k).and_then(Value::as_str).unwrap_or("?")
+}
+
+fn u64_field(v: &Value, k: &str) -> u64 {
+    v.get(k).and_then(Value::as_u64).unwrap_or(0)
+}
+
+/// Short plain-language rendering of a result envelope for terminals.
+/// Piped stdout keeps the compact envelope; `--json` prints it on a
+/// terminal too. Returns None for non-result payloads (operations,
+/// schema), which stay as JSON.
+fn human_result(v: &Value) -> Option<String> {
+    if v.get("dryRun").and_then(Value::as_bool).unwrap_or(false) {
+        return Some("request and destination policy valid (dry run — nothing written)".into());
+    }
+    let result = v.get("result")?;
+    let op = v.get("operationId")?.as_str()?;
+    let mut lines: Vec<String> = Vec::new();
+    match op {
+        "inspectPdf" => {
+            let mut flags = vec![
+                format!("{} pages", u64_field(result, "pageCount")),
+                fmt_bytes(u64_field(result, "bytes")),
+                format!("PDF {}", str_field(result, "pdfVersion")),
+            ];
+            if result
+                .get("encrypted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                flags.push("encrypted".into());
+            }
+            if result
+                .get("forms")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                flags.push("has forms".into());
+            }
+            let sigs = u64_field(result, "signatures");
+            if sigs > 0 {
+                flags.push(format!("{sigs} signature(s)"));
+            }
+            if result
+                .get("hasOutline")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                flags.push("outline".into());
+            }
+            if result
+                .get("hasAttachments")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                flags.push("attachments".into());
+            }
+            flags.push(format!(
+                "structure: {}",
+                str_field(result, "structuralStatus")
+            ));
+            lines.push(flags.join(" · "));
+        }
+        "mergePdf" | "extractPdf" | "removePages" => {
+            lines.push(format!(
+                "wrote '{}' — {} pages, {}",
+                str_field(result, "path"),
+                u64_field(result, "pageCount"),
+                fmt_bytes(u64_field(result, "bytes"))
+            ));
+        }
+        "splitPdf" => {
+            let outputs = result
+                .get("outputs")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            lines.push(format!("wrote {} outputs", outputs.len()));
+            for o in &outputs {
+                lines.push(format!(
+                    "  {} — {} pages, {}",
+                    str_field(o, "path"),
+                    u64_field(o, "pageCount"),
+                    fmt_bytes(u64_field(o, "bytes"))
+                ));
+            }
+        }
+        "compressPdf" => {
+            let mut line = format!(
+                "wrote '{}' — {} → {} ({})",
+                str_field(result, "path"),
+                fmt_bytes(u64_field(result, "inputBytes")),
+                fmt_bytes(u64_field(result, "bytes")),
+                str_field(result, "mode")
+            );
+            let saved = u64_field(result, "savedBytes");
+            if str_field(result, "outputSource") == "original" {
+                line.push_str(" — no reduction; original bytes kept");
+            } else if saved > 0 {
+                let pct = (1.0
+                    - result
+                        .get("compressionRatio")
+                        .and_then(Value::as_f64)
+                        .unwrap_or(1.0))
+                    * 100.0;
+                line.push_str(&format!(
+                    " — saved {} ({pct:.0}% smaller)",
+                    fmt_bytes(saved)
+                ));
+            } else {
+                line.push_str(" — no size reduction");
+            }
+            if let (Some(t), Some(met)) = (
+                result.get("targetBytes").and_then(Value::as_u64),
+                result.get("targetMet").and_then(Value::as_bool),
+            ) {
+                line.push_str(&format!(
+                    "; target {} {}",
+                    fmt_bytes(t),
+                    if met { "met" } else { "missed" }
+                ));
+            }
+            lines.push(line);
+        }
+        "extractText" => {
+            let pages = result
+                .get("pages")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            lines.push(format!(
+                "{} page{} of text via {}",
+                pages.len(),
+                if pages.len() == 1 { "" } else { "s" },
+                str_field(result, "engine")
+            ));
+            for p in &pages {
+                lines.push(format!("── page {} ──", u64_field(p, "page")));
+                lines.push(str_field(p, "text").to_string());
+            }
+        }
+        "renderPage" => {
+            lines.push(format!(
+                "wrote '{}' — page {}, {}×{} @{} dpi via {}, {}",
+                str_field(result, "path"),
+                u64_field(result, "page"),
+                u64_field(result, "width"),
+                u64_field(result, "height"),
+                u64_field(result, "dpi"),
+                str_field(result, "engine"),
+                fmt_bytes(u64_field(result, "bytes"))
+            ));
+        }
+        _ => return None,
+    }
+    for w in v
+        .get("warnings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        lines.push(format!(
+            "warning {}: {}",
+            str_field(&w, "code"),
+            str_field(&w, "message")
+        ));
+    }
+    Some(lines.join("\n"))
+}
+
 /// Report an error and exit. Piped stderr keeps the canonical JSON
 /// envelope; on a terminal a person gets a readable `anpdf <cmd>: <reason>`
 /// line, plus usage when the failure is arg-shape misuse.
 fn report_error(e: &Error, command: &str, op: &str) -> ! {
     if std::io::stderr().is_terminal() {
         let topic = KNOWN_COMMANDS.contains(&command).then_some(command);
-        // Filenames in error details can carry terminal control
-        // characters; print them escaped rather than raw on a tty.
+        // On a terminal lead with the specific reason — the generic
+        // base sentence only shows when no detail exists. Filenames in
+        // details can carry terminal control characters; escape them.
         let tty_message: String = e
-            .message()
+            .detail()
+            .unwrap_or_else(|| e.base())
             .chars()
             .flat_map(|c| {
                 if c.is_control() {
@@ -1529,6 +1720,7 @@ async fn async_main() {
         Ok(action) => action,
         Err(e) => report_error(&e, &command, op),
     };
+    let want_json = matches!(&action, Action::Run(o) if o.json);
     let result = async {
         match action {
             Action::Help(topic) => {
@@ -1624,13 +1816,16 @@ async fn async_main() {
     .await;
     match result {
         Ok(Some(v)) => {
-            // On a terminal the result is pretty-printed; piped stdout
-            // keeps the compact envelope bytes.
+            // Piped stdout keeps the compact envelope bytes; on a
+            // terminal a person gets a short plain summary, or the
+            // pretty envelope with --json.
             if std::io::stdout().is_terminal() {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string())
-                );
+                let pretty = serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string());
+                if want_json {
+                    println!("{pretty}");
+                } else {
+                    println!("{}", human_result(&v).unwrap_or(pretty));
+                }
             } else {
                 println!("{v}");
             }
@@ -2136,6 +2331,42 @@ mod tests {
         let d = parse_detail(&["inspect", &via_link]);
         assert!(d.contains("symlink"), "{d}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn human_result_summarizes_and_json_flag_parses() {
+        let v: Value = serde_json::json!({
+            "contractVersion": "1.0.0", "operationId": "compressPdf",
+            "result": {"path": "x-compressed.pdf", "bytes": 400, "pageCount": 3,
+                       "inputBytes": 1000, "savedBytes": 600, "compressionRatio": 0.4,
+                       "mode": "lossless", "outputSource": "compressed", "techniques": []},
+            "warnings": [{"code": "NO_SIZE_REDUCTION", "message": "kept original"}]
+        });
+        let s = super::human_result(&v).unwrap();
+        assert!(s.contains("wrote 'x-compressed.pdf'"), "{s}");
+        assert!(s.contains("saved"), "{s}");
+        assert!(
+            s.contains("warning NO_SIZE_REDUCTION: kept original"),
+            "{s}"
+        );
+        let split = serde_json::json!({"operationId": "splitPdf", "result": {
+            "outputs": [{"path": "a.pdf", "pageCount": 1, "bytes": 10},
+                        {"path": "b.pdf", "pageCount": 2, "bytes": 20}]}});
+        assert!(
+            super::human_result(&split)
+                .unwrap()
+                .contains("wrote 2 outputs")
+        );
+        // --json is a presentation flag, not request shaping.
+        match parse_action(
+            ["inspect", "--json", "doc.pdf"]
+                .iter()
+                .copied()
+                .map(String::from),
+        ) {
+            Ok(Action::Run(o)) => assert!(o.json),
+            other => panic!("expected Run, got {other:?}"),
+        }
     }
 
     #[test]

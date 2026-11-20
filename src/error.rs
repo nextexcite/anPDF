@@ -30,8 +30,9 @@ impl Error {
         json!({"contractVersion":crate::contract::VERSION,"operationId":op,
         "error":{"code":self.0,"message":self.message(),"retryable":matches!(self.0,"TIMEOUT"|"INPUT_CHANGED"|"BACKEND_UNAVAILABLE")}})
     }
-    pub fn message(&self) -> String {
-        let base = match self.0 {
+    /// The canonical base sentence for the code, without any detail.
+    pub fn base(&self) -> &'static str {
+        match self.0 {
             "INVALID_REQUEST" => "Request does not satisfy the operation contract.",
             "NOT_FOUND" => "Requested resource was not found.",
             "ACCESS_DENIED" => "Filesystem or transport policy denied access.",
@@ -54,10 +55,16 @@ impl Error {
             }
             "UNAUTHENTICATED" => "Bearer authentication is required.",
             _ => "Processing failed internally.",
-        };
+        }
+    }
+    /// The detail sentence naming the field, flag or file at fault.
+    pub fn detail(&self) -> Option<&str> {
+        self.1.as_deref()
+    }
+    pub fn message(&self) -> String {
         match &self.1 {
-            Some(detail) => format!("{base} — {detail}"),
-            None => base.into(),
+            Some(detail) => format!("{} — {detail}", self.base()),
+            None => self.base().into(),
         }
     }
     pub fn http(&self) -> u16 {

@@ -121,6 +121,7 @@ impl Workspace {
     fn input_ctx(path: &str, e: Error) -> Error {
         match e.1 {
             Some(d) => Error(e.0, Some(format!("input '{path}': {d}"))),
+            None if e.0 == "NOT_FOUND" => e.with(format!("input '{path}' does not exist")),
             None => e.with(format!("input '{path}'")),
         }
     }
@@ -163,6 +164,7 @@ impl Workspace {
     pub fn destination(&self, path: &str, replace: bool, inputs: &[Input]) -> Result<Destination> {
         let ctx = |e: Error| match e.1 {
             Some(d) => Error(e.0, Some(format!("output '{path}': {d}"))),
+            None if e.0 == "NOT_FOUND" => e.with(format!("output '{path}' does not exist")),
             None => e.with(format!("output '{path}'")),
         };
         let (dir, name) = self.parent(path).map_err(ctx)?;

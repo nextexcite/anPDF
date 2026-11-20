@@ -35,8 +35,10 @@ SemVer prerelease suffixes, not production-qualified releases.
 - A bare `anpdf` or `anpdf <operation>` on a terminal prints command usage and
   exits instead of blocking on stdin; piped stdin still supplies the JSON
   request.
-- On a terminal, successful results print pretty-printed JSON and errors
-  print `anpdf <command>: <reason>`; piped stdout/stderr keep the canonical
+- On a terminal, successful results print a short plain-language summary
+  (output path, sizes and saving, warnings in words) and errors lead with
+  the specific reason (`anpdf <command>: <reason>`); `--json` prints the
+  envelope on a terminal, and piped stdout/stderr keep the canonical
   envelopes byte-identical.
 - Parse-stage `INVALID_REQUEST`/`UNSUPPORTED_OPERATION` print usage on a
   terminal; non-terminal stderr keeps the canonical JSON error envelope
