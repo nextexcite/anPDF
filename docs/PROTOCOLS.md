@@ -28,7 +28,7 @@ Messages never include raw backend output, absolute input paths, or credentials.
 | INVALID_REQUEST | 400 | 2 |
 | NOT_FOUND / ACCESS_DENIED | 404 / 403 | 3 |
 | OUTPUT_EXISTS / INPUT_CHANGED | 409 | 4 |
-| INVALID_PDF / ENCRYPTED_UNSUPPORTED / SIGNED_UNSUPPORTED / FORM_UNSUPPORTED / PRESERVATION_UNKNOWN | 422 | 5 |
+| INVALID_PDF / ENCRYPTED_UNSUPPORTED / SIGNED_UNSUPPORTED / FORM_UNSUPPORTED / PRESERVATION_UNKNOWN / PRESERVATION_UNMET | 422 | 5 |
 | UNSUPPORTED_OPERATION | 422 | 6 |
 | LIMIT_EXCEEDED / TIMEOUT | 413 / 504 | 7 |
 | BACKEND_UNAVAILABLE / INTERNAL | 503 / 500 | 8 |
@@ -93,3 +93,51 @@ The integration corpus drives all three surfaces with identical requests and
 compares complete domain envelopes, errors, discovery schemas, and input hashes.
 The example MCP sequence, CLI invocations and authenticated HTTP operations are
 exercised by that harness, not by an external client certification suite.
+
+## Preservation and compression
+
+`mergePdf`, `extractPdf`, `splitPdf`, and `removePages` use the first input as
+qpdf's primary document, never `--empty`. Optional closed-object `preserve`
+accepts `metadata`, `bookmarks`, `annotations`, and `attachments` booleans,
+default false. False means best effort, not removal. True requires full carryover
+when present; `PRESERVATION_UNMET` (422, exit 5, not retryable) publishes nothing,
+including when a later split part fails. Each artifact has required `preservation`
+statuses: `preserved`, `omitted` (also unverified), or `absent`.
+
+Comparisons use complete Info dictionary/XMP hashes, normalized outline structure
+and mapped destinations, attachment descriptors and content hashes, and the sum
+of optional per-page `annotationCount` over selected pages. Optional inspect
+`hasMetadata` and `preservationEvidence` support these comparisons without changing
+backend trait signatures. Missing evidence is conservative: omitted, not success.
+Secondary merge metadata differing from output is omitted; secondary bookmarks
+or attachments are always conservatively omitted. Unknown/multi-stream attachment
+variants and indirect Info values are not certified preserved. Annotation counts
+are structural evidence, not proof of identical appearances or action semantics.
+One `PRESERVATION_OMITTED` warning names the union of omitted aspects per response.
+
+Synthetic qpdf 12.4.2 observations (three pages, Info/custom field, XMP, two
+outlines to pages 1 and 3, embedded text file, text/link annotations on pages 1/3):
+
+| Transform | Info/XMP | Outlines | Embedded file | Annotation counts |
+|---|---|---|---|---|
+| Extract pages 1,3 | Primary retained | Both retained, destinations remapped to 1,2 | Primary retained | 1,1 |
+| Remove pages 1,3 | Primary retained | Entries retained but destinations no longer in page tree; reported omitted | Primary retained | 0 (absent on selected page) |
+| Merge two enriched documents | Primary retained; differing secondary metadata omitted | Primary only; secondary omitted | Primary only; secondary omitted | 1,0,1,1,0,1 |
+| Merge enriched primary + plain page | Primary retained | Primary retained | Primary retained | 1,0,1,0 |
+| Merge plain primary + enriched secondary | Secondary omitted | Secondary omitted | Secondary omitted | 0,1,0,1 |
+
+These observations are reproduced independently with qpdf JSON/stream extraction
+in the cross-surface integration suite, not general visual preservation guarantees.
+Page reordering, forms, signatures, OCR and existing-text replacement remain
+unimplemented.
+
+`compressPdf.allowLargerOutput` defaults false. If compressed bytes are not
+smaller, the already-staged validated original is committed instead. Required
+`outputSource` is `original` or `compressed`; all result measurements describe
+the published bytes (`savedBytes:0`, `compressionRatio:1.0` for original).
+`NO_SIZE_REDUCTION` identifies which bytes were kept.
+
+qpdf version parsing accepts only 12.x >=12.4.2; 13+, older and malformed versions
+fail `BACKEND_UNAVAILABLE`. Only 12.4.2 is qualified. Other accepted versions
+emit `BACKEND_VERSION_UNTESTED` once per response. `--qpdf-exact` or process-level
+`ANPDF_QPDF_EXACT=1` requires exactly 12.4.2; CI and the OCI runtime enable it.

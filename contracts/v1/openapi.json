@@ -262,7 +262,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Retain the first input as primary and report per-output preservation. Required preserve aspects fail with PRESERVATION_UNMET (422) before publication if omitted or unverified."
       }
     },
     "/v1/extract": {
@@ -390,7 +391,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Retain the first input as primary and report per-output preservation. Required preserve aspects fail with PRESERVATION_UNMET (422) before publication if omitted or unverified."
       }
     },
     "/v1/split": {
@@ -518,7 +520,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Retain the first input as primary and report per-output preservation. Required preserve aspects fail with PRESERVATION_UNMET (422) before publication if omitted or unverified."
       }
     },
     "/v1/remove-pages": {
@@ -646,7 +649,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Retain the first input as primary and report per-output preservation. Required preserve aspects fail with PRESERVATION_UNMET (422) before publication if omitted or unverified."
       }
     },
     "/v1/compress": {
@@ -774,7 +778,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Keep validated original bytes when compressed output is not smaller, unless allowLargerOutput is true. outputSource identifies the published bytes."
       }
     },
     "/v1/extract-text": {
@@ -1099,6 +1104,9 @@
           },
           "output": {
             "$ref": "#/components/schemas/Output"
+          },
+          "preserve": {
+            "$ref": "#/components/schemas/Preserve"
           }
         },
         "required": [
@@ -1126,6 +1134,9 @@
           },
           "output": {
             "$ref": "#/components/schemas/Output"
+          },
+          "preserve": {
+            "$ref": "#/components/schemas/Preserve"
           }
         },
         "required": [
@@ -1172,6 +1183,9 @@
             "items": {
               "$ref": "#/components/schemas/SplitPart"
             }
+          },
+          "preserve": {
+            "$ref": "#/components/schemas/Preserve"
           }
         },
         "required": [
@@ -1216,6 +1230,9 @@
           },
           "output": {
             "$ref": "#/components/schemas/Output"
+          },
+          "preserve": {
+            "$ref": "#/components/schemas/Preserve"
           }
         },
         "required": [
@@ -1248,6 +1265,11 @@
             "minimum": 0,
             "maximum": 100,
             "description": "JPEG quality (0-100, default 80) when mode is lossy; rejected in lossless mode."
+          },
+          "allowLargerOutput": {
+            "type": "boolean",
+            "default": false,
+            "description": "Keep compressed bytes even when not smaller. Otherwise publish the validated original bytes and report outputSource original."
           }
         },
         "required": [
@@ -1294,6 +1316,13 @@
               "lossless",
               "lossy"
             ]
+          },
+          "outputSource": {
+            "type": "string",
+            "enum": [
+              "compressed",
+              "original"
+            ]
           }
         },
         "required": [
@@ -1304,7 +1333,8 @@
           "inputBytes",
           "savedBytes",
           "compressionRatio",
-          "mode"
+          "mode",
+          "outputSource"
         ]
       },
       "Warning": {
@@ -1344,13 +1374,17 @@
           "pageCount": {
             "type": "integer",
             "minimum": 1
+          },
+          "preservation": {
+            "$ref": "#/components/schemas/Preservation"
           }
         },
         "required": [
           "path",
           "sha256",
           "bytes",
-          "pageCount"
+          "pageCount",
+          "preservation"
         ]
       },
       "DocumentMetadata": {
@@ -1401,6 +1435,11 @@
           },
           "label": {
             "type": "string"
+          },
+          "annotationCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of entries in this page's Annots array."
           }
         },
         "required": [
@@ -1481,6 +1520,29 @@
             "maxItems": 2000,
             "items": {
               "$ref": "#/components/schemas/PageInfo"
+            }
+          },
+          "hasMetadata": {
+            "type": "boolean",
+            "description": "Info dictionary or catalog XMP metadata exists."
+          },
+          "preservationEvidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional backend comparison hashes for complete metadata, outline structure and attachment content; absent means not verified.",
+            "properties": {
+              "metadata": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "bookmarks": {
+                "type": "string",
+                "description": "Canonical JSON outline structure with 1-based destination positions for selected-page comparison."
+              },
+              "attachments": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
             }
           }
         },
@@ -1735,7 +1797,8 @@
                   "TIMEOUT",
                   "BACKEND_UNAVAILABLE",
                   "INTERNAL",
-                  "UNAUTHENTICATED"
+                  "UNAUTHENTICATED",
+                  "PRESERVATION_UNMET"
                 ]
               },
               "message": {
@@ -2044,6 +2107,73 @@
           "result",
           "warnings"
         ]
+      },
+      "Preserve": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "False (default) requests best effort with omission reporting. True requires full preservation when present, or PRESERVATION_UNMET before publication. Primary document information is retained where qpdf supports it; secondary merge document information may be omitted.",
+        "properties": {
+          "metadata": {
+            "type": "boolean",
+            "default": false
+          },
+          "bookmarks": {
+            "type": "boolean",
+            "default": false
+          },
+          "annotations": {
+            "type": "boolean",
+            "default": false
+          },
+          "attachments": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "Preservation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "metadata": {
+            "type": "string",
+            "enum": [
+              "preserved",
+              "omitted",
+              "absent"
+            ]
+          },
+          "bookmarks": {
+            "type": "string",
+            "enum": [
+              "preserved",
+              "omitted",
+              "absent"
+            ]
+          },
+          "annotations": {
+            "type": "string",
+            "enum": [
+              "preserved",
+              "omitted",
+              "absent"
+            ]
+          },
+          "attachments": {
+            "type": "string",
+            "enum": [
+              "preserved",
+              "omitted",
+              "absent"
+            ]
+          }
+        },
+        "required": [
+          "metadata",
+          "bookmarks",
+          "annotations",
+          "attachments"
+        ]
       }
     },
     "securitySchemes": {
@@ -2053,7 +2183,7 @@
       }
     }
   },
-  "x-anpdf-status": "development 0.2.0 contract; qpdf 12.4.2 backend required",
+  "x-anpdf-status": "development 0.2.0 contract; qpdf 12.x >=12.4.2 required; only 12.4.2 qualified; strict mode requires exact",
   "security": [
     {
       "localBearer": []

@@ -67,13 +67,13 @@ impl Shell {
 
     case "$cmd" in
         inspect|validate|merge|extract|split|remove-pages|compress|extract-text|render-page)
-            COMPREPLY=( $(compgen -W "--root --qpdf --request-json --request-file --dry-run --help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --request-json --request-file --dry-run --help -h" -- "$cur") )
             ;;
         serve)
-            COMPREPLY=( $(compgen -W "--root --qpdf --port --token-file --help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --port --token-file --help -h" -- "$cur") )
             ;;
         mcp)
-            COMPREPLY=( $(compgen -W "--root --qpdf --help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --help -h" -- "$cur") )
             ;;
         operations)
             COMPREPLY=( $(compgen -W "--help -h" -- "$cur") )
@@ -119,6 +119,7 @@ _anpdf() {
     pdf_ops=(
         '--root[Workspace root]:dir:_files -/'
         '--qpdf[Absolute path to qpdf binary]:qpdf:_files'
+        '--qpdf-exact[Require tested qpdf 12.4.2]'
         '--request-json[Inline JSON request payload]:json:'
         '--request-file[Read JSON request payload from file]:file:_files'
         '--dry-run[Validate request and destination policy without processing the PDF]'
@@ -140,6 +141,7 @@ _anpdf() {
             _arguments -s : \
                 '--root[Workspace root]:dir:_files -/' \
                 '--qpdf[Absolute path to qpdf binary]:qpdf:_files' \
+                '--qpdf-exact[Require tested qpdf 12.4.2]' \
                 '--port[Loopback HTTP port]:port:' \
                 '--token-file[Bearer token file]:file:_files' \
                 '(-h --help)'{-h,--help}'[Show command help]'
@@ -148,6 +150,7 @@ _anpdf() {
             _arguments -s : \
                 '--root[Workspace root]:dir:_files -/' \
                 '--qpdf[Absolute path to qpdf binary]:qpdf:_files' \
+                '--qpdf-exact[Require tested qpdf 12.4.2]' \
                 '(-h --help)'{-h,--help}'[Show command help]'
             ;;
         operations)
@@ -201,6 +204,7 @@ complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a version -d
 
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l root -r -F -d 'Workspace root directory'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l qpdf -r -F -d 'Absolute path to qpdf'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l qpdf-exact -d 'Require tested qpdf 12.4.2'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-json -r -d 'Inline JSON request payload'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-file -r -F -d 'Read JSON request from file'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l dry-run -d 'Validate request without processing the PDF'
@@ -227,6 +231,7 @@ struct Options {
     command: String,
     root: PathBuf,
     qpdf: PathBuf,
+    qpdf_exact: bool,
     request: Option<String>,
     dry: bool,
     port: u16,
@@ -257,7 +262,8 @@ COMMANDS:\n\
   version              Show version (--version, -V)\n\n\
 COMMON OPTIONS:\n\
   --root <dir>         Workspace root (default: .)\n\
-  --qpdf <abs-path>    Absolute path to qpdf 12.4.2 (overrides ANPDF_QPDF)\n\
+  --qpdf <abs-path>    Absolute path to qpdf 12.x >=12.4.2 (tested: 12.4.2)\n\
+  --qpdf-exact         Require exactly qpdf 12.4.2\n\
   --request-json <str> Inline JSON request payload (or pass JSON on stdin)\n\
   --request-file <f>   Read JSON request payload from file\n\
   --dry-run            Validate request and destination policy without processing the PDF\n\n\
@@ -265,7 +271,8 @@ SERVER OPTIONS:\n\
   --port <port>        Loopback HTTP port for serve (default: 8787)\n\
   --token-file <file>  Bearer token file (>=32 ASCII graphic chars) for serve\n\n\
 ENVIRONMENT:\n\
-  ANPDF_QPDF           Absolute path to qpdf 12.4.2 (auto-discovers standard/trusted PATH dirs if unset)\n",
+  ANPDF_QPDF           Absolute path to qpdf 12.x >=12.4.2 (auto-discovers trusted paths)\n\
+  ANPDF_QPDF_EXACT     Set to 1 to require tested qpdf 12.4.2\n",
         env!("CARGO_PKG_VERSION")
     );
     match topic {
@@ -446,6 +453,7 @@ fn parse_action() -> Result<Action> {
         command,
         root: PathBuf::from("."),
         qpdf: PathBuf::new(),
+        qpdf_exact: false,
         request: None,
         dry: false,
         port: 8787,
@@ -466,6 +474,7 @@ fn parse_action() -> Result<Action> {
             "--qpdf" => {
                 qpdf_flag = Some(PathBuf::from(args.next().ok_or(Error("INVALID_REQUEST"))?))
             }
+            "--qpdf-exact" => o.qpdf_exact = true,
             "--request-json" => o.request = Some(args.next().ok_or(Error("INVALID_REQUEST"))?),
             "--request-file" => {
                 let p = args.next().ok_or(Error("INVALID_REQUEST"))?;
@@ -494,12 +503,13 @@ fn parse_action() -> Result<Action> {
         | "extract-text" | "render-page" => &[
             "--root",
             "--qpdf",
+            "--qpdf-exact",
             "--request-json",
             "--request-file",
             "--dry-run",
         ],
-        "serve" => &["--root", "--qpdf", "--port", "--token-file"],
-        "mcp" => &["--root", "--qpdf"],
+        "serve" => &["--root", "--qpdf", "--qpdf-exact", "--port", "--token-file"],
+        "mcp" => &["--root", "--qpdf", "--qpdf-exact"],
         "operations" | "schema" => &[],
         _ => return Err(Error("UNSUPPORTED_OPERATION")),
     };
@@ -539,8 +549,8 @@ fn id(command: &str) -> &'static str {
     }
 }
 
-fn configured_registry(executable: PathBuf) -> BackendRegistry {
-    BackendRegistry::with_qpdf(executable)
+fn configured_registry(executable: PathBuf, exact: bool) -> BackendRegistry {
+    BackendRegistry::with_qpdf_exact(executable, exact)
 }
 
 #[tokio::main]
@@ -563,7 +573,7 @@ async fn main() {
             }
             Action::Run(o) => {
                 if o.command == "operations" {
-                    return Ok(Some(contract::discovery_with(&configured_registry(o.qpdf))));
+                    return Ok(Some(contract::discovery_with(&configured_registry(o.qpdf, o.qpdf_exact))));
                 }
                 if o.command == "schema" {
                     return contract::operation(o.schema.as_deref().unwrap())
@@ -577,7 +587,7 @@ async fn main() {
                         })
                         .ok_or(Error("UNSUPPORTED_OPERATION"));
                 }
-                let d = Arc::new(Dispatcher::with_registry(&o.root, configured_registry(o.qpdf))?);
+                let d = Arc::new(Dispatcher::with_registry(&o.root, configured_registry(o.qpdf, o.qpdf_exact))?);
                 match o.command.as_str() {
                     "serve" => {
                         let file = o.token_file.ok_or(Error("INVALID_REQUEST"))?;
