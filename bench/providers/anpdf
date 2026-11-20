@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Adapt the capability-registry anPDF CLI to the benchmark protocol."""
+import argparse
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+
+class CliError(Exception):
+    def __init__(self, code):
+        self.code = code
+
+
+def cli(binary, args):
+    result = subprocess.run([binary] + args, capture_output=True, text=True)
+    if result.returncode < 0:
+        os.kill(os.getpid(), -result.returncode)
+        raise SystemExit(1)
+    if result.returncode:
+        try:
+            code = json.loads(result.stderr)['error']['code']
+        except (ValueError, KeyError, TypeError):
+            code = 'CLI_ERROR'
+        raise CliError(code)
+    return json.loads(result.stdout)
+
+
+def engine_id(engine):
+    return engine if isinstance(engine, str) else engine.get('id', engine.get('name'))
+
+
+def capabilities(binary, engine):
+    discovery = cli(binary, ['operations'])
+    operations = {op['operationId']: op for op in discovery['operations']}
+    tasks = ['pageCount', 'inspect'] if 'inspectPdf' in operations else []
+    artifacts = [str(pathlib.Path(binary).resolve())] + discovery.get('artifacts', [])
+    for task, operation in [('extractText', 'extractText'), ('render', 'renderPage')]:
+        engines = operations.get(operation, {}).get('engines', [])
+        selected = [item for item in engines if engine is None or engine_id(item) == engine]
+        if selected:
+            tasks.append(task)
+        for item in selected:
+            if isinstance(item, dict):
+                artifacts += item.get('artifacts', [])
+    artifacts += [p for p in os.environ.get('ANPDF_ARTIFACTS', '').split(os.pathsep) if p]
+    return {'name': 'anpdf' + ('-' + engine if engine else ''),
+            'version': subprocess.check_output([binary, '--version'], text=True).strip(),
+            'tasks': tasks, 'artifacts': list(dict.fromkeys(artifacts))}
+
+
+def execute(binary, engine, request):
+    with tempfile.TemporaryDirectory(prefix='anpdf-bench-') as directory:
+        root = pathlib.Path(directory)
+        shutil.copyfile(request['input'], root / 'input.pdf')
+
+        def operation(command, payload):
+            return cli(binary, [command, '--root', str(root), '--request-json', json.dumps(payload)])['result']
+
+        source = {'input': {'path': 'input.pdf'}}
+        content = dict(source, **({'engine': engine} if engine else {}))
+        task = request['task']
+        if task in ('pageCount', 'inspect', 'extractText'):
+            inspection = operation('inspect', source)
+        if task == 'pageCount':
+            return {'pages': inspection['pageCount']}
+        if task == 'inspect':
+            # Structural inspect does not expose detailed document feature lists.
+            return {'metadata': {key[0].upper() + key[1:]: value for key, value in inspection['metadata'].items()},
+                    'unsupportedFields': ['outlines', 'links', 'annotations', 'formFields', 'signatureFields', 'imageCount']}
+        if task == 'extractText':
+            texts = []
+            for start in range(1, inspection['pageCount'] + 1, 100):
+                pages = list(range(start, min(start + 100, inspection['pageCount'] + 1)))
+                result = operation('extract-text', dict(content, pages=pages))
+                texts.extend(page['text'] for page in result['pages'])
+            return {'text': texts}
+        if task == 'render':
+            operation('render-page', dict(content, page=request['page'], dpi=request['dpi'], output={'path': 'render.png'}))
+            shutil.copyfile(root / 'render.png', request['output'])
+            return {'saved': True}
+        return {'status': 'unsupported'}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('mode', choices=['capabilities', 'run'])
+    parser.add_argument('--engine', default=os.environ.get('ANPDF_ENGINE'))
+    args = parser.parse_args()
+    binary = shutil.which(os.environ.get('ANPDF_BIN', 'anpdf'))
+    if not binary:
+        raise CliError('BACKEND_UNAVAILABLE')
+    return capabilities(binary, args.engine) if args.mode == 'capabilities' else execute(binary, args.engine, json.load(sys.stdin))
+
+
+if __name__ == '__main__':
+    try:
+        print(json.dumps(main()))
+    except CliError as error:
+        if error.code in ('BACKEND_UNAVAILABLE', 'UNSUPPORTED_OPERATION'):
+            print(json.dumps({'status': 'unsupported', 'reason': error.code}))
+        else:
+            print(json.dumps({'error': error.code}), file=sys.stderr)
+            sys.exit(1)
