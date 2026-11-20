@@ -114,6 +114,16 @@ fn span(text: String, bounds: PdfRect) -> Result<Option<Value>> {
     ))
 }
 
+fn decode_text(values: impl IntoIterator<Item = u32>) -> String {
+    char::decode_utf16(
+        values
+            .into_iter()
+            .map(|value| u16::try_from(value).unwrap_or(0xfffd)),
+    )
+    .map(|value| value.unwrap_or(char::REPLACEMENT_CHARACTER))
+    .collect()
+}
+
 fn process(library: &Path, request: &Value) -> Result<Value> {
     if !library.is_absolute() {
         return Err(Error("BACKEND_UNAVAILABLE"));
@@ -152,11 +162,7 @@ fn process(library: &Path, request: &Value) -> Result<Value> {
                     spans.push(span);
                 }
             }
-            let text: String = text
-                .chars()
-                .iter()
-                .filter_map(|c| c.unicode_char())
-                .collect();
+            let text = decode_text(text.chars().iter().map(|c| c.unicode_value()));
             budget += text.len();
             if budget > MAX_TEXT_RESPONSE_BYTES / 2 {
                 return Err(Error("LIMIT_EXCEEDED"));
@@ -217,6 +223,19 @@ pub fn worker() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn page_text_decodes_utf16_and_replaces_invalid_units() {
+        assert_eq!(
+            decode_text([0x41, 0x4e2d, 0xd83d, 0xde00, 0xd840, 0xdc00]),
+            "A中\u{1f600}\u{20000}"
+        );
+        assert_eq!(decode_text([]), "");
+        assert_eq!(
+            decode_text([0xd83d, 0x41, 0xdc00, 0xd840]),
+            "\u{fffd}A\u{fffd}\u{fffd}"
+        );
+        assert_eq!(decode_text([0x110000]), "\u{fffd}");
+    }
     #[test]
     fn unavailable_library_is_canonical_and_cancellation_prevents_spawn() {
         assert_eq!(
