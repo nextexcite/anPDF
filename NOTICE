@@ -8,3 +8,8 @@ b8d74e2cbe41e4afaf2acaec2903add0bc11b116. Their runtime helper source originates
 in that project. The build wrapper adds provenance comments only; emitted code
 is otherwise unmodified. The Apache-2.0 license is provided in LICENSE.
 These TypeScript files are build/qualification artifacts, not a product runtime.
+
+The optional pdfoxide build incorporates PDFOxide 0.3.78 under Apache-2.0
+(upstream offers MIT OR Apache-2.0), with its original NOTICE, license texts
+and DejaVu font notice in THIRD_PARTY_LICENSES. The default build does
+not include PDFOxide.

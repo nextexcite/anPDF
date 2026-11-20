@@ -3,6 +3,7 @@ import hashlib,importlib.util,json,os,pathlib,shutil,socket,subprocess,tempfile,
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BIN=pathlib.Path(os.environ.get('ANPDF_BINARY',ROOT/'target/debug/anpdf')).resolve()
 QPDF=pathlib.Path(os.environ.get('ANPDF_QPDF') or shutil.which('qpdf') or '/usr/bin/qpdf').resolve()
+PDFOXIDE=os.environ.get('ANPDF_EXPECT_PDFOXIDE')=='1'
 spec=importlib.util.spec_from_file_location('fixtures',ROOT/'fixtures/generate.py');gen=importlib.util.module_from_spec(spec);spec.loader.exec_module(gen)
 
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -23,6 +24,25 @@ def build_pdf(objs):
     xref=len(res);res.extend(f'xref\n0 {len(objs)+1}\n0000000000 65535 f \n'.encode())
     for o in offs[1:]:res.extend(f'{o:010d} 00000 n \n'.encode())
     res.extend(f'trailer\n<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode());return bytes(res)
+
+def render_fixture(annotations=False, oversized=False, paint=True):
+    box=b'/MediaBox [0 0 9000 100]' if oversized else b'/MediaBox [0 0 300 200] /CropBox [20 30 170 110] /Rotate 90'
+    annots=b' /Annots [5 0 R]' if annotations else b''
+    content=b'1 0 0 rg 40 40 50 30 re f' if paint else b''
+    objs=[
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+        b'<< /Type /Page /Parent 2 0 R '+box+annots+b' /Resources << >> /Contents 4 0 R >>',
+        b'<< /Length '+str(len(content)).encode()+b' >>\nstream\n'+content+b'\nendstream',
+    ]
+    if annotations:
+        appearance=b'0 0 1 rg 0 0 45 45 re f'
+        objs.extend([
+            b'<< /Type /Annot /Subtype /Square /Rect [90 50 135 95] /F 4 /AP << /N 6 0 R >> >>',
+            b'<< /Type /XObject /Subtype /Form /BBox [0 0 45 45] /Resources << >> /Length '
+            +str(len(appearance)).encode()+b' >>\nstream\n'+appearance+b'\nendstream',
+        ])
+    return build_pdf(objs)
 
 def run():
  with tempfile.TemporaryDirectory(prefix='anpdf-tests-') as t:
@@ -47,6 +67,11 @@ def run():
     ])
     for root in roots.values():
         gen.generate(root)
+        if PDFOXIDE:
+            (root/'crop.pdf').write_bytes(render_fixture())
+            (root/'annotation.pdf').write_bytes(render_fixture(annotations=True))
+            (root/'blank.pdf').write_bytes(render_fixture(paint=False))
+            (root/'oversized.pdf').write_bytes(render_fixture(oversized=True))
         subprocess.run([str(QPDF),'--encrypt','','synthetic-only','256','--',str(root/'one.pdf'),str(root/'encrypted.pdf')],check=True,capture_output=True)
         (root/'truncated.pdf').write_bytes(b'%PDF-1.7\n1 0 obj\n<< /Type /Catalog')
         (root/'bad-header.pdf').write_bytes(b'NOT-A-PDF-HEADER\x00\xff')
@@ -73,7 +98,9 @@ def run():
         for tool in tools:
             op=next(o for o in discovery['operations'] if o['operationId']==tool['name']);assert tool['inputSchema']==op['inputSchema'];assert tool['outputSchema']==op['outputSchema']
         for name,read_only in [('extractText',True),('renderPage',False)]:
-            op=next(o for o in discovery['operations'] if o['operationId']==name);assert op['engines']==[] and op['status'].startswith('unavailable')
+            op=next(o for o in discovery['operations'] if o['operationId']==name)
+            assert op['engines']==(['pdfoxide'] if PDFOXIDE else [])
+            assert op['status'].startswith('implemented' if PDFOXIDE else 'unavailable')
             tool=next(t for t in tools if t['name']==name);assert tool['annotations']['readOnlyHint']==read_only
         cli=json.loads(subprocess.check_output([str(BIN),'operations']));assert cli==discovery
         assert http(port,'invalid','/v1/operations')[0]==401
@@ -81,10 +108,10 @@ def run():
         assert http(port,token,'/v1/operations',extra={'Host':'example.invalid'})[0]==403
         assert http(port,token,'/v1/openapi.json')[1]==json.loads((ROOT/'contracts/v1/openapi.json').read_text())
         corpus=[
-          ('extract-text',{'input':{'path':'three.pdf'},'pages':[1,3]},'BACKEND_UNAVAILABLE'),
+          ('extract-text',{'input':{'path':'three.pdf'},'pages':[1,3]},None if PDFOXIDE else 'BACKEND_UNAVAILABLE'),
           ('extract-text',{'input':{'path':'three.pdf'},'pages':[2,1]},'INVALID_REQUEST'),
           ('extract-text',{'input':{'path':'three.pdf'},'pages':[1],'engine':'../engine'},'INVALID_REQUEST'),
-          ('render-page',{'input':{'path':'three.pdf'},'page':1,'output':{'path':'page.png'}},'BACKEND_UNAVAILABLE'),
+          ('render-page',{'input':{'path':'three.pdf'},'page':1,'output':{'path':'page.png'}},None if PDFOXIDE else 'BACKEND_UNAVAILABLE'),
           ('render-page',{'input':{'path':'three.pdf'},'page':0,'output':{'path':'page.png'}},'INVALID_REQUEST'),
           ('render-page',{'input':{'path':'three.pdf'},'page':1,'dpi':301,'output':{'path':'page.png'}},'INVALID_REQUEST'),
           ('inspect',{'input':{'path':'three.pdf'}},None),
@@ -143,6 +170,19 @@ def run():
           ('extract',{'input':{'path':'xfa.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'FORM_UNSUPPORTED'),
           ('extract',{'input':{'path':'signature-marker.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED'),
         ]
+        if PDFOXIDE:
+            corpus.extend([
+                ('extract-text',{'input':{'path':'mixed.pdf'},'pages':[2],'engine':'pdfoxide'},None),
+                ('extract-text',{'input':{'path':'blank.pdf'},'pages':[1]},None),
+                ('extract-text',{'input':{'path':'encrypted.pdf'},'pages':[1]},'ENCRYPTED_UNSUPPORTED'),
+                ('extract-text',{'input':{'path':'truncated.pdf'},'pages':[1]},'INVALID_PDF'),
+                ('extract-text',{'input':{'path':'missing.pdf'},'pages':[1],'engine':'not-installed'},'BACKEND_UNAVAILABLE'),
+                ('render-page',{'input':{'path':'oversized.pdf'},'page':1,'dpi':72,'output':{'path':'oversized.png'}},'LIMIT_EXCEEDED'),
+                ('render-page',{'input':{'path':'crop.pdf'},'page':1,'dpi':72,'engine':'pdfoxide','output':{'path':'crop.png'}},None),
+                ('render-page',{'input':{'path':'annotation.pdf'},'page':1,'dpi':72,'output':{'path':'annotation.png'}},None),
+                ('render-page',{'input':{'path':'blank.pdf'},'page':1,'dpi':72,'output':{'path':'blank.png'}},None),
+                ('render-page',{'input':{'path':'crop.pdf'},'page':1,'dpi':72,'output':{'path':'crop.png'}},'OUTPUT_EXISTS'),
+            ])
         if os.environ.get('ANPDF_EDGE_FIXTURES'):
             corpus.extend([
               ('inspect',{'input':{'path':'chinese.pdf'}},None),
@@ -165,10 +205,34 @@ def run():
             assert a==b==c,(n,'surface mismatch',a,b,c)
             if error:assert a['error']['code']==error,(n,a)
             else:assert status==200
+            if not error and command=='extract-text':
+                assert a['result']['engine']=='pdfoxide'
+                expected={'three.pdf':['PAGE-A','PAGE-C'],'mixed.pdf':['ROTATE-B'],'blank.pdf':['']}[request['input']['path']]
+                pages=a['result']['pages'];assert [p['page'] for p in pages]==request['pages']
+                for page,label in zip(pages,expected):
+                    assert page['text'].strip()==label,(label,page)
+                    if not label:
+                        assert page['spans']==[]
+                    else:
+                        spans=page['spans'];assert ''.join(s['text'] for s in spans)==label,(label,spans)
+                        bounds=spans[0]['bounds'];assert 39 <= bounds['left'] <= 41 and 100 <= bounds['bottom'] <= 125,bounds
+            if not error and command=='render-page':
+                result=a['result'];name=request['output']['path']
+                assert result['engine']=='pdfoxide' and result['mediaType']=='image/png'
+                assert (result['width'],result['height'])==((600,400) if name=='page.png' else (80,150))
+                assert result['dpi']==request.get('dpi',144)
+                for root in roots.values():
+                    png=root/name
+                    assert png.read_bytes()[:8]==b'\x89PNG\r\n\x1a\n'
+                    assert png.stat().st_size==result['bytes'] and digest(png)==result['sha256']
             if error=='BACKEND_UNAVAILABLE':assert status==503 and cli.returncode==8
             for surface,root in roots.items():
                 for name,h in originals[surface].items():assert digest(root/name)==h,(n,'input changed',name)
-        assert all(not (root/'page.png').exists() for root in roots.values())
+        for root in roots.values():
+            assert (root/'page.png').exists()==PDFOXIDE
+            if PDFOXIDE:
+                assert not (root/'oversized.png').exists()
+                assert digest(root/'crop.png')==digest(root/'annotation.png')!=digest(root/'blank.png')
         # Independent semantic page order, not just matching hashes.
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'merged.pdf'),'-']).decode()
         assert [text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C','PAGE-ONE']]==sorted(text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C','PAGE-ONE'])

@@ -6,6 +6,9 @@ license = "Apache-2.0"
 description = "Local agent-native PDF toolkit"
 rust-version = "1.100"
 
+[features]
+pdfoxide = ["dep:pdf_oxide"]
+
 [dependencies]
 serde_json = "1"
 sha2 = "0.10"
@@ -14,6 +17,7 @@ jsonschema = { version = "0.33", default-features = false }
 libc = "0.2"
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+pdf_oxide = { version = "=0.3.78", optional = true, features = ["rendering"] }
 
 [profile.release]
 strip = true
