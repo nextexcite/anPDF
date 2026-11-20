@@ -1036,6 +1036,9 @@ impl ImageResampler for ResampleProvider {
         if let Some(code) = summary.get("error").and_then(Value::as_str) {
             return Err(match code {
                 "INVALID_PDF" => Error("INVALID_PDF", None),
+                // Measurement ran out of budget: let the caller publish the
+                // best-so-far candidate instead of failing the request.
+                "TIMEOUT" => Error("TIMEOUT", None),
                 _ => Error("INTERNAL_ERROR", None),
             });
         }

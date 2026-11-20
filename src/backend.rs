@@ -186,12 +186,7 @@ pub(crate) fn limit_worker_as(
             if libc::setsid() < 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            for (res, max) in [
-                (libc::RLIMIT_FSIZE, file_limit),
-                (libc::RLIMIT_NOFILE, 64),
-                #[cfg(not(target_os = "macos"))]
-                (libc::RLIMIT_AS, as_limit),
-            ] {
+            for (res, max) in [(libc::RLIMIT_FSIZE, file_limit), (libc::RLIMIT_NOFILE, 64)] {
                 let r = libc::rlimit {
                     rlim_cur: max,
                     rlim_max: max,
@@ -200,10 +195,27 @@ pub(crate) fn limit_worker_as(
                     return Err(std::io::Error::last_os_error());
                 }
             }
-            // A hard CPU cap inherited from the parent cannot be raised;
-            // clamp to it (and tolerate failure) rather than fail the spawn —
-            // the parent's deadline poll still bounds the worker.
+            // A hard cap inherited from the parent cannot be raised; clamp
+            // address space and CPU to it (and tolerate failure) rather than
+            // fail the spawn — the parent's deadline/RSS poll still bounds
+            // the worker.
             let mut cur: libc::rlimit = std::mem::zeroed();
+            #[cfg(not(target_os = "macos"))]
+            {
+                let mut as_cap = as_limit;
+                if libc::getrlimit(libc::RLIMIT_AS, &mut cur) == 0
+                    && cur.rlim_max != libc::RLIM_INFINITY
+                {
+                    as_cap = as_cap.min(cur.rlim_max);
+                }
+                let r = libc::rlimit {
+                    rlim_cur: as_cap,
+                    rlim_max: as_cap,
+                };
+                let _ = libc::setrlimit(libc::RLIMIT_AS, &r);
+            }
+            #[cfg(target_os = "macos")]
+            let _ = as_limit;
             let mut cpu_cap = cpu_secs as libc::rlim_t;
             if libc::getrlimit(libc::RLIMIT_CPU, &mut cur) == 0
                 && cur.rlim_max != libc::RLIM_INFINITY
