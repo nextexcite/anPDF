@@ -4,7 +4,7 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
-## [0.3.0] - Unreleased
+## [0.3.0] - 2026-11-20
 
 ### Added
 - Capability registry and transport-neutral planning for structural, text and

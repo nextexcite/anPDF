@@ -1,11 +1,12 @@
 # Preliminary qualification evidence
 
-## 0.3.0 release preparation
+## 0.3.0
 
 The current baseline adds a capability registry, PDFium as the default embedded-text
 and PNG engine, qpdf per-artifact preservation reporting, and the synthetic benchmark
-corpus/harness. PDFOxide remains a separate preview tag. This is release preparation,
-not evidence that v0.3.0 has been published or production-qualified.
+corpus/harness. PDFOxide remains a separate preview tag. v0.3.0 was published by the
+tag release workflow (linux/amd64 + linux/arm64 images, macOS arm64 tarball); it is not
+production-qualified.
 
 PR #8's final pre-retarget CI at `0d55915` reported nine passing checks: native
 Ubuntu/macOS, Ubuntu without default features, bundled PDFium Ubuntu/macOS,
