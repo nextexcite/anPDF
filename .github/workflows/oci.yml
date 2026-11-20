@@ -68,6 +68,8 @@ jobs:
           load: true
           push: false
           tags: anpdf:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}-${{ github.sha }}
+          cache-from: type=gha,scope=oci-${{ matrix.arch }}
+          cache-to: type=gha,scope=oci-${{ matrix.arch }},mode=max,ignore-error=true
           provenance: false
           sbom: false
       - name: Non-root, read-only, network-none smoke test
@@ -84,12 +86,23 @@ jobs:
           push: false
           tags: ${{ steps.meta.outputs.image }}:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}-${{ github.sha }}
           outputs: type=oci,dest=build/artifacts/anpdf.oci.tar
+          cache-from: type=gha,scope=oci-${{ matrix.arch }}
           provenance: mode=min
           sbom: false
+      - name: Cache pinned SBOM and vulnerability tools
+        id: scan-tools-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            build/work/syft
+            build/work/grype
+          key: scan-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/get-tool.py') }}
       - name: Scan OCI SBOM, licenses, and vulnerabilities before push
         run: |
-          python3 build/get-tool.py syft build/work/syft
-          python3 build/get-tool.py grype build/work/grype
+          if [ '${{ steps.scan-tools-cache.outputs.cache-hit }}' != true ]; then
+            python3 build/get-tool.py syft build/work/syft
+            python3 build/get-tool.py grype build/work/grype
+          fi
           build/work/syft/syft scan oci-archive:build/artifacts/anpdf.oci.tar -o "spdx-json=build/artifacts/anpdf-linux-${{ matrix.arch }}.spdx.json"
           build/work/grype/grype oci-archive:build/artifacts/anpdf.oci.tar -o json > "build/artifacts/anpdf-linux-${{ matrix.arch }}.grype.json"
           python3 build/oci-audit.py \
@@ -111,6 +124,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: APP_VERSION=${{ needs.prepare.outputs.version }}
           outputs: type=image,"name=${{ steps.meta.outputs.image }}",push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=oci-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -217,20 +231,60 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Cache Cargo registry
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+          key: cargo-registry-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-registry-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Cache native release Rust build outputs
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: target
+          key: release-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('Cargo.toml', 'build.rs', 'src/**', 'contracts/**', 'generated/**') }}
+          restore-keys: release-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+      - name: Cache pinned cargo-auditable
+        id: auditable-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.cargo/bin/cargo-auditable
+          key: cargo-auditable-v1-${{ runner.os }}-${{ runner.arch }}-0.7.7-${{ hashFiles('rust-toolchain.toml') }}
+      - name: Cache pinned qpdf
+        id: qpdf-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/work/qpdf
+          key: qpdf-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/get-qpdf.py') }}
+      - name: Cache pinned PDFium
+        id: pdfium-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/work/pdfium
+          key: pdfium-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/get-pdfium.py') }}
       - name: Install pinned Rust toolchain and cargo-auditable
         run: |
           rustup toolchain install 1.100.0 --profile minimal
-          cargo install cargo-auditable --version 0.7.7 --locked
+          if [ '${{ steps.auditable-cache.outputs.cache-hit }}' != true ]; then
+            cargo install cargo-auditable --version 0.7.7 --locked
+          fi
       - name: Build release macOS arm64 binary
         env:
           RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src --remap-path-prefix=${{ runner.temp }}=/tmp
         run: |
-          python3 build/get-pdfium.py build/work/pdfium
+          if [ '${{ steps.pdfium-cache.outputs.cache-hit }}' != true ]; then
+            python3 build/get-pdfium.py build/work/pdfium
+          fi
           cargo auditable build --release --locked
       - name: Smoke test release binary with pinned qpdf
         run: |
           mkdir -p build/work
-          python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
+          if [ '${{ steps.qpdf-cache.outputs.cache-hit }}' != true ]; then
+            python3 build/get-qpdf.py build/work/qpdf
+          fi
+          printf '%s\n' "$PWD/build/work/qpdf/bin/qpdf" > build/work/qpdf-path
           python3 fixtures/generate.py build/work/fixtures
           ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf --version
           for shell in bash zsh fish; do ./target/release/anpdf completions "$shell" >/dev/null; done

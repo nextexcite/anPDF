@@ -32,12 +32,33 @@ jobs:
           persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
+      - name: Cache Cargo registry
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+          key: cargo-registry-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-registry-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Cache native Rust build outputs
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: target
+          key: ci-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.cargo_args || 'default' }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('Cargo.toml', 'build.rs', 'src/**', 'contracts/**', 'generated/**') }}
+          restore-keys: ci-native-v1-${{ runner.os }}-${{ runner.arch }}-${{ matrix.cargo_args || 'default' }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
       - name: Qualify Rust code and checked-in generation
         run: |
           cargo fmt --all --check
           cargo clippy --locked --all-targets ${{ matrix.cargo_args }} -- -D warnings
           cargo test --locked ${{ matrix.cargo_args }}
           cargo build --locked ${{ matrix.cargo_args }}
+      - name: Cache pinned qpdf
+        id: qpdf-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/work/qpdf
+          key: qpdf-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/get-qpdf.py') }}
       - name: Install independent PDF test tooling
         shell: bash
         run: |
@@ -48,13 +69,23 @@ jobs:
             brew install poppler
           fi
           mkdir -p build/work
-          python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
+          if [ '${{ steps.qpdf-cache.outputs.cache-hit }}' != true ]; then
+            python3 build/get-qpdf.py build/work/qpdf
+          fi
+          printf '%s\n' "$PWD/build/work/qpdf/bin/qpdf" > build/work/qpdf-path
       - name: Cross-surface corpus
         shell: bash
         run: |
           python3 -m venv build/work/test-venv
           build/work/test-venv/bin/python -m pip install -r build/test-requirements.txt
           ANPDF_QPDF="$(cat build/work/qpdf-path)" build/work/test-venv/bin/python tests/integration.py
+      - name: Cache pinned test font
+        if: runner.os == 'Linux' && matrix.cargo_args == ''
+        id: font-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/work/font
+          key: test-font-v1-${{ hashFiles('build/get-test-font.py') }}
       - name: Synthetic backend comparison
         if: runner.os == 'Linux' && matrix.cargo_args == ''
         shell: bash
@@ -62,7 +93,9 @@ jobs:
           python3 -m venv build/work/bench-venv
           . build/work/bench-venv/bin/activate
           python3 -m pip install -r build/test-requirements.txt
-          python3 build/get-test-font.py build/work/font
+          if [ '${{ steps.font-cache.outputs.cache-hit }}' != true ]; then
+            python3 build/get-test-font.py build/work/font
+          fi
           python3 -m unittest bench/test_bench.py -v
           python3 bench/corpus.py build/work/bench-corpus
           ANPDF_QPDF="$(cat build/work/qpdf-path)" python3 bench/harness.py --corpus build/work/bench-corpus --provider 'qpdf=python3 bench/providers/qpdf.py' --provider 'poppler=python3 bench/providers/poppler.py' --out build/work/bench-results
@@ -82,6 +115,39 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Cache Cargo registry
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+          key: cargo-registry-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-registry-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Cache PDFium Rust build outputs
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: target
+          key: ci-pdfium-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-${{ hashFiles('Cargo.toml', 'build.rs', 'src/**', 'contracts/**', 'generated/**', 'build/get-pdfium.py') }}
+          restore-keys: ci-pdfium-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}-
+      - name: Cache pinned qpdf
+        id: qpdf-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/work/qpdf
+          key: qpdf-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/get-qpdf.py') }}
+      - name: Cache pinned PDFium
+        id: pdfium-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/work/pdfium
+          key: pdfium-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/get-pdfium.py') }}
+      - name: Cache pinned test font
+        id: font-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/work/font
+          key: test-font-v1-${{ hashFiles('build/get-test-font.py') }}
       - name: Install pinned Rust and PDF test tooling
         shell: bash
         run: |
@@ -94,9 +160,19 @@ jobs:
           fi
           python3 -m venv build/work/venv
           build/work/venv/bin/pip install -r build/test-requirements.txt
-          python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
-          python3 build/get-pdfium.py build/work/pdfium > build/work/pdfium-path
-          python3 build/get-test-font.py build/work/font
+          if [ '${{ steps.qpdf-cache.outputs.cache-hit }}' != true ]; then
+            python3 build/get-qpdf.py build/work/qpdf
+          fi
+          printf '%s\n' "$PWD/build/work/qpdf/bin/qpdf" > build/work/qpdf-path
+          if [ '${{ steps.pdfium-cache.outputs.cache-hit }}' != true ]; then
+            python3 build/get-pdfium.py build/work/pdfium
+          fi
+          library=libpdfium.so
+          if [ "$RUNNER_OS" = macOS ]; then library=libpdfium.dylib; fi
+          printf '%s\n' "$PWD/build/work/pdfium/lib/$library" > build/work/pdfium-path
+          if [ '${{ steps.font-cache.outputs.cache-hit }}' != true ]; then
+            python3 build/get-test-font.py build/work/font
+          fi
       - name: Qualify default bundled PDFium provider
         shell: bash
         run: |
@@ -126,6 +202,8 @@ jobs:
           load: true
           push: false
           tags: anpdf:ci
+          cache-from: type=gha,scope=oci-amd64
+          cache-to: type=gha,scope=oci-amd64,mode=max,ignore-error=true
           provenance: false
           sbom: false
       - name: Restricted structural and PDFium smoke tests
@@ -139,10 +217,20 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26.13.1
+          cache: npm
+          cache-dependency-path: build/qualification/package-lock.json
+      - name: Cache pinned Forge archive
+        id: forge-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/work/forge.tgz
+          key: forge-v1-${{ hashFiles('build/forge-pin.json', 'build/get-forge.py') }}
       - name: Verify pinned Forge regeneration and probe fidelity
         run: |
           mkdir -p build/work
-          python3 build/get-forge.py build/work/forge.tgz
+          if [ '${{ steps.forge-cache.outputs.cache-hit }}' != true ]; then
+            python3 build/get-forge.py build/work/forge.tgz
+          fi
           python3 build/generate.py --archive build/work/forge.tgz --out build/work/regen
           diff -ruN generated build/work/regen
           npm ci --ignore-scripts --prefix build/qualification
@@ -158,8 +246,16 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Cache pinned Gitleaks
+        id: gitleaks-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/work/gitleaks
+          key: gitleaks-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('build/get-tool.py') }}
       - name: Scan complete independent history
         run: |
-          python3 build/get-tool.py gitleaks build/work/gitleaks
+          if [ '${{ steps.gitleaks-cache.outputs.cache-hit }}' != true ]; then
+            python3 build/get-tool.py gitleaks build/work/gitleaks
+          fi
           build/work/gitleaks/gitleaks git --redact --no-banner --log-opts=--all
           python3 build/privacy.py --ci
