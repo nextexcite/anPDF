@@ -409,10 +409,11 @@ impl Dispatcher {
                             'ladder: for (rung, (dpi, quality)) in rungs.iter().enumerate() {
                         control.check()?;
                         let raw = staging.path().join(format!("rung{rung}.raw.pdf"));
-                        // Each rung descends from the current candidate so the
-                        // qpdf structural pass's repairs are already applied.
+                        // Each rung resamples the initial qpdf pass output —
+                        // already repaired — rather than the previous rung's
+                        // pixels, so JPEG artifacts never accumulate.
                         let summary = resampler.resample_images(
-                            &candidate,
+                            &out,
                             &raw,
                             *dpi,
                             *quality,
