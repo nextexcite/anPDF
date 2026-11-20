@@ -22,6 +22,7 @@ impl PdfiumProvider {
     fn run(&self, request: Value, control: &Control) -> Result<Value> {
         let (code, bytes) = Qpdf {
             executable: self.worker_executable.clone(),
+            exact: false,
         }
         .run(
             &[
