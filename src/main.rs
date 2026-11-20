@@ -1518,6 +1518,8 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                 let mut positional_seen = false;
                 let mut shaping: Vec<String> = Vec::new();
                 let mut req_file: Option<String> = None;
+                let mut qpdf_flag: Option<PathBuf> = None;
+                let mut pdfium_flag: Option<PathBuf> = None;
                 let mut it = argv[1..].iter().peekable();
                 let mut terminated = false;
                 while let Some(t) = it.next() {
@@ -1538,6 +1540,11 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                         None => (t.clone(), None),
                     };
                     if !KNOWN_FLAGS.contains(&name.as_str()) {
+                        // Attached short-flag value: '-oout.pdf' still names
+                        // the shaping flag -o.
+                        if name.starts_with("-o") && name.len() > 2 {
+                            shaping.push("-o".to_string());
+                        }
                         continue;
                     }
                     let value = inline.or_else(|| {
@@ -1551,8 +1558,8 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                         "--request-json" => opt.request = value,
                         "--request-file" => req_file = value,
                         "--root" => opt.root = PathBuf::from(value.unwrap_or_default()),
-                        "--qpdf" => opt.qpdf = PathBuf::from(value.unwrap_or_default()),
-                        "--pdfium-lib" => opt.pdfium_lib = value.map(PathBuf::from),
+                        "--qpdf" => qpdf_flag = value.map(PathBuf::from),
+                        "--pdfium-lib" => pdfium_flag = value.map(PathBuf::from),
                         "--dry-run" => opt.dry = true,
                         "--json" => opt.json = true,
                         "--qpdf-exact" => opt.qpdf_exact = true,
@@ -1588,16 +1595,12 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                         })?)?);
                 }
                 opt.pdfium_lib = resolve_pdfium(
-                    opt.pdfium_lib,
+                    pdfium_flag,
                     std::env::var_os("ANPDF_PDFIUM_LIB"),
                     std::env::current_exe().ok(),
                 )?;
                 opt.qpdf = resolve_qpdf(
-                    if opt.qpdf.as_os_str().is_empty() {
-                        None
-                    } else {
-                        Some(opt.qpdf.clone())
-                    },
+                    qpdf_flag,
                     std::env::var_os("ANPDF_QPDF"),
                     std::env::var_os("PATH"),
                 )?;
