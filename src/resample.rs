@@ -22,6 +22,8 @@ use std::{
 pub const WORKER_ARG: &str = "--internal-compress-worker";
 const MAX_IMAGE_PIXELS: u64 = 64_000_000;
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
+const MAX_CONTENT_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PALETTE_RAW_BYTES: usize = 4 * 1024 * 1024;
 const RESAMPLE_MARGIN: f64 = 1.10; // images within 10% of the cap are left alone
 const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
@@ -128,11 +130,16 @@ fn content_bytes(doc: &Document, page: &Dictionary) -> Vec<u8> {
             _ => None,
         };
         if let Some(stream) = stream {
-            bytes.extend(
-                stream
-                    .decompressed_content()
-                    .unwrap_or(stream.content.clone()),
-            );
+            let decoded = stream
+                .decompressed_content()
+                .unwrap_or(stream.content.clone());
+            if decoded.len() > MAX_CONTENT_BYTES {
+                continue;
+            }
+            if bytes.len() + decoded.len() > MAX_CONTENT_BYTES * 4 {
+                break;
+            }
+            bytes.extend(decoded);
             bytes.push(b'\n');
         }
     }
@@ -222,6 +229,9 @@ fn walk_ops(
                         let decoded = stream
                             .decompressed_content()
                             .unwrap_or(stream.content.clone());
+                        if decoded.len() > MAX_CONTENT_BYTES {
+                            continue;
+                        }
                         if let Ok(form_content) = Content::decode(&decoded[..]) {
                             state.push(form_ctm);
                             walk_ops(
@@ -317,14 +327,26 @@ fn indexed_palette(
         _ => return Err("indexed base".to_string()),
     };
     let high = num(&spec[2]).max(0.0) as usize;
-    let data = match &spec[3] {
+    let expected = (high + 1) * base_components;
+    if expected == 0 || expected > 4096 {
+        return Err("palette high".to_string());
+    }
+    let mut data = match &spec[3] {
         Object::String(bytes, _) => bytes.clone(),
         Object::Reference(id) => match doc.get_object(*id) {
-            Ok(Object::Stream(s)) => s.decompressed_content().unwrap_or(s.content.clone()),
+            Ok(Object::Stream(s)) => {
+                if s.content.len() > MAX_PALETTE_RAW_BYTES {
+                    return Err("palette bounds".to_string());
+                }
+                s.decompressed_content().unwrap_or(s.content.clone())
+            }
             _ => return Err("palette ref".to_string()),
         },
         _ => return Err("palette kind".to_string()),
     };
+    if data.len() > expected {
+        data.truncate(expected);
+    }
     Ok(Some(Palette {
         base_components,
         data,
@@ -377,16 +399,28 @@ fn samples_image(
             })
             .collect()
     };
+    // Packed rows pad to a byte boundary; unpack per row so the padding
+    // bits are not read as the next row's leading pixels.
     let unpack = |bits: &[u8], index_bits: u32| -> Vec<u8> {
         let mask = (1u16 << index_bits) - 1;
         let mut out = Vec::with_capacity(pixel_count);
         let per_byte = 8 / index_bits;
-        for byte in bits {
-            for slot in 0..per_byte {
-                let shift = 8 - index_bits * (slot + 1);
-                out.push(((*byte as u16 >> shift) & mask) as u8);
-                if out.len() == pixel_count {
-                    return out;
+        let row_pixels = w as usize;
+        let row_bytes = (row_pixels * index_bits as usize).div_ceil(8);
+        for row in 0..h as usize {
+            let start = row * row_bytes;
+            if start >= bits.len() {
+                break;
+            }
+            let mut produced = 0usize;
+            for byte in &bits[start..(start + row_bytes).min(bits.len())] {
+                for slot in 0..per_byte {
+                    if produced == row_pixels {
+                        break;
+                    }
+                    let shift = 8 - index_bits * (slot + 1);
+                    out.push(((*byte as u16 >> shift) & mask) as u8);
+                    produced += 1;
                 }
             }
         }
@@ -525,9 +559,27 @@ fn resample_document(input: &Path, output: &Path, dpi_cap: u32, jpeg_quality: u8
             skipped.push(format!("{}:{}:masked-or-decoded", id.0, id.1));
             continue;
         }
+        // Reject dimensions that would decode past the pixel budget before
+        // touching stream bytes, so a hostile Flate stream cannot inflate.
+        if width <= 0.0 || height <= 0.0 || (width as u64) * (height as u64) > MAX_IMAGE_PIXELS {
+            skipped.push(format!("{}:{}:bounds", id.0, id.1));
+            continue;
+        }
+        let decode_bound = (width as u64) * (height as u64) * 4 + 1024;
         let filter_list = filters(&stream.dict);
         let decoded = match filter_list.as_slice() {
             [f] if f == b"DCTDecode" => {
+                // Re-encoding rewrites the color space: only plain Device
+                // spaces can be relabeled without losing calibration.
+                match stream.dict.get(b"ColorSpace") {
+                    Ok(Object::Name(n)) if matches!(n.as_slice(), b"DeviceGray" | b"DeviceRGB") => {
+                    }
+                    Err(_) => {}
+                    _ => {
+                        skipped.push(format!("{}:{}:colorspace", id.0, id.1));
+                        continue;
+                    }
+                }
                 match image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg)
                 {
                     Ok(img) => Some(img),
@@ -540,6 +592,7 @@ fn resample_document(input: &Path, output: &Path, dpi_cap: u32, jpeg_quality: u8
             [f] if f == b"FlateDecode" || f == b"Fl" => {
                 let mut flat = Vec::new();
                 match flate2::read::ZlibDecoder::new(stream.content.as_slice())
+                    .take(decode_bound)
                     .read_to_end(&mut flat)
                 {
                     Ok(_) => {}
