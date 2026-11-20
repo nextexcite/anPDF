@@ -209,7 +209,7 @@ def run(corpus, providers, out, repeat=1, timeout=10):
     for name in providers:
         for category in sorted({r['category'] for r in results['runs']} | {'ALL'}):
             rows = [r for r in results['runs'] if r['provider'] == name and (category == 'ALL' or r['category'] == category) and r['status'] != 'unsupported']
-            correctness = [r['score'] for r in rows if r['task'] != 'roundtrip' and r['score'] is not None]
+            correctness = [r['score'] for r in rows if (r['task'] != 'roundtrip' or r['category'] == 'malformed') and r['score'] is not None]
             retained = [r['score'] for r in rows if r['task'] == 'roundtrip' and r['category'] != 'malformed' and r['score'] is not None]
             report.append(f'| {name} | {category} | {mean(correctness)} | {mean(retained)} | {statistics.median([r["seconds"] for r in rows]):.4f} | {max(r["peakRssBytes"] for r in rows)} | {len(rows)} |' if rows else f'| {name} | {category} | n/a | n/a | n/a | n/a | 0 |')
     report += ['', '## Deployment artifacts', '', '| Provider | Version | Bytes |', '| --- | --- | ---: |']

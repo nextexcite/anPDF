@@ -112,6 +112,15 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(0.5, result['precision'])
         self.assertEqual(1, result['recall'])
 
+    def test_malformed_roundtrip_crash_in_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'bad.pdf').write_bytes(b'garbage')
+            (root / 'manifest.json').write_text(json.dumps({'cases': [{'id': 'bad', 'category': 'malformed', 'file': 'bad.pdf', 'expected': {'expectError': True}}], 'skipped': []}))
+            command = [sys.executable, '-c', 'import sys,json,os,signal; print(json.dumps({"name":"fake","version":"1","tasks":["roundtrip"],"artifacts":[]})) if sys.argv[1]=="capabilities" else os.kill(os.getpid(),signal.SIGTERM)']
+            run(root, {'fake': command}, root / 'out')
+            self.assertIn('| fake | malformed | 0.000 | n/a |', (root / 'out' / 'report.md').read_text())
+
     def test_malformed(self):
         for status, expected in [('ok', 1), ('error', 1), ('crash', 0), ('timeout', 0), ('protocolError', 0)]:
             self.assertEqual(expected, score('pageCount', {'expected': {'expectError': True}}, {'status': status, 'result': {'pages': 1}}, None, None))
