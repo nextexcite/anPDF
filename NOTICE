@@ -12,4 +12,5 @@ These TypeScript files are build/qualification artifacts, not a product runtime.
 The optional pdfoxide build incorporates PDFOxide 0.3.78 under Apache-2.0
 (upstream offers MIT OR Apache-2.0), with its original NOTICE, license texts
 and DejaVu font notice in THIRD_PARTY_LICENSES. The default build does
-not include PDFOxide.
+not include PDFOxide. license-manifest.json indexes the Rust dependency
+notices for both the default and pdfoxide builds.
