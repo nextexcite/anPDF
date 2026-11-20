@@ -270,8 +270,14 @@ impl Dispatcher {
         let mut warnings = Vec::new();
         let mut reports = Vec::new();
         let mut total_pages = 0u64;
+        let total_inputs = inputs.len() as u64;
         for (n, input) in inputs.iter_mut().enumerate() {
             control.check()?;
+            control.report(
+                "staging",
+                format!("staging input {} of {}", n + 1, total_inputs),
+                Some((n as u64 + 1, total_inputs)),
+            );
             let path = staging.path().join(format!("input-{n}.pdf"));
             input.stage(&path)?;
             // Operations that write PDFs keep the full check on their inputs:
@@ -279,6 +285,11 @@ impl Dispatcher {
             // output. Only the user-facing inspect op gets the shallow default.
             let deep = request["deepCheck"].as_bool().unwrap_or(false)
                 || !matches!(plan.job, Job::Inspect);
+            control.report(
+                "inspect",
+                format!("checking structure of input {} of {}", n + 1, total_inputs),
+                Some((n as u64 + 1, total_inputs)),
+            );
             let (mut report, mut w) = plan.structural.inspect(&path, control, deep)?;
             if matches!(plan.job, Job::Inspect) && !deep {
                 w.push(json!({"code":"STREAM_DECODE_UNCHECKED","message":"Stream payloads were parsed but not decoded; set deepCheck to true for complete qpdf structural validation."}));
@@ -332,6 +343,11 @@ impl Dispatcher {
                     return Err(Error("INVALID_REQUEST", None));
                 }
                 control.check()?;
+                control.report(
+                    "extract-text",
+                    format!("extracting text from {} page(s)", pages.len()),
+                    None,
+                );
                 let (extracted, provider_warnings) =
                     backend.extract_text(&paths[0], &pages, control)?;
                 warnings.extend(provider_warnings);
@@ -351,6 +367,11 @@ impl Dispatcher {
                     return Err(Error("INVALID_REQUEST", None));
                 }
                 control.check()?;
+                control.report(
+                    "render",
+                    format!("rendering page {page} at {dpi} dpi"),
+                    None,
+                );
                 let out = staging.path().join("output.png");
                 warnings.extend(backend.render_page(&paths[0], page, dpi, &out, control)?);
                 let (mut png, info) = content::read_png(&out)?;
@@ -379,6 +400,11 @@ impl Dispatcher {
                 if part_pages.last().copied().unwrap_or(0) > total_pages {
                     return Err(Error("INVALID_REQUEST", None));
                 }
+                control.report(
+                    "split",
+                    format!("writing part {} of {}", idx + 1, parts.len()),
+                    Some((idx as u64 + 1, parts.len() as u64)),
+                );
                 let out = staging.path().join(format!("output-{idx}.pdf"));
                 let (artifact, bytes) = transform_artifact(
                     plan.structural,
@@ -419,6 +445,7 @@ impl Dispatcher {
         let result = if let Some(destination) = destination {
             if let Some(spec) = compress_spec {
                 let out = staging.path().join("output.pdf");
+                control.report("compress", "recompressing streams", None);
                 warnings.extend(
                     plan.structural
                         .compress(&paths[0], spec.mode, &out, control)?,
@@ -485,6 +512,18 @@ impl Dispatcher {
                                     break;
                                 }
                                 let remaining = &rungs[depth..];
+                                control.report(
+                                    "resample",
+                                    format!(
+                                        "trial-encoding rungs {}..{} of {} ({} dpi to {} dpi)",
+                                        depth + 1,
+                                        rungs.len(),
+                                        rungs.len(),
+                                        remaining.last().map(|r| r.0).unwrap_or(0),
+                                        remaining.first().map(|r| r.0).unwrap_or(0),
+                                    ),
+                                    Some((depth as u64 + 1, rungs.len() as u64)),
+                                );
                                 let raw = staging.path().join(format!("rung{depth}.raw.pdf"));
                                 // Resample the original input for first-
                                 // generation pixels; a damaged document qpdf
@@ -519,6 +558,7 @@ impl Dispatcher {
                                 // already encoded the images at the rung's
                                 // quality — re-encoding again would add JPEG
                                 // generations without shrinking bytes.
+                                control.report("compress", "applying structural finish", None);
                                 match plan.structural.compress(
                                     &raw,
                                     CompressMode::Lossless,
@@ -561,6 +601,7 @@ impl Dispatcher {
                 // publish path: a deadline spent mid-descent must not strand
                 // it. Verification runs under a short grace window bounded
                 // to the inspect; cancellation still aborts at commit.
+                control.report("verify", "checking output structure", None);
                 let mut grace = control.clone();
                 grace.deadline = Instant::now() + Duration::from_secs(60);
                 let (report, w) = plan.structural.inspect(&candidate, &grace, false)?;
@@ -636,6 +677,7 @@ impl Dispatcher {
                 if control.cancelled.load(Ordering::Relaxed) {
                     return Err(Error("TIMEOUT", None));
                 }
+                control.report("write", "writing output", None);
                 destination.commit(source, &inputs)?;
                 return Ok(envelope);
             }
@@ -655,6 +697,7 @@ impl Dispatcher {
             } else {
                 pages
             };
+            control.report("transform", "building output document", None);
             let out = staging.path().join("output.pdf");
             let (result, _) = transform_artifact(
                 plan.structural,
