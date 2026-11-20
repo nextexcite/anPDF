@@ -126,6 +126,13 @@ class ScoringTests(unittest.TestCase):
             self.assertEqual(expected, score('pageCount', {'expected': {'expectError': True}}, {'status': status, 'result': {'pages': 1}}, None, None))
         self.assertEqual(0, score('pageCount', {'expected': {'expectError': True}}, {'status': 'ok', 'result': {}}, None, None))
 
+    def test_malformed_partial_inspect(self):
+        result = {'status': 'ok', 'result': {'metadata': {'Title': 'Repaired'},
+                  'unsupportedFields': ['outlines', 'links', 'annotations', 'formFields', 'signatureFields', 'imageCount']}}
+        self.assertEqual(1, score('inspect', {'expected': {'expectError': True}}, result, None, None))
+        del result['result']['metadata']
+        self.assertEqual(0, score('inspect', {'expected': {'expectError': True}}, result, None, None))
+
     def test_render(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / 'render.png'

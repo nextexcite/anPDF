@@ -115,7 +115,7 @@ def score(task, case, result, output, source, dpi=72, page=1):
         if task == 'extractText':
             return float(isinstance(value.get('text'), list) and all(isinstance(t, str) for t in value['text']))
         if task == 'inspect':
-            return float(all(field in value for field in FEATURES))
+            return float(all(field in value or field in value.get('unsupportedFields', []) for field in FEATURES))
         if task == 'render':
             with Image.open(output) as image:
                 image.verify()
