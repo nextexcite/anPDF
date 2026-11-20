@@ -20,6 +20,6 @@ run() {
 }
 run merge --root /data --request-json '{"inputs":[{"path":"in/three.pdf"},{"path":"in/one.pdf"}],"output":{"path":"out/merged.pdf"}}' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert v["result"]["pageCount"]==4; print("non-root readonly network-none merge passed")'
 if [ "${2:-}" = pdfoxide ]; then
-  run extract-text --root /data --request-json '{"input":{"path":"in/one.pdf"},"engine":"pdfoxide"}' | python3 -c 'import json,sys; v=json.load(sys.stdin)["result"]; assert v["engine"]=="pdfoxide" and v["pages"][0]["text"].strip()=="PAGE-ONE"; print("PDFOxide extraction passed")'
+  run extract-text --root /data --request-json '{"input":{"path":"in/one.pdf"},"pages":[1],"engine":"pdfoxide"}' | python3 -c 'import json,sys; v=json.load(sys.stdin)["result"]; assert v["engine"]=="pdfoxide" and v["pages"][0]["text"].strip()=="PAGE-ONE"; print("PDFOxide extraction passed")'
   run render-page --root /data --request-json '{"input":{"path":"in/one.pdf"},"page":1,"dpi":72,"engine":"pdfoxide","output":{"path":"out/one.png"}}' | python3 -c 'import json,sys; v=json.load(sys.stdin)["result"]; assert v["engine"]=="pdfoxide" and v["mediaType"]=="image/png"; print("PDFOxide rendering passed")'
 fi
