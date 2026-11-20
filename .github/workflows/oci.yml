@@ -340,3 +340,15 @@ jobs:
           else
             gh release create "$TAG" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "anPDF ${TAG}" --notes "$notes" --prerelease release-assets/*
           fi
+      - name: Notify the Homebrew tap updater
+        env:
+          # GITHUB_TOKEN is scoped to this repository and cannot dispatch an
+          # event on nextexcite/homebrew-anpdf. HOMEBREW_TAP_TOKEN must be an
+          # Actions secret holding a fine-grained PAT (or GitHub App token)
+          # with Contents read+write on nextexcite/homebrew-anpdf.
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          gh api repos/nextexcite/homebrew-anpdf/dispatches \
+            -f event_type=anpdf-release \
+            -F "client_payload[tag]=${TAG}"
