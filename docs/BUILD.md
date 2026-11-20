@@ -47,7 +47,7 @@ Each release run of `.github/workflows/oci.yml` builds, scans, smoke-tests, and 
    (disallowing AGPL, checking uninventoried Rust crates, and blocking fixable High/Critical CVEs)
    before push by digest; `image-index` then creates and smoke-tests the unified OCI index (`DOCKER_BUILD_RECORD_UPLOAD=false`
    keeps build-record bundles off the release).
-2. **`macos/arm64` native binary (GitHub Release + Homebrew formula `Formula/anpdf.rb`):**
+2. **`macos/arm64` native binary (GitHub Release + Homebrew tap [nextexcite/homebrew-anpdf](https://github.com/nextexcite/homebrew-anpdf)):**
    `anpdf-<version>-macos-arm64.tar.gz` and `SHA256SUMS-macos-arm64.txt`, built with
    pinned Rust `1.100.0` and `cargo-auditable 0.7.7`, smoke-tested against pinned qpdf `12.4.2`,
    and attached to the `v<version>` GitHub release alongside the OCI SBOMs, scan reports, and digests.
@@ -189,10 +189,7 @@ Before separately authorizing publication:
    Review failures; do not waive CVE/license gates to publish.
 5. After a separately authorized tag build publishes the actual macOS tarball,
    verify its SHA-256 against `SHA256SUMS-macos-arm64.txt`. In a follow-up commit,
-   replace the all-zero `Formula/anpdf.rb` checksum with that exact hash, following
-   the v0.2.0 post-release checksum-bump pattern. Never reuse the v0.2.0 checksum,
-   invent a checksum, or distribute the placeholder formula as installable.
-   Run `ruby -c Formula/anpdf.rb` and the Homebrew test on macOS against that artifact.
+   the [homebrew-anpdf](https://github.com/nextexcite/homebrew-anpdf) tap workflow updates its formula's url/checksum from the published `SHA256SUMS-macos-arm64.txt` on schedule; verify it committed, and run `brew test anpdf` on macOS against that artifact.
 
 ## CI matrix and pinned GitHub Actions
 
