@@ -750,8 +750,9 @@ mod tests {
     #[test]
     fn pdfium_discovery_precedence_and_bundled_layouts() {
         let tmp = tempfile::tempdir().unwrap();
-        let bin = tmp.path().join("bin");
-        let lib = tmp.path().join("lib/anpdf");
+        let root = tmp.path().canonicalize().unwrap();
+        let bin = root.join("bin");
+        let lib = root.join("lib/anpdf");
         fs::create_dir(&bin).unwrap();
         fs::create_dir_all(&lib).unwrap();
         let executable = bin.join("anpdf");
@@ -773,7 +774,7 @@ mod tests {
             Some(flat.clone())
         );
         fs::write(&bundled, b"bundled").unwrap();
-        let link = tmp.path().join("anpdf-link");
+        let link = root.join("anpdf-link");
         std::os::unix::fs::symlink(&executable, &link).unwrap();
         assert_eq!(
             resolve_pdfium(None, Some(OsString::new()), Some(link.clone())).unwrap(),
@@ -798,7 +799,7 @@ mod tests {
             Some(bundled.clone())
         );
         assert_eq!(
-            resolve_pdfium(Some(tmp.path().join("missing")), None, Some(link)).unwrap(),
+            resolve_pdfium(Some(root.join("missing")), None, Some(link)).unwrap(),
             None
         );
         assert!(resolve_pdfium(Some("relative".into()), None, None).is_err());
