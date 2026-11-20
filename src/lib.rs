@@ -257,7 +257,11 @@ impl Dispatcher {
             control.check()?;
             let path = staging.path().join(format!("input-{n}.pdf"));
             input.stage(&path)?;
-            let (mut report, mut w) = plan.structural.inspect(&path, control)?;
+            let deep = request["deepCheck"].as_bool().unwrap_or(false);
+            let (mut report, mut w) = plan.structural.inspect(&path, control, deep)?;
+            if matches!(plan.job, Job::Inspect) && !deep {
+                w.push(json!({"code":"STREAM_DECODE_UNCHECKED","message":"Stream payloads were parsed but not decoded; set deepCheck to true for complete qpdf structural validation."}));
+            }
             if !report.is_object() {
                 return Err(Error("INTERNAL", None));
             }
@@ -476,7 +480,7 @@ impl Dispatcher {
                         }
                     }
                 }
-                let (report, w) = plan.structural.inspect(&candidate, control)?;
+                let (report, w) = plan.structural.inspect(&candidate, control, false)?;
                 warnings.extend(w);
                 if report["pageCount"] != total_pages
                     || report["forms"] != "absent"
@@ -639,7 +643,7 @@ fn transform_artifact(
     preserve: &Value,
 ) -> Result<(Value, u64)> {
     warnings.extend(backend.transform(paths, pages, out, control)?);
-    let (report, w) = backend.inspect(out, control)?;
+    let (report, w) = backend.inspect(out, control, false)?;
     warnings.extend(w);
     let expected = pages.map_or(total_input_pages, |p| p.len() as u64);
     if report["pageCount"] != expected

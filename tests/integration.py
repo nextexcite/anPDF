@@ -245,7 +245,9 @@ def run():
           ('inspect',{'input':{'path':'damaged.pdf'}},'INVALID_PDF'),
           ('inspect',{'input':{'path':'truncated.pdf'}},'INVALID_PDF'),
           ('inspect',{'input':{'path':'bad-header.pdf'}},'INVALID_PDF'),
-          ('inspect',{'input':{'path':'bad-filter.pdf'}},'INVALID_PDF'),
+          ('inspect',{'input':{'path':'bad-filter.pdf'}},None),
+          ('inspect',{'input':{'path':'bad-filter.pdf'},'deepCheck':True},'INVALID_PDF'),
+          ('inspect',{'input':{'path':'three.pdf'},'deepCheck':True},None),
           ('inspect',{'input':{'path':'cyclic.pdf'}},'INVALID_PDF'),
           ('inspect',{'input':{'path':'flate-bomb.pdf'}},None),
           ('compress',{'input':{'path':'flate-bomb.pdf'},'output':{'path':'bomb-recompressed.pdf'}},None),
@@ -319,6 +321,10 @@ def run():
             ])
             if os.environ.get('ANPDF_TEST_FONT'):
                 corpus.append(('extract-text',{'input':{'path':'provider-cjk.pdf'},'pages':[1]},None))
+        shallow=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'three.pdf'}})]))
+        deep=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'three.pdf'},'deepCheck':True})]))
+        assert any(w['code']=='STREAM_DECODE_UNCHECKED' for w in shallow['warnings'])
+        assert not any(w['code']=='STREAM_DECODE_UNCHECKED' for w in deep['warnings'])
         originals={surface:{f.name:digest(f) for f in root.glob('*.pdf')} for surface,root in roots.items()}
         responses={}
         for n,(command,request,error) in enumerate(corpus,10):

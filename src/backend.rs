@@ -68,7 +68,7 @@ pub enum CompressMode {
 }
 
 pub trait Backend: Send + Sync {
-    fn inspect(&self, path: &Path, control: &Control) -> Result<(Value, Vec<Value>)>;
+    fn inspect(&self, path: &Path, control: &Control, deep: bool) -> Result<(Value, Vec<Value>)>;
     fn transform(
         &self,
         paths: &[PathBuf],
@@ -613,24 +613,12 @@ fn inspect_json(v: &Value, warn_code: i32) -> Result<(Value, Vec<Value>)> {
     ))
 }
 impl Backend for Qpdf {
-    fn inspect(&self, path: &Path, control: &Control) -> Result<(Value, Vec<Value>)> {
+    fn inspect(&self, path: &Path, control: &Control, deep: bool) -> Result<(Value, Vec<Value>)> {
         let mut warnings = self.qualified(control)?;
         let path = path
             .to_str()
             .ok_or(Error("ACCESS_DENIED", None))?
             .to_string();
-        let (encrypted, _) = self.run(&["--is-encrypted".into(), path.clone()], control)?;
-        // qpdf --is-encrypted: 0 encrypted, 2 not encrypted, all other exits are errors.
-        if encrypted == 0 {
-            return Err(Error("ENCRYPTED_UNSUPPORTED", None));
-        }
-        if encrypted != 2 {
-            return Err(Error("INVALID_PDF", None));
-        }
-        let (check, _) = self.run(&["--check".into(), path.clone()], control)?;
-        if check != 0 && check != 3 {
-            return Err(Error("INVALID_PDF", None));
-        }
         let (code, data) = self.run(
             &[
                 "--json=2".into(),
@@ -640,10 +628,42 @@ impl Backend for Qpdf {
             control,
         )?;
         if code != 0 && code != 3 {
-            return Err(Error("INVALID_PDF", None));
+            // A rejected dump is either an invalid document or one needing a
+            // password; --is-encrypted distinguishes (0 encrypted, 2 not).
+            let (encrypted, _) = self.run(&["--is-encrypted".into(), path.clone()], control)?;
+            return Err(Error(
+                if encrypted == 0 {
+                    "ENCRYPTED_UNSUPPORTED"
+                } else {
+                    "INVALID_PDF"
+                },
+                None,
+            ));
         }
         let v: Value = serde_json::from_slice(&data).map_err(|_| Error("INVALID_PDF", None))?;
-        let (mut report, w) = inspect_json(&v, if check == 3 || code == 3 { 3 } else { 0 })?;
+        if v["encrypt"]["encrypted"].as_bool() == Some(true) {
+            return Err(Error("ENCRYPTED_UNSUPPORTED", None));
+        }
+        // `deep` re-runs qpdf --check, which decodes and validates every
+        // stream payload — the slow part on large documents. The default
+        // pass parses the object graph only; the dispatcher discloses that
+        // scope to callers.
+        let mut warn_code = if code == 3 { 3 } else { 0 };
+        if deep {
+            let (check, _) = self.run(&["--check".into(), path.clone()], control)?;
+            if check != 0 && check != 3 {
+                return Err(Error("INVALID_PDF", None));
+            }
+            if check == 3 {
+                warn_code = 3;
+            }
+        }
+        let (mut report, w) = inspect_json(&v, warn_code)?;
+        // --check rejects degenerate documents the dump tolerates; a page
+        // tree with zero pages fails there, so keep the shallow pass equal.
+        if report["pageCount"].as_u64() == Some(0) {
+            return Err(Error("INVALID_PDF", None));
+        }
         let (has_metadata, evidence) = self.preservation_evidence(&v, &path, control)?;
         report["hasMetadata"] = json!(has_metadata);
         report["preservationEvidence"] = evidence;

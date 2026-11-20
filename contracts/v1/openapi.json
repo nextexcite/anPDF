@@ -1084,6 +1084,11 @@
         "properties": {
           "input": {
             "$ref": "#/components/schemas/Input"
+          },
+          "deepCheck": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also run the full stream-decoding structural check (qpdf --check); slower on large documents. Default inspection parses the object structure and reports a STREAM_DECODE_UNCHECKED warning instead."
           }
         },
         "required": [
