@@ -16,7 +16,7 @@ RUN cargo install cargo-auditable --version 0.7.7 --locked && \
     case "$ANPDF_PDFOXIDE" in 0) set -- ;; 1) set -- --features pdfoxide ;; *) exit 1 ;; esac && \
     cargo auditable build --release --locked "$@" && /opt/qpdf/bin/qpdf --version
 
-FROM debian:13.6-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+FROM debian:13.6-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS rootfs
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN rm -f /etc/apt/sources.list.d/* && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20261118T000000Z/ trixie main\ndeb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20261118T000000Z/ trixie-updates main\ndeb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20261118T000000Z/ trixie-security main\n' > /etc/apt/sources.list && SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt update && DEBIAN_FRONTEND=noninteractive SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt upgrade -y && DEBIAN_FRONTEND=noninteractive SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/ca-certificates.crt install -y --no-install-recommends ca-certificates libjpeg62-turbo libssl3t64 zlib1g && rm -rf /var/lib/apt/lists/* && mkdir -p /data/in /data/out && chmod 755 /data /data/in && chown 65532:65532 /data/out && chmod 700 /data/out
 COPY --from=build /opt/qpdf /opt/qpdf
@@ -27,7 +27,15 @@ COPY --from=build /build/build/work/pdfium/licenses /usr/share/licenses/pdfium/l
 COPY LICENSE NOTICE license-manifest.json /usr/share/licenses/anpdf/
 COPY THIRD_PARTY_LICENSES /usr/share/licenses/anpdf/dependencies
 COPY --from=build /tmp/qpdf-12.4.2/LICENSE.txt /usr/share/licenses/qpdf/LICENSE.txt
+RUN find /usr/share/doc -type f ! -iname 'copyright*' ! -iname 'license*' ! -iname 'copying*' ! -iname 'notice*' -delete && \
+    rm -rf /usr/share/man/* /usr/share/info/* /usr/share/locale/* /var/cache/apt/* /var/log/* && \
+    rm -f /var/cache/debconf/*-old && \
+    chown 65532:65532 /data
+
+FROM scratch
+COPY --from=rootfs / /
 ARG APP_VERSION=0.3.0
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV ANPDF_QPDF=/opt/qpdf/bin/qpdf
 ENV ANPDF_PDFIUM_LIB=/usr/local/lib/anpdf/libpdfium.so
 ENV ANPDF_QPDF_EXACT=1
