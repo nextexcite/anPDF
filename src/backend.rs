@@ -303,12 +303,13 @@ impl Qpdf {
                     known = false;
                     break;
                 }
-                let (code, bytes) =
-                    self.run(&[format!("--show-attachment={key}"), path.into()], control)?;
-                if code != 0 {
+                let extracted =
+                    self.run(&[format!("--show-attachment={key}"), path.into()], control);
+                control.check()?;
+                let Ok((0, bytes)) = extracted else {
                     known = false;
                     break;
-                }
+                };
                 let mut detail = attachment.clone();
                 if let Some(map) = detail.as_object_mut() {
                     map.remove("filespec");
@@ -689,6 +690,60 @@ impl Backend for Qpdf {
 mod tests {
     use super::{extract_metadata, extract_pages};
     use serde_json::{Value, json};
+
+    #[test]
+    fn attachment_evidence_is_best_effort_with_bounded_processes() {
+        use super::{Control, Qpdf};
+        use std::{
+            fs,
+            os::unix::fs::PermissionsExt,
+            time::{Duration, Instant},
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("backend");
+        fs::write(&executable, "#!/bin/sh\nprintf synthetic\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let qpdf = Qpdf {
+            executable: executable.clone(),
+            exact: false,
+        };
+        let report = json!({"outlines":[], "pages":[], "attachments":{"sample.txt":{"streams":{"/F":"1 0 R"}}}, "qpdf":[{},{}]});
+        let (_, evidence) = qpdf
+            .preservation_evidence(&report, "input.pdf", &Control::default())
+            .unwrap();
+        assert!(evidence["attachments"].is_string());
+        for script in [
+            "#!/bin/sh\ndd if=/dev/zero bs=1048576 count=33 2>/dev/null\n",
+            "#!/bin/sh\nexit 2\n",
+        ] {
+            fs::write(&executable, script).unwrap();
+            let (_, evidence) = qpdf
+                .preservation_evidence(&report, "input.pdf", &Control::default())
+                .unwrap();
+            assert!(evidence.get("attachments").is_none());
+        }
+        let empty = json!({"attachments":{}, "outlines":[], "pages":[], "qpdf":[{},{}]});
+        assert!(
+            qpdf.preservation_evidence(&empty, "input.pdf", &Control::default())
+                .unwrap()
+                .1["attachments"]
+                .is_string()
+        );
+        fs::write(&executable, "#!/bin/sh\nexec sleep 10\n").unwrap();
+        let control = Control {
+            deadline: Instant::now() + Duration::from_millis(40),
+            ..Control::default()
+        };
+        let start = Instant::now();
+        assert_eq!(
+            qpdf.preservation_evidence(&report, "input.pdf", &control)
+                .unwrap_err()
+                .0,
+            "TIMEOUT"
+        );
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
 
     #[test]
     fn version_range_and_strict_mode() {

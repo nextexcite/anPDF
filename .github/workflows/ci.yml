@@ -46,7 +46,10 @@ jobs:
           python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
       - name: Cross-surface corpus
         shell: bash
-        run: ANPDF_QPDF="$(cat build/work/qpdf-path)" python3 tests/integration.py
+        run: |
+          python3 -m venv build/work/test-venv
+          build/work/test-venv/bin/python -m pip install -r build/test-requirements.txt
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" build/work/test-venv/bin/python tests/integration.py
       - name: Synthetic backend comparison
         if: runner.os == 'Linux'
         shell: bash

@@ -74,6 +74,9 @@ def run():
     for root in roots.values():
         gen.generate(root)
         rich_pdf(root/'primary.pdf','Primary');rich_pdf(root/'secondary.pdf','Secondary')
+        large=PdfWriter();large.add_blank_page(width=300,height=200)
+        large.add_attachment('large.txt',b'x'*(33*1024*1024))
+        with (root/'large-attachment.pdf').open('wb') as f:large.write(f)
         subprocess.run([str(QPDF),'--encrypt','','synthetic-only','256','--',str(root/'one.pdf'),str(root/'encrypted.pdf')],check=True,capture_output=True)
         (root/'truncated.pdf').write_bytes(b'%PDF-1.7\n1 0 obj\n<< /Type /Catalog')
         (root/'bad-header.pdf').write_bytes(b'NOT-A-PDF-HEADER\x00\xff')
@@ -179,6 +182,9 @@ def run():
               ('extract',{'input':{'path':'signed.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED'),
               ('extract',{'input':{'path':'tampered.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED')])
         corpus.extend([
+          ('inspect',{'input':{'path':'large-attachment.pdf'}},None),
+          ('extract',{'input':{'path':'large-attachment.pdf'},'pages':[1],'output':{'path':'large-extract.pdf'}},None),
+          ('extract',{'input':{'path':'large-attachment.pdf'},'pages':[1],'output':{'path':'large-unmet.pdf'},'preserve':{'attachments':True}},'PRESERVATION_UNMET'),
           ('extract',{'input':{'path':'primary.pdf'},'pages':[1,3],'output':{'path':'rich-extract.pdf'},'preserve':{'metadata':True,'bookmarks':True,'annotations':True,'attachments':True}},None),
           ('remove-pages',{'input':{'path':'primary.pdf'},'pages':[1,3],'output':{'path':'rich-remove.pdf'}},None),
           ('merge',{'inputs':[{'path':'primary.pdf'},{'path':'secondary.pdf'}],'output':{'path':'rich-merge.pdf'}},None),
@@ -232,6 +238,8 @@ def run():
           'rich-secondary.pdf':('omitted','omitted','preserved','omitted'),
         }
         for root in roots.values():
+            assert not (root/'large-unmet.pdf').exists()
+            assert len(subprocess.check_output([str(QPDF),'--show-attachment=large.txt',str(root/'large-extract.pdf')]))==33*1024*1024
             primary=qpdf_features(root/'primary.pdf')
             for name,statuses in expected.items():
                 report=responses[name];features=qpdf_features(root/name)
@@ -250,6 +258,8 @@ def run():
             for name in ['unmet.pdf','unmet-split-a.pdf','unmet-split-b.pdf']:assert not (root/name).exists()
             assert digest(root/'fallback.pdf')==digest(root/'compressed.pdf')
         assert responses['fallback.pdf']['result']['outputSource']=='original'
+        assert responses['large-extract.pdf']['result']['preservation']['attachments']=='omitted'
+        assert any(w['code']=='PRESERVATION_OMITTED' and 'attachments' in w['message'] for w in responses['large-extract.pdf']['warnings'])
         assert responses['larger.pdf']['result']['outputSource']=='compressed' and responses['larger.pdf']['result']['bytes']>=responses['larger.pdf']['result']['inputBytes']
         for root in roots.values():assert not (root/'split-rollback.pdf').exists()
         # Verify enriched inspectPdf metadata, page geometry, rotation, and action signals.
