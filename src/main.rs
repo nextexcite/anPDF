@@ -539,12 +539,28 @@ fn id(command: &str) -> &'static str {
     }
 }
 
-fn configured_registry(executable: PathBuf) -> BackendRegistry {
-    BackendRegistry::with_qpdf(executable)
+fn configured_registry(executable: PathBuf) -> Result<BackendRegistry> {
+    let registry = BackendRegistry::with_qpdf(executable);
+    #[cfg(feature = "pdfoxide")]
+    let registry = {
+        let mut registry = registry;
+        let executable = std::env::current_exe().map_err(|_| Error("BACKEND_UNAVAILABLE"))?;
+        anpdf::pdfoxide::register(&mut registry, executable)?;
+        registry
+    };
+    Ok(registry)
+}
+
+fn main() {
+    #[cfg(feature = "pdfoxide")]
+    if std::env::args_os().nth(1).as_deref() == Some(anpdf::pdfoxide::WORKER_ARG.as_ref()) {
+        std::process::exit(anpdf::pdfoxide::worker(std::env::args_os().skip(2)));
+    }
+    run();
 }
 
 #[tokio::main]
-async fn main() {
+async fn run() {
     let command = std::env::args().nth(1).unwrap_or_default();
     let op = id(&command);
     let result = async {
@@ -563,7 +579,7 @@ async fn main() {
             }
             Action::Run(o) => {
                 if o.command == "operations" {
-                    return Ok(Some(contract::discovery_with(&configured_registry(o.qpdf))));
+                    return Ok(Some(contract::discovery_with(&configured_registry(o.qpdf)?)));
                 }
                 if o.command == "schema" {
                     return contract::operation(o.schema.as_deref().unwrap())
@@ -577,7 +593,7 @@ async fn main() {
                         })
                         .ok_or(Error("UNSUPPORTED_OPERATION"));
                 }
-                let d = Arc::new(Dispatcher::with_registry(&o.root, configured_registry(o.qpdf))?);
+                let d = Arc::new(Dispatcher::with_registry(&o.root, configured_registry(o.qpdf)?)?);
                 match o.command.as_str() {
                     "serve" => {
                         let file = o.token_file.ok_or(Error("INVALID_REQUEST"))?;

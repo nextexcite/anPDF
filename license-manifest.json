@@ -1569,6 +1569,39 @@
       "decision": "permissive alternative inventoried; release artifact review pending"
     },
     {
+      "component": "pdf_oxide",
+      "version": "0.3.78",
+      "artifactSha256": "95b1ecc1a60a314fbd1aea5fe8f700ec32af1efa70fef5c6879162444da3437d",
+      "source": "https://crates.io/crates/pdf_oxide/0.3.78",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "Apache-2.0",
+      "scope": "direct runtime dependency of the optional pdfoxide feature",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/33409f3fd68d9e95a48c751757782f468bb5c183f241d26bd1028678faa0baa3.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "33409f3fd68d9e95a48c751757782f468bb5c183f241d26bd1028678faa0baa3"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/a914e104fc9e195ab15594a89546192b66114d6dc8e9052771a26f9a91dd537c.txt",
+          "originalName": "NOTICE",
+          "sha256": "a914e104fc9e195ab15594a89546192b66114d6dc8e9052771a26f9a91dd537c"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/a56b293d91356f5cad310a5f65c2da8ef459e1b23dd3f662228d5f23b8bb9946.txt",
+          "originalName": "src/fonts/assets/LICENSE-DejaVu",
+          "sha256": "a56b293d91356f5cad310a5f65c2da8ef459e1b23dd3f662228d5f23b8bb9946"
+        }
+      ],
+      "decision": "direct dependency reviewed; feature transitive dependency and release artifact inventory pending"
+    },
+    {
       "component": "percent-encoding",
       "version": "2.3.2",
       "artifactSha256": "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220",
