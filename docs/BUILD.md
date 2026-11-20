@@ -68,7 +68,7 @@ formula are updated by the preview workflow.
 
 ## OCI recipe and local reproduction
 
-OCI builder/runtime images are pinned by index digest in `containers/Dockerfile`.
+OCI builder and Debian rootfs base images are pinned by index digest in `containers/Dockerfile`.
 Both tags were resolved against the official Docker registry. Debian package
 resolution uses the signed `20261118T000000Z` snapshot (`trixie`, `trixie-updates`, and
 `trixie-security`). Exact qpdf 12.4.2 source is SHA-256 pinned and built with OpenSSL,
@@ -76,6 +76,39 @@ avoiding the extra crypto libraries bundled with upstream development/test binar
 Node, Forge, Rust and compilers are absent from the runtime stage. Rust dependency metadata
 is embedded with pinned `cargo-auditable 0.7.7` for actual binary SBOM discovery. Runtime
 images carry license notices and retain distribution package copyright records.
+
+The runtime is still a complete **Debian trixie-slim** rootfs, not distroless.
+An intermediate `rootfs` stage performs the snapshot-backed security upgrade and
+runtime package installation. The final `FROM scratch` stage copies that complete
+filesystem once, eliminating replaced package bytes from lower layers; it does
+not remove Debian's Essential packages, package manager, dpkg database, or
+`/etc/os-release`. PATH, backend configuration, numeric non-root user, working
+directory, entrypoint, command and labels are explicitly restored. BuildKit may
+emit a 32-byte empty gzip layer for `WORKDIR`; all filesystem data is in one layer.
+
+Debian slim already excludes man/info/locale data and most documentation with a
+dpkg exception for `/usr/share/doc/*/copyright`. Cleanup retains copyright,
+license, copying and notice files and all product/dependency notices; it removes
+only remaining non-license documentation, man/info/locale data, apt caches,
+logs and old debconf backups. No runtime packages are removed: qpdf still needs
+libjpeg, libcrypto and libstdc++, and `ldd` alone does not prove that a Debian
+package or dynamically loaded facility is safe to remove.
+
+Local linux/amd64 size rehearsal, using the same source and gzip OCI exporter:
+
+| Variant | `docker image ls` disk usage | Compressed OCI layer bytes |
+|---|---:|---:|
+| Original layered recipe | 217 MB | 55,276,407 |
+| Flattened rootfs only | 153 MB | 40,000,772 |
+| Flattened rootfs plus cleanup | 152 MB | 39,784,700 |
+
+The final compressed layers are **28.0% smaller** than the original recipe.
+Disk usage is Docker's local storage accounting, not registry transfer size;
+compressed sizes sum the gzip layer descriptors in each OCI image manifest.
+The rehearsal preserved all 81 Debian packages and their versions/Essential flags,
+355 license/copyright files byte-for-byte, and six notice symlinks. These counts
+describe that amd64 run, not a cross-platform guarantee. Arm64 requires hosted
+qualification; changing base pins or package versions requires remeasurement.
 
 ```sh
 docker build -f containers/Dockerfile -t anpdf:0.3.0-local .
