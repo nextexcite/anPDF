@@ -125,6 +125,24 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(0, compare(['a'], [], unordered=True)['recall'])
         self.assertLess(compare(before['outlines'], after['outlines'])['recall'], 1)
 
+    def test_preservation_bookmark_units(self):
+        child = {'title': 'Existing child', 'page': 1, 'children': []}
+        other = {'title': 'Other child', 'page': 2, 'children': []}
+        parent = {'title': 'Chapter', 'page': 1, 'children': [child, other]}
+        appendix = {'title': 'Appendix', 'page': 2, 'children': []}
+        added = {'title': 'Added', 'page': 1, 'children': []}
+        before = {'outlines': [parent, appendix], 'links': [], 'annotations': [[]],
+                  'formFields': [], 'signatureFields': [], 'metadata': {},
+                  'imageCount': 0, 'pages': 2, 'text': ['', '']}
+        for outlines, retained in [
+            ([dict(parent, children=[added, child, other]), appendix], 1),
+            ([added, parent, appendix], 1),
+            ([dict(parent, children=[other]), appendix], 0.75),
+            ([dict(parent, children=[other]), child, appendix], 0.75),
+        ]:
+            with self.subTest(outlines=outlines), patch('bench.harness.inspect_pdf', side_effect=[before, dict(before, outlines=outlines)]):
+                self.assertEqual(retained, preservation('before.pdf', 'after.pdf')['fields']['outlines'])
+
     def test_malformed_roundtrip_crash_in_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

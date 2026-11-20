@@ -98,10 +98,22 @@ def invoke(command, mode, request, timeout):
         return result
 
 
+def bookmark_features(outlines, ancestors=()):
+    return [feature for item in outlines for feature in
+            [{'title': item['title'], 'page': item['page'], 'ancestorPath': json.dumps(ancestors)}]
+            + bookmark_features(item.get('children', []), ancestors + (item['title'],))]
+
+
 def preservation(source, output):
     before, after = inspect_pdf(source), inspect_pdf(output)
-    scores = {field: compare(before[field], after.get(field), unordered=field != 'annotations')['recall'] for field in FEATURES
-              if before[field] and (field != 'annotations' or any(before[field]))}
+    scores = {}
+    for field in FEATURES:
+        if not before[field] or (field == 'annotations' and not any(before[field])):
+            continue
+        original, saved = before[field], after.get(field)
+        if field == 'outlines':
+            original, saved = bookmark_features(original), bookmark_features(saved or [])
+        scores[field] = compare(original, saved, unordered=field != 'annotations')['recall']
     scores['pages'] = float(before['pages'] == after['pages'])
     scores['text'] = text_score('\n'.join(before['text']), '\n'.join(after['text']))
     if any(f['signed'] for f in before['signatureFields']):

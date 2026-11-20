@@ -179,6 +179,9 @@ It deliberately does not store raw stderr or absolute artifact/input paths.
   page count and normalized text. Feature lists match multisets of canonical
   items, so inserting or reordering entries does not erase unchanged items;
   duplicate multiplicity is retained. Annotation page indices remain significant.
+  Outlines are matched per bookmark (title, target page, and ancestor-title path),
+  not as whole subtrees: adding a child retains its parent and existing siblings,
+  while removing or moving a bookmark loses that bookmark's feature.
   Signed cases additionally require identical
   CMS signature bytes and successful pyHanko integrity verification, using only
   their embedded synthetic root and with network fetching disabled. A rewrite
