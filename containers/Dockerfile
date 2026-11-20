@@ -9,7 +9,10 @@ COPY contracts contracts
 COPY generated generated
 COPY src src
 ENV RUSTFLAGS="--remap-path-prefix=/build=/src --remap-path-prefix=/usr/local/cargo=/cargo"
-RUN cargo install cargo-auditable --version 0.7.7 --locked && cargo auditable build --release --locked && /opt/qpdf/bin/qpdf --version
+ARG ANPDF_PDFOXIDE=0
+RUN cargo install cargo-auditable --version 0.7.7 --locked && \
+    case "$ANPDF_PDFOXIDE" in 0) set -- ;; 1) set -- --features pdfoxide ;; *) exit 1 ;; esac && \
+    cargo auditable build --release --locked "$@" && /opt/qpdf/bin/qpdf --version
 
 FROM debian:13.6-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt

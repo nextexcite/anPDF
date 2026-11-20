@@ -4,10 +4,12 @@ on:
   push:
     tags:
       - "v*"
+      - "!v*-pdfoxide-preview.*"
 permissions:
   contents: read
 jobs:
   prepare:
+    if: github.ref_type != 'tag' || !contains(github.ref_name, '-pdfoxide-preview.')
     runs-on: ubuntu-26.04
     outputs:
       version: ${{ steps.meta.outputs.version }}

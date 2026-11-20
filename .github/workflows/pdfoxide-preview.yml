@@ -1,0 +1,69 @@
+name: Release PDFOxide preview
+on:
+  push:
+    tags:
+      - "v*-pdfoxide-preview.*"
+permissions:
+  contents: read
+concurrency:
+  group: pdfoxide-preview-${{ github.ref }}
+jobs:
+  preview:
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify tag version and main ancestry
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')
+          suffix=${GITHUB_REF_NAME#"v${version}-pdfoxide-preview."}
+          case "$suffix" in
+            ""|*[!0-9]*) echo "Expected v${version}-pdfoxide-preview.<number>" >&2; exit 1 ;;
+          esac
+          git merge-base --is-ancestor HEAD origin/main
+          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          printf 'IMAGE=ghcr.io/%s/anpdf-pdfoxide:%s\nASSET=anpdf-%s-linux-amd64\n' "$owner" "$GITHUB_REF_NAME" "$GITHUB_REF_NAME" >> "$GITHUB_ENV"
+      - name: Verify feature dependency notices
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal
+          python3 build/licenses.py --check --features pdfoxide
+      - name: Build and smoke-test Linux amd64 preview
+        run: |
+          docker build --platform linux/amd64 --build-arg ANPDF_PDFOXIDE=1 --build-arg APP_VERSION="${GITHUB_REF_NAME#v}" -f containers/Dockerfile -t "$IMAGE" .
+          sh containers/smoke.sh "$IMAGE" pdfoxide
+      - name: Collect SBOM, audit evidence, and checksums
+        run: |
+          mkdir -p build/artifacts build/work
+          docker save -o "build/work/$ASSET.tar" "$IMAGE"
+          python3 build/get-tool.py syft build/work/syft
+          python3 build/get-tool.py grype build/work/grype
+          archive="docker-archive:build/work/$ASSET.tar"
+          build/work/syft/syft scan "$archive" -o "spdx-json=build/artifacts/$ASSET.spdx.json"
+          python3 -c 'import json,sys; sbom=json.load(open(sys.argv[1])); assert any(r.get("referenceLocator","").startswith("pkg:cargo/pdf_oxide@") for p in sbom["packages"] for r in p.get("externalRefs",[])), "PDFOxide missing from image SBOM"' "build/artifacts/$ASSET.spdx.json"
+          build/work/grype/grype "$archive" -o json > "build/artifacts/$ASSET.grype.json"
+          python3 build/oci-audit.py --sbom "build/artifacts/$ASSET.spdx.json" --grype "build/artifacts/$ASSET.grype.json" --out "build/artifacts/$ASSET.audit.json"
+          gzip -n -c "build/work/$ASSET.tar" > "build/artifacts/$ASSET.image.tar.gz"
+          (cd build/artifacts && sha256sum "$ASSET."* > "SHA256SUMS-$ASSET.txt")
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish preview image and GitHub prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Preview release already exists; use a new preview tag." >&2
+            exit 1
+          fi
+          docker push "$IMAGE"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false \
+            --title "anPDF PDFOxide preview $GITHUB_REF_NAME" \
+            --notes "Evaluation build for Linux amd64: `$IMAGE`. Use engine pdfoxide for extractText and renderPage. The image contains the third-party notices and the release includes an SPDX SBOM, scan, and checksums." \
+            build/artifacts/*
