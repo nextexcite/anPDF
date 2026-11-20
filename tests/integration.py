@@ -247,6 +247,7 @@ def run():
           ('inspect',{'input':{'path':'bad-header.pdf'}},'INVALID_PDF'),
           ('inspect',{'input':{'path':'bad-filter.pdf'}},None),
           ('inspect',{'input':{'path':'bad-filter.pdf'},'deepCheck':True},'INVALID_PDF'),
+          ('merge',{'inputs':[{'path':'bad-filter.pdf'},{'path':'one.pdf'}],'output':{'path':'mf.pdf'}},'INVALID_PDF'),
           ('inspect',{'input':{'path':'three.pdf'},'deepCheck':True},None),
           ('inspect',{'input':{'path':'cyclic.pdf'}},'INVALID_PDF'),
           ('inspect',{'input':{'path':'flate-bomb.pdf'}},None),

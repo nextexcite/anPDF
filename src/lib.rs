@@ -257,7 +257,11 @@ impl Dispatcher {
             control.check()?;
             let path = staging.path().join(format!("input-{n}.pdf"));
             input.stage(&path)?;
-            let deep = request["deepCheck"].as_bool().unwrap_or(false);
+            // Operations that write PDFs keep the full check on their inputs:
+            // an undecodable stream would otherwise be copied into published
+            // output. Only the user-facing inspect op gets the shallow default.
+            let deep = request["deepCheck"].as_bool().unwrap_or(false)
+                || !matches!(plan.job, Job::Inspect);
             let (mut report, mut w) = plan.structural.inspect(&path, control, deep)?;
             if matches!(plan.job, Job::Inspect) && !deep {
                 w.push(json!({"code":"STREAM_DECODE_UNCHECKED","message":"Stream payloads were parsed but not decoded; set deepCheck to true for complete qpdf structural validation."}));
