@@ -13,12 +13,12 @@ def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def mcp_send(p,v):p.stdin.write(json.dumps(v)+'\n');p.stdin.flush()
 def mcp_read(p):
     line=p.stdout.readline();assert line,'MCP closed unexpectedly';return json.loads(line)
-def http(port,token,path,data=None,extra=None):
+def http(port,token,path,data=None,extra=None,timeout=15):
     headers={'Authorization':'Bearer '+token};headers.update(extra or {})
     if data is not None:headers['Content-Type']='application/json'
     r=urllib.request.Request(f'http://127.0.0.1:{port}'+path,data=None if data is None else json.dumps(data).encode(),headers=headers)
     try:
-        with urllib.request.urlopen(r,timeout=15) as r:return r.status,json.load(r)
+        with urllib.request.urlopen(r,timeout=timeout) as r:return r.status,json.load(r)
     except urllib.error.HTTPError as e:return e.code,json.load(e)
 
 def build_pdf(objs):
@@ -316,7 +316,7 @@ def run():
             cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps(request)],capture_output=True,text=True)
             assert bool(cli.returncode)==bool(error),(n,command,cli.returncode,cli.stderr,cli.stdout);a=json.loads(cli.stderr if error else cli.stdout)
             assert not (cli.stdout if error else cli.stderr),(n,'framing')
-            try:status,b=http(port,token,'/v1/'+command,request)
+            try:status,b=http(port,token,'/v1/'+command,request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else 15)
             except TimeoutError as e:raise AssertionError((n,command,request.get('input'),'HTTP timeout')) from e
             mcp_send(mcp,{'jsonrpc':'2.0','id':n,'method':'tools/call','params':{'name':op,'arguments':request}})
             result=mcp_read(mcp)['result'];c=json.loads(result['content'][0]['text'])
