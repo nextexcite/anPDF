@@ -85,6 +85,20 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<Value>>;
 }
 
+/// Raster pass used by the compression size ladder: resamples oversized image
+/// XObjects to `dpi_cap` and re-encodes them as JPEG, leaving the structural
+/// finish to the `Backend::compress` pass that follows.
+pub trait ImageResampler: Send + Sync {
+    fn resample_images(
+        &self,
+        input: &Path,
+        output: &Path,
+        dpi_cap: u32,
+        jpeg_quality: u8,
+        control: &Control,
+    ) -> Result<Value>;
+}
+
 pub const MAX_TEXT_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_PNG_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_RENDER_SIDE: u32 = 8192;

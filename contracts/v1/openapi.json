@@ -779,7 +779,7 @@
             }
           }
         },
-        "description": "Keep validated original bytes when compressed output is not smaller, unless allowLargerOutput is true. outputSource identifies the published bytes."
+        "description": "Keep validated original bytes when compressed output is not smaller, unless allowLargerOutput is true. outputSource identifies the published bytes. maxOutputBytes requests a byte ceiling: the ladder descends DPI/quality rungs down to compressionLevel's floor until the target is met or exhausted, reporting targetBytes/targetMet and techniques; an unmet target warns (bestEffort) or fails SIZE_TARGET_UNMET (error)."
       }
     },
     "/v1/extract-text": {
@@ -1266,6 +1266,26 @@
             "maximum": 100,
             "description": "JPEG quality (0-100, default 80) when mode is lossy; rejected in lossless mode."
           },
+          "compressionLevel": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3,
+            "description": "Descent floor for image resampling: 1 keeps lossless structure only, 2 allows down to ~200dpi at high JPEG quality, 3 allows down to ~120dpi with stronger encoding. Alone it pins that rung; with maxOutputBytes it is the deepest rung the ladder may reach."
+          },
+          "maxOutputBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Publish compressed output at or below this byte ceiling. Implies lossy mode; the ladder descends DPI/quality rungs toward compressionLevel's floor until the target is met."
+          },
+          "onTargetMiss": {
+            "type": "string",
+            "enum": [
+              "bestEffort",
+              "error"
+            ],
+            "default": "bestEffort",
+            "description": "When output cannot reach maxOutputBytes: bestEffort publishes the smallest achieved bytes with targetMet false and a SIZE_TARGET_UNMET warning; error fails SIZE_TARGET_UNMET (422) without publishing."
+          },
           "allowLargerOutput": {
             "type": "boolean",
             "default": false,
@@ -1323,6 +1343,22 @@
               "compressed",
               "original"
             ]
+          },
+          "techniques": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Compression passes applied to the published candidate: flate-recompress, object-streams, resource-drop, jpeg-recompress, image-downsample; empty when original bytes were published."
+          },
+          "targetBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Echo of the requested maxOutputBytes; present only when the request set it."
+          },
+          "targetMet": {
+            "type": "boolean",
+            "description": "Whether published bytes are at or below maxOutputBytes; present only when the request set it."
           }
         },
         "required": [
@@ -1334,7 +1370,8 @@
           "savedBytes",
           "compressionRatio",
           "mode",
-          "outputSource"
+          "outputSource",
+          "techniques"
         ]
       },
       "Warning": {
@@ -1798,7 +1835,8 @@
                   "BACKEND_UNAVAILABLE",
                   "INTERNAL",
                   "UNAUTHENTICATED",
-                  "PRESERVATION_UNMET"
+                  "PRESERVATION_UNMET",
+                  "SIZE_TARGET_UNMET"
                 ]
               },
               "message": {

@@ -316,7 +316,9 @@ Request: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[2],\"output\":{\"path\":\"
         }
         Some("compress") => {
             "USAGE: anpdf compress [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
-Operation: compressPdf (mode: lossless | lossy, optional jpegQuality 0..100 in lossy mode)\n\
+Operation: compressPdf (mode: lossless | lossy, optional jpegQuality 0..100 in lossy mode,\n\
+optional compressionLevel 1..3 — 1 lossless, 2 ≈200dpi/high-quality, 3 ≈120dpi/stronger —\n\
+and maxOutputBytes with onTargetMiss bestEffort|error for a size target)\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"compressed.pdf\"},\"mode\":\"lossless\"}\n"
                 .into()
         }
@@ -642,6 +644,10 @@ fn configured_registry(
         anpdf::pdfoxide::register(&mut registry, executable)?;
         registry
     };
+    let mut registry = registry;
+    registry.register_resampler(Arc::new(anpdf::resample::ResampleProvider {
+        worker_executable: std::env::current_exe().map_err(|_| Error("BACKEND_UNAVAILABLE"))?,
+    }));
     Ok(registry)
 }
 
@@ -653,6 +659,9 @@ fn main() {
     #[cfg(feature = "pdfoxide")]
     if std::env::args_os().nth(1).as_deref() == Some(anpdf::pdfoxide::WORKER_ARG.as_ref()) {
         std::process::exit(anpdf::pdfoxide::worker(std::env::args_os().skip(2)));
+    }
+    if std::env::args_os().nth(1).as_deref() == Some(anpdf::resample::WORKER_ARG.as_ref()) {
+        std::process::exit(anpdf::resample::worker(std::env::args_os().skip(2)));
     }
     async_main();
 }

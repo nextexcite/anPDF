@@ -16,7 +16,7 @@ The goal is to **own the interface and the workflow**, while reusing proven PDF 
 
 ## What works today
 
-**Version:** `0.3.0` — early development milestone (**not production-qualified**).
+**Version:** `0.3.1` — early development milestone (**not production-qualified**).
 
 Released as [v0.3.0](https://github.com/nextexcite/anPDF/releases/tag/v0.3.0). See [CHANGELOG.md](CHANGELOG.md) and the
 [release checklist](docs/BUILD.md#release-checklist).
@@ -49,6 +49,8 @@ Transforms currently **reject** encrypted, signed, form/XFA-bearing, or preserva
 Merge, extract, split and remove-pages retain the first input as the primary document. Each output reports `preservation` for `metadata`, `bookmarks`, `annotations` and `attachments`: `preserved`, `omitted` (including uncertainty), or `absent`. Optional `preserve` booleans require those aspects when present; an unmet requirement fails with `PRESERVATION_UNMET` before any output is published. Defaults are best effort, with one `PRESERVATION_OMITTED` warning naming omissions. Secondary merge metadata can be omitted, and secondary bookmarks/attachments are not merged. Inspection includes optional per-page `annotationCount`. See [preservation evidence and limitations](docs/PROTOCOLS.md#preservation-and-compression).
 
 Compression keeps the validated original bytes if compressed output is not smaller, unless `allowLargerOutput:true` is requested. Required `outputSource` identifies `original` or `compressed`; reported hashes, sizes and savings describe the bytes actually written. `NO_SIZE_REDUCTION` names which was kept.
+
+`compress` also accepts `maxOutputBytes`, `compressionLevel` (1–3) and `onTargetMiss` (`bestEffort` default, or `error`). A byte target descends a DPI/JPEG-quality ladder — `image-downsample` resamples placed images through a sandboxed worker — until the target is met or the ladder reaches the level's floor (2 ≈ 200dpi, 3 ≈ 120dpi; level 1 stays lossless). Results report `techniques`, `targetBytes` and `targetMet`; an unmet target warns `SIZE_TARGET_UNMET` or fails 422.
 
 ## Basic usage
 
