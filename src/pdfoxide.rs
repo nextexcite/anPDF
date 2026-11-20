@@ -9,6 +9,7 @@ use crate::{
 use pdf_oxide::{
     document::{PdfDocument, ReadingOrder},
     geometry::Rect,
+    object::Object,
     rendering::{RenderOptions, render_page},
 };
 use serde_json::{Value, json};
@@ -230,13 +231,13 @@ fn rasterize(doc: &PdfDocument, page: usize, dpi: u32, mut output: impl Write) -
         .get("UserUnit")
     {
         let unit = doc.resolve_object(unit).map_err(|_| Error("INVALID_PDF"))?;
-        let unit = unit
-            .as_real()
-            .or_else(|| unit.as_integer().map(|n| n as f64))
-            .filter(|n| n.is_finite() && *n > 0.0)
-            .ok_or(Error("INVALID_PDF"))?;
-        if unit != 1.0 {
-            return Err(Error("UNSUPPORTED_OPERATION"));
+        match unit {
+            Object::Null | Object::Integer(1) | Object::Real(1.0) => {}
+            Object::Integer(n) if n > 0 => return Err(Error("UNSUPPORTED_OPERATION")),
+            Object::Real(n) if n.is_finite() && n > 0.0 => {
+                return Err(Error("UNSUPPORTED_OPERATION"));
+            }
+            _ => return Err(Error("INVALID_PDF")),
         }
     }
     let info = doc

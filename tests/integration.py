@@ -74,6 +74,7 @@ def run():
             (root/'oversized.pdf').write_bytes(render_fixture(oversized=True))
             (root/'custom-unit.pdf').write_bytes(render_fixture(page_entries=b' /UserUnit 2.5'))
             (root/'default-unit.pdf').write_bytes(render_fixture(page_entries=b' /UserUnit 1'))
+            (root/'null-unit.pdf').write_bytes(render_fixture(page_entries=b' /UserUnit null'))
         subprocess.run([str(QPDF),'--encrypt','','synthetic-only','256','--',str(root/'one.pdf'),str(root/'encrypted.pdf')],check=True,capture_output=True)
         (root/'truncated.pdf').write_bytes(b'%PDF-1.7\n1 0 obj\n<< /Type /Catalog')
         (root/'bad-header.pdf').write_bytes(b'NOT-A-PDF-HEADER\x00\xff')
@@ -183,6 +184,7 @@ def run():
                 ('render-page',{'input':{'path':'crop.pdf'},'page':1,'dpi':72,'engine':'pdfoxide','output':{'path':'crop.png'}},None),
                 ('render-page',{'input':{'path':'custom-unit.pdf'},'page':1,'dpi':72,'output':{'path':'custom-unit.png'}},'UNSUPPORTED_OPERATION'),
                 ('render-page',{'input':{'path':'default-unit.pdf'},'page':1,'dpi':72,'output':{'path':'default-unit.png'}},None),
+                ('render-page',{'input':{'path':'null-unit.pdf'},'page':1,'dpi':72,'output':{'path':'null-unit.png'}},None),
                 ('render-page',{'input':{'path':'annotation.pdf'},'page':1,'dpi':72,'output':{'path':'annotation.png'}},None),
                 ('render-page',{'input':{'path':'blank.pdf'},'page':1,'dpi':72,'output':{'path':'blank.png'}},None),
                 ('render-page',{'input':{'path':'crop.pdf'},'page':1,'dpi':72,'output':{'path':'crop.png'}},'OUTPUT_EXISTS'),
@@ -238,6 +240,7 @@ def run():
                 assert not (root/'oversized.png').exists()
                 assert not (root/'custom-unit.png').exists()
                 assert digest(root/'default-unit.png')==digest(root/'crop.png')
+                assert digest(root/'null-unit.png')==digest(root/'crop.png')
                 assert digest(root/'crop.png')==digest(root/'annotation.png')!=digest(root/'blank.png')
         # Independent semantic page order, not just matching hashes.
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'merged.pdf'),'-']).decode()
