@@ -1,5 +1,5 @@
 """Real qpdf cross-surface qualification. Requires built anpdf, qpdf 12.4.2, Poppler."""
-import hashlib,importlib.util,json,os,pathlib,shutil,socket,subprocess,tempfile,time,urllib.request,urllib.error,zlib
+import hashlib,importlib.util,json,os,pathlib,shutil,socket,subprocess,sys,tempfile,time,urllib.request,urllib.error,zlib
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BIN=pathlib.Path(os.environ.get('ANPDF_BINARY',ROOT/'target/debug/anpdf')).resolve()
 QPDF=pathlib.Path(os.environ.get('ANPDF_QPDF') or shutil.which('qpdf') or '/usr/bin/qpdf').resolve()
@@ -44,9 +44,21 @@ def render_fixture(annotations=False, oversized=False, paint=True, page_entries=
         ])
     return build_pdf(objs)
 
+def check_license_regeneration(root):
+    root.mkdir()
+    for name in ('build/licenses.py','build.rs','Cargo.toml','Cargo.lock','src/main.rs','src/lib.rs'):
+        dest=root/name;dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/name,dest)
+    shutil.copytree(ROOT/'THIRD_PARTY_LICENSES',root/'THIRD_PARTY_LICENSES')
+    command=[sys.executable,str(root/'build/licenses.py')]
+    subprocess.run(command,check=True)
+    subprocess.run([*command,'--check'],check=True)
+    subprocess.run([*command,'--check','--features','pdfoxide'],check=True)
+    assert (root/'license-manifest.json').read_bytes()==(ROOT/'license-manifest.json').read_bytes()
+
 def run():
  with tempfile.TemporaryDirectory(prefix='anpdf-tests-') as t:
     base=pathlib.Path(t);roots={s:base/s for s in ['cli','http','mcp']}
+    if PDFOXIDE:check_license_regeneration(base/'license-inventory')
     bomb_data=b' '*(40*1024*1024)
     for _ in range(3):bomb_data=zlib.compress(bomb_data,9)
     bomb_pdf=build_pdf([

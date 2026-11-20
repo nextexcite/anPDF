@@ -5,11 +5,13 @@ import argparse,hashlib,json,pathlib,re,subprocess,tomllib,urllib.request
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser()
 p.add_argument('--target',default='x86_64-unknown-linux-gnu')
-p.add_argument('--features',default='')
-p.add_argument('--check',action='store_true')
+p.add_argument('--features',default='',help='Cargo features to verify with --check')
+p.add_argument('--check',action='store_true',help='Verify the selected build without rewriting the all-features inventory')
 a=p.parse_args()
+if a.features and not a.check:p.error('--features requires --check; regeneration always includes all features')
 cmd=['cargo','metadata','--locked','--format-version','1','--filter-platform',a.target]
-if a.features:cmd.extend(['--features',a.features])
+if not a.check:cmd.append('--all-features')
+elif a.features:cmd.extend(['--features',a.features])
 m=json.loads(subprocess.check_output(cmd,cwd=ROOT))
 nodes={n['id']:n for n in m['resolve']['nodes']};reachable=set();stack=[m['resolve']['root']]
 while stack:
