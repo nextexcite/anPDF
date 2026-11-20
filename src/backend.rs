@@ -34,6 +34,26 @@ impl Control {
             Ok(())
         }
     }
+    /// Wall-clock budget left before the deadline; subprocess CPU limits
+    /// derive from it so a worker never outlives its job.
+    pub fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
+}
+/// Wall-clock budget for a compress job: a 60 s base plus a per-MiB
+/// allowance for image-resample passes, bounded at 10 minutes. Large
+/// scanned documents need several minutes of resampling work that the flat
+/// default deadline could never fit; the cap keeps the job bounded.
+/// `ANPDF_JOB_DEADLINE_MS` overrides the budget for integration tests.
+pub fn compress_deadline(input_bytes: u64) -> Duration {
+    if let Some(ms) = std::env::var("ANPDF_JOB_DEADLINE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+    {
+        return Duration::from_millis(ms);
+    }
+    Duration::from_secs(60 + input_bytes.div_ceil(1024 * 1024) * 20).min(Duration::from_secs(600))
 }
 #[cfg(target_os = "macos")]
 const RSS_LIMIT_BYTES: u64 = 768 * 1024 * 1024;
@@ -146,14 +166,14 @@ pub struct Qpdf {
     pub exact: bool,
 }
 
-pub(crate) fn limit_worker(cmd: &mut Command, file_limit: libc::rlim_t) {
+pub(crate) fn limit_worker(cmd: &mut Command, file_limit: libc::rlim_t, cpu_secs: u64) {
     unsafe {
         cmd.pre_exec(move || {
             if libc::setsid() < 0 {
                 return Err(std::io::Error::last_os_error());
             }
             for (res, max) in [
-                (libc::RLIMIT_CPU, 60),
+                (libc::RLIMIT_CPU, cpu_secs as libc::rlim_t),
                 (libc::RLIMIT_FSIZE, file_limit),
                 (libc::RLIMIT_NOFILE, 64),
                 #[cfg(not(target_os = "macos"))]
@@ -200,7 +220,15 @@ impl Qpdf {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        limit_worker(&mut cmd, 250 * 1024 * 1024);
+        // The worker's CPU budget tracks the job's remaining deadline: a
+        // resample pass on a large scan needs far more CPU than the old flat
+        // 60 s, and the parent still kills the process at the deadline.
+        let cpu_secs = control
+            .remaining()
+            .as_secs()
+            .saturating_add(30)
+            .clamp(30, 600);
+        limit_worker(&mut cmd, 250 * 1024 * 1024, cpu_secs);
         let mut child = cmd
             .spawn()
             .map_err(|_| Error("BACKEND_UNAVAILABLE", None))?;

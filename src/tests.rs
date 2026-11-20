@@ -5,6 +5,28 @@ use std::{
     os::unix::fs::{PermissionsExt, symlink},
 };
 
+#[test]
+fn rung_estimate_tracks_byte_ratio() {
+    const LADDER: &[(u32, u8)] = &[
+        (300, 80),
+        (200, 75),
+        (150, 65),
+        (120, 55),
+        (96, 50),
+        (72, 45),
+    ];
+    // A near-input-sized target seeds a gentle rung (300·√0.89 ≈ 283dpi →
+    // 200dpi rung); ~15% seeds 118dpi → the 96dpi rung; an extreme target
+    // takes the floor.
+    assert_eq!(crate::estimate_rung(LADDER, 9_000_000, 8_000_000), 1);
+    assert_eq!(crate::estimate_rung(LADDER, 9_000_000, 1_400_000), 4);
+    assert_eq!(crate::estimate_rung(LADDER, 9_000_000, 1_000), 5);
+    // Estimates between rungs pick the first cap at-or-below the estimate,
+    // and a sliced floor (e.g. level 2) still bounds the fallback index.
+    assert_eq!(crate::estimate_rung(LADDER, 9_000_000, 2_500_000), 2);
+    assert_eq!(crate::estimate_rung(&LADDER[..2], 9_000_000, 1_000), 1);
+}
+
 mod content_operations {
     use crate::{
         BackendRegistry, Dispatcher,

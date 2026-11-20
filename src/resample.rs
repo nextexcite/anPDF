@@ -646,11 +646,41 @@ fn resample_document(input: &Path, output: &Path, dpi_cap: u32, jpeg_quality: u8
             .min(1.0);
         let new_w = ((px_w as f64) * scale).floor().max(1.0) as u32;
         let new_h = ((px_h as f64) * scale).floor().max(1.0) as u32;
-        let resized = resampled(&image, new_w, new_h);
+        let mut resized = resampled(&image, new_w, new_h);
+        // An RGB image whose channels never diverge is achromatic: re-encode
+        // it as grayscale so the JPEG drops its chroma planes and the
+        // rewritten ColorSpace stays honest. Scanned pages are often stored
+        // RGB despite holding monochrome content.
+        if let image::DynamicImage::ImageRgb8(rgb) = &resized {
+            let achromatic = rgb.pixels().all(|p| {
+                let [r, g, b] = p.0;
+                r.abs_diff(g) <= 8 && g.abs_diff(b) <= 8 && r.abs_diff(b) <= 8
+            });
+            if achromatic {
+                resized = image::DynamicImage::ImageLuma8(resized.to_luma8());
+            }
+        }
         let mut jpeg = Vec::new();
         let mut encoder =
             image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, jpeg_quality);
-        if encoder.encode_image(&resized).is_err() {
+        // Encode the concrete buffer, not the DynamicImage: a DynamicImage
+        // reports RGBA pixels to the encoder, which would emit a
+        // 3-component JPEG under a DeviceGray label.
+        let encoded = match &resized {
+            image::DynamicImage::ImageLuma8(l) => {
+                encoder.encode(l.as_raw(), l.width(), l.height(), image::ExtendedColorType::L8)
+            }
+            _ => {
+                let rgb = resized.to_rgb8();
+                encoder.encode(
+                    rgb.as_raw(),
+                    rgb.width(),
+                    rgb.height(),
+                    image::ExtendedColorType::Rgb8,
+                )
+            }
+        };
+        if encoded.is_err() {
             skipped.push(format!("{}:{}:jpeg-encode", id.0, id.1));
             continue;
         }

@@ -50,7 +50,7 @@ Merge, extract, split and remove-pages retain the first input as the primary doc
 
 Compression keeps the validated original bytes if compressed output is not smaller, unless `allowLargerOutput:true` is requested. Required `outputSource` identifies `original` or `compressed`; reported hashes, sizes and savings describe the bytes actually written. `NO_SIZE_REDUCTION` names which was kept.
 
-`compress` also accepts `maxOutputBytes`, `compressionLevel` (1–3) and `onTargetMiss` (`bestEffort` default, or `error`). A byte target descends a DPI/JPEG-quality ladder — `image-downsample` resamples placed images through a sandboxed worker — until the target is met or the ladder reaches the level's floor (2 ≈ 200dpi, 3 ≈ 120dpi; level 1 stays lossless). Results report `techniques`, `targetBytes` and `targetMet`; an unmet target warns `SIZE_TARGET_UNMET` or fails 422.
+`compress` also accepts `maxOutputBytes`, `compressionLevel` (1–3) and `onTargetMiss` (`bestEffort` default, or `error`). A byte target descends a DPI/JPEG-quality ladder — `image-downsample` resamples placed images through a sandboxed worker — until the target is met or the ladder reaches the level's floor (2 ≈ 200dpi, 3 ≈ 120dpi; a bare target may descend to ~72dpi; level 1 stays lossless). Results report `techniques`, `targetBytes` and `targetMet`; an unmet target warns `SIZE_TARGET_UNMET` or fails 422.
 
 ## Basic usage
 
