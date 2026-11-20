@@ -1,8 +1,9 @@
 # Preliminary qualification evidence
 
-Observed locally and on hosted GitHub Actions runners (`ubuntu-26.04` amd64 and
-`macos-26` arm64). These checks establish a preliminary `0.1.0-alpha.2` vertical
-slice and artifact publication; they do not establish a production V0 release.
+Observed locally and on hosted GitHub Actions runners (`ubuntu-26.04` amd64,
+`ubuntu-26.04-arm` arm64 for release OCI, and `macos-26` arm64). These checks establish a
+development `0.2.0` vertical slice and multi-arch artifact publication; they do not establish
+a production V0/`1.0.0` release.
 
 | Check | Observed result |
 |---|---|
@@ -18,8 +19,8 @@ slice and artifact publication; they do not establish a production V0 release.
 | Offline | Native inspection passed in an isolated Linux network namespace |
 | Process/filesystem | Timeout, stdout/stderr capture overflow, object-count/deep-nesting/non-finite-MediaBox guards, sparse-file limit, symlink/alias rejection, atomic competing outputs, and cleanup tests passed (`RLIMIT_AS` on Linux; `proc_pidinfo` RSS watchdog on macOS) |
 | Native artifact | Auditable release binary and actual Syft SPDX SBOM produced; `macos-arm64` release tarball packaged and smoke-tested on `macos-26` |
-| GitHub workflows | Hosted `ci.yml` (`ubuntu-26.04`, `macos-26`, `forge-output`, `privacy`) and `oci.yml` passed |
-| OCI (`linux/amd64`) | Built on `ubuntu-26.04`, passed non-root/read-only/`--network=none` smoke test, Syft SPDX SBOM, Grype vulnerability gate, and `build/oci-audit.py` license/crate audit before GHCR push + post-push pull check |
+| GitHub workflows | Hosted `ci.yml` (`ubuntu-26.04`, `macos-26`, `forge-output`, `privacy`) and `oci.yml` (`ubuntu-26.04`, `ubuntu-26.04-arm`, `macos-26`) |
+| OCI (`linux/amd64`, `linux/arm64`) | Built natively on `ubuntu-26.04` and `ubuntu-26.04-arm`, passed non-root/read-only/`--network=none` smoke test, Syft SPDX SBOM, Grype vulnerability gate, and `build/oci-audit.py` license/crate audit before GHCR push + unified index verification |
 
 Synthetic recipes contain no personal data or external documents. CJK testing uses
 an exact checksum/revision-pinned OFL-1.1 font; the ephemeral test certificate/key
@@ -30,7 +31,7 @@ evidence, not a rendering/signing product feature.
 
 Remaining release gates:
 
-- Multi-arch `linux/arm64` OCI build/runtime verification and formal OS/backend license sign-off.
+- Full native `cargo test` + cross-surface corpus execution directly on `linux/arm64` (release builds currently verify `linux/arm64` via OCI build + restricted `containers/smoke.sh` + Syft/Grype audit) and formal OS/backend license sign-off.
 - macOS virtual-address vs RSS limits (`RLIMIT_AS` is rejected by XNU; `proc_pidinfo` enforces a 768 MiB RSS limit during polling, alongside kernel `RLIMIT_CPU`, `RLIMIT_FSIZE`, and `RLIMIT_NOFILE`).
 - Reproducible redistributable Forge artifact and wider generator/schema regression
   qualification; generated schema fidelity remains insufficient for validation.

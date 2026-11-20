@@ -1,30 +1,30 @@
 # Preliminary builds and workflows
 
-CI and release workflows run on GitHub-hosted runners (`ubuntu-26.04` for Linux amd64 and
-`macos-26` for Apple Silicon arm64). The OCI and release publication workflow
-(`.github/workflows/oci.yml`) triggers on `v*` tag pushes and `workflow_dispatch`,
-reading the authoritative version from `Cargo.toml` (and asserting tag alignment on
-tag pushes), so untrusted PRs never receive package or release write permissions.
+CI workflows run on `ubuntu-26.04` (Linux amd64) and `macos-26` (Apple Silicon arm64).
+Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on `ubuntu-26.04`
+(`linux/amd64`) and `ubuntu-26.04-arm` (`linux/arm64`). `.github/workflows/oci.yml` triggers on `v*`
+tag pushes and `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
+tag alignment on tag pushes), so untrusted PRs never receive package or release write permissions.
 
-## Published preliminary artifacts (until further notice)
+Versioning convention: `< 0.5.0` tags use clean milestone versions (`0.2.0`, `v0.2.0`); SemVer prerelease identifiers (`-alpha.N`, `-rc.N`) start at `>= 0.5.0`.
+
+## Published development artifacts
 
 Each release run of `.github/workflows/oci.yml` builds, scans, smoke-tests, and publishes:
 
-1. **`linux/amd64` OCI image (GHCR):** `ghcr.io/<owner>/anpdf` with tags
-   `<version>-<sha>`, `<version>`, and `latest`, minimal BuildKit provenance,
-   Syft SPDX image SBOM (`anpdf-linux-amd64.spdx.json`), Grype vulnerability report
-   (`anpdf-linux-amd64.grype.json`), license/crate policy audit (`oci-audit-report.json`),
-   and recorded digest (`oci-digest.txt`). Push only happens after the non-root,
-   read-only, `--network=none` smoke test AND `build/oci-audit.py` (disallowing AGPL,
-   checking uninventoried Rust crates, and blocking fixable High/Critical CVEs) pass;
-   the published digest is then pulled back and smoke-tested again (`DOCKER_BUILD_RECORD_UPLOAD=false`
+1. **Multi-arch `linux/amd64` + `linux/arm64` OCI index (GHCR):** `ghcr.io/<owner>/anpdf` with tags
+   `<version>-<sha>`, `<version>`, and `latest`, minimal BuildKit provenance, per-arch
+   Syft SPDX image SBOMs (`anpdf-linux-{amd64,arm64}.spdx.json`), Grype vulnerability reports
+   (`anpdf-linux-{amd64,arm64}.grype.json`), license/crate policy audits
+   (`oci-audit-report-linux-{amd64,arm64}.json`), and recorded digest (`oci-digest.txt`). Each
+   architecture passes the non-root, read-only, `--network=none` smoke test AND `build/oci-audit.py`
+   (disallowing AGPL, checking uninventoried Rust crates, and blocking fixable High/Critical CVEs)
+   before push by digest; `image-index` then creates and smoke-tests the unified OCI index (`DOCKER_BUILD_RECORD_UPLOAD=false`
    keeps build-record bundles off the release).
-2. **`macos/arm64` native binary (GitHub Prerelease + artifact):**
+2. **`macos/arm64` native binary (GitHub Release + Homebrew formula `Formula/anpdf.rb`):**
    `anpdf-<version>-macos-arm64.tar.gz` and `SHA256SUMS-macos-arm64.txt`, built with
    pinned Rust `1.100.0` and `cargo-auditable 0.7.7`, smoke-tested against pinned qpdf `12.4.2`,
-   and attached to the `v<version>` GitHub prerelease alongside the OCI SBOM, scan reports, and digest.
-
-`linux/arm64` OCI images are not built or published in this round.
+   and attached to the `v<version>` GitHub release alongside the OCI SBOMs, scan reports, and digests.
 
 ## OCI recipe and local reproduction
 
@@ -38,8 +38,8 @@ is embedded with pinned `cargo-auditable 0.7.7` for actual binary SBOM discovery
 images carry license notices and retain distribution package copyright records.
 
 ```sh
-docker build -f containers/Dockerfile -t anpdf:0.1.0-alpha.2-local .
-sh containers/smoke.sh anpdf:0.1.0-alpha.2-local
+docker build -f containers/Dockerfile -t anpdf:0.2.0-local .
+sh containers/smoke.sh anpdf:0.2.0-local
 ```
 
 The smoke test uses numeric non-root UID `65532`, read-only rootfs, `--network=none`,

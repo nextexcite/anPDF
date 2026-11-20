@@ -14,7 +14,7 @@ status, and explicit unsupported/excluded capabilities.
 | removePages | remove-pages | POST /v1/remove-pages | removePages |
 | compressPdf | compress | POST /v1/compress | compressPdf |
 
-CLI discovery/utility commands: `operations`, `schema <operationId>`, `help [command]` / `--help` / `-h`, `version` / `--version` / `-V`.
+CLI discovery/utility commands: `operations`, `schema <operationId>`, `completions <bash|zsh|fish>`, `help [command]` / `--help` / `-h`, `version` / `--version` / `-V`.
 When neither `--qpdf` nor `ANPDF_QPDF` is set, the CLI/server checks standard system paths (`/opt/qpdf/bin/qpdf`, `/usr/bin/qpdf`, `/opt/homebrew/bin/qpdf`, `/usr/local/bin/qpdf`) and trusted `PATH` directories (absolute, owned by the effective user or root, without group/other write bits).
 
 Authenticated HTTP discovery: GET `/v1/operations` and `/v1/openapi.json`.

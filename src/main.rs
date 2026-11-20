@@ -20,9 +20,202 @@ const STANDARD_QPDF_PATHS: &[&str] = &[
     "/usr/local/bin/qpdf",
 ];
 
+enum Shell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
+impl Shell {
+    fn parse(value: &str) -> Result<Self> {
+        match value {
+            "bash" => Ok(Self::Bash),
+            "zsh" => Ok(Self::Zsh),
+            "fish" => Ok(Self::Fish),
+            _ => Err(Error("INVALID_REQUEST")),
+        }
+    }
+
+    fn script(self) -> &'static str {
+        match self {
+            Self::Bash => {
+                r#"_anpdf() {
+    local cur prev cmd
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev=""
+    if [[ $COMP_CWORD -gt 0 ]]; then
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+    fi
+
+    if [[ $COMP_CWORD -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "inspect validate merge extract split remove-pages compress operations schema serve mcp completions help version --help -h --version -V" -- "$cur") )
+        return 0
+    fi
+
+    cmd="${COMP_WORDS[1]}"
+    case "$prev" in
+        --root)
+            COMPREPLY=( $(compgen -d -- "$cur") )
+            return 0
+            ;;
+        --request-file|--token-file|--qpdf)
+            COMPREPLY=( $(compgen -f -- "$cur") )
+            return 0
+            ;;
+    esac
+
+    case "$cmd" in
+        inspect|validate|merge|extract|split|remove-pages|compress)
+            COMPREPLY=( $(compgen -W "--root --qpdf --request-json --request-file --dry-run --help -h" -- "$cur") )
+            ;;
+        serve)
+            COMPREPLY=( $(compgen -W "--root --qpdf --port --token-file --help -h" -- "$cur") )
+            ;;
+        mcp)
+            COMPREPLY=( $(compgen -W "--root --qpdf --help -h" -- "$cur") )
+            ;;
+        operations)
+            COMPREPLY=( $(compgen -W "--help -h" -- "$cur") )
+            ;;
+        schema)
+            COMPREPLY=( $(compgen -W "inspectPdf mergePdf extractPdf splitPdf removePages compressPdf --help -h" -- "$cur") )
+            ;;
+        completions)
+            COMPREPLY=( $(compgen -W "bash zsh fish --help -h" -- "$cur") )
+            ;;
+        help)
+            COMPREPLY=( $(compgen -W "inspect validate merge extract split remove-pages compress operations schema serve mcp completions" -- "$cur") )
+            ;;
+    esac
+    return 0
+}
+complete -F _anpdf anpdf
+"#
+            }
+            Self::Zsh => {
+                r#"#compdef anpdf
+
+_anpdf() {
+    local -a commands pdf_ops schema_ops shells
+    commands=(
+        'inspect:Inspect PDF structure, metadata, and page geometry'
+        'validate:Alias for inspect'
+        'merge:Merge 2..20 PDFs in input order'
+        'extract:Extract an ascending unique page subset'
+        'split:Split a PDF into 2..20 page-subset outputs'
+        'remove-pages:Remove selected pages and keep remaining pages'
+        'compress:Compress PDF streams (lossless) or images (lossy)'
+        'operations:Print supported operations, schemas, and limits'
+        'schema:Print JSON schemas for one operation'
+        'serve:Run authenticated loopback HTTP server'
+        'mcp:Run newline-delimited JSON-RPC 2.0 MCP server on stdio'
+        'completions:Print shell completion script (bash, zsh, fish)'
+        'help:Show help text'
+        'version:Show version'
+    )
+    pdf_ops=(
+        '--root[Workspace root]:dir:_files -/'
+        '--qpdf[Absolute path to qpdf binary]:qpdf:_files'
+        '--request-json[Inline JSON request payload]:json:'
+        '--request-file[Read JSON request payload from file]:file:_files'
+        '--dry-run[Validate request and destination policy without running qpdf]'
+        '(-h --help)'{-h,--help}'[Show command help]'
+    )
+    schema_ops=(inspectPdf mergePdf extractPdf splitPdf removePages compressPdf)
+    shells=(bash zsh fish)
+
+    if (( CURRENT == 2 )); then
+        _describe -t commands 'anpdf commands' commands
+        return 0
+    fi
+
+    case "$words[2]" in
+        inspect|validate|merge|extract|split|remove-pages|compress)
+            _arguments -s : $pdf_ops
+            ;;
+        serve)
+            _arguments -s : \
+                '--root[Workspace root]:dir:_files -/' \
+                '--qpdf[Absolute path to qpdf binary]:qpdf:_files' \
+                '--port[Loopback HTTP port]:port:' \
+                '--token-file[Bearer token file]:file:_files' \
+                '(-h --help)'{-h,--help}'[Show command help]'
+            ;;
+        mcp)
+            _arguments -s : \
+                '--root[Workspace root]:dir:_files -/' \
+                '--qpdf[Absolute path to qpdf binary]:qpdf:_files' \
+                '(-h --help)'{-h,--help}'[Show command help]'
+            ;;
+        operations)
+            _arguments -s : '(-h --help)'{-h,--help}'[Show command help]'
+            ;;
+        schema)
+            _arguments -s : \
+                '(-h --help)'{-h,--help}'[Show command help]' \
+                '1:operationId:('"${schema_ops[*]}"')'
+            ;;
+        completions)
+            _arguments -s : \
+                '(-h --help)'{-h,--help}'[Show command help]' \
+                '1:shell:('"${shells[*]}"')'
+            ;;
+        help)
+            _describe -t commands 'anpdf commands' commands
+            ;;
+    esac
+}
+
+if [ "$funcstack[1]" = "_anpdf" ]; then
+    _anpdf "$@"
+else
+    compdef _anpdf anpdf
+fi
+"#
+            }
+            Self::Fish => {
+                r#"set -l anpdf_cmds inspect validate merge extract split remove-pages compress operations schema serve mcp completions help version
+set -l anpdf_pdf_cmds inspect validate merge extract split remove-pages compress
+set -l anpdf_schema_ops inspectPdf mergePdf extractPdf splitPdf removePages compressPdf
+
+complete -c anpdf -f
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a inspect -d 'Inspect PDF structure, metadata, and page geometry'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a validate -d 'Alias for inspect'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a merge -d 'Merge 2..20 PDFs in input order'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a extract -d 'Extract an ascending unique page subset'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a split -d 'Split a PDF into 2..20 page-subset outputs'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a remove-pages -d 'Remove selected pages and keep remaining pages'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a compress -d 'Compress PDF streams or images'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a operations -d 'Print supported operations, schemas, and limits'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a schema -d 'Print JSON schemas for one operation'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a serve -d 'Run authenticated loopback HTTP server'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a mcp -d 'Run MCP server on stdio'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a completions -d 'Print shell completion script'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a help -d 'Show help text'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a version -d 'Show version'
+
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l root -r -F -d 'Workspace root directory'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l qpdf -r -F -d 'Absolute path to qpdf'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-json -r -d 'Inline JSON request payload'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-file -r -F -d 'Read JSON request from file'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l dry-run -d 'Validate request without running qpdf'
+complete -c anpdf -n "__fish_seen_subcommand_from serve" -l port -r -d 'Loopback HTTP port'
+complete -c anpdf -n "__fish_seen_subcommand_from serve" -l token-file -r -F -d 'Bearer token file'
+complete -c anpdf -n "__fish_seen_subcommand_from schema" -a "$anpdf_schema_ops" -d 'Operation ID'
+complete -c anpdf -n "__fish_seen_subcommand_from completions" -a 'bash zsh fish' -d 'Shell name'
+complete -c anpdf -n "__fish_seen_subcommand_from help" -a "$anpdf_cmds" -d 'Command name'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_cmds" -s h -l help -d 'Show command help'
+"#
+            }
+        }
+    }
+}
+
 enum Action {
     Help(Option<String>),
     Version,
+    Completions(Shell),
     Run(Options),
 }
 
@@ -53,6 +246,7 @@ COMMANDS:\n\
   schema <operationId> Print JSON schemas for one operation\n\
   serve                Run authenticated loopback HTTP server (127.0.0.1)\n\
   mcp                  Run newline-delimited JSON-RPC 2.0 MCP server on stdio\n\
+  completions <shell>  Print shell completion script (bash, zsh, fish)\n\
   help [command]       Show this help text (--help, -h)\n\
   version              Show version (--version, -V)\n\n\
 COMMON OPTIONS:\n\
@@ -109,6 +303,7 @@ Request: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"compressed.pdf
         Some("mcp") => "USAGE: anpdf mcp [--root <dir>] [--qpdf <abs-path>]\n".into(),
         Some("operations") => "USAGE: anpdf operations\n".into(),
         Some("schema") => "USAGE: anpdf schema <operationId>\n".into(),
+        Some("completions") => "USAGE: anpdf completions <bash|zsh|fish>\n".into(),
         _ => overview,
     }
 }
@@ -188,6 +383,16 @@ fn parse_action() -> Result<Action> {
             }
             return Ok(Action::Version);
         }
+        "completions" => {
+            let arg = args.next().ok_or(Error("INVALID_REQUEST"))?;
+            if args.next().is_some() {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            if arg == "--help" || arg == "-h" {
+                return Ok(Action::Help(Some("completions".into())));
+            }
+            return Ok(Action::Completions(Shell::parse(&arg)?));
+        }
         _ => {}
     }
     let rest: Vec<String> = args.collect();
@@ -205,6 +410,7 @@ fn parse_action() -> Result<Action> {
                 | "mcp"
                 | "operations"
                 | "schema"
+                | "completions"
         );
         return if valid_cmd && rest.len() == 1 {
             Ok(Action::Help(Some(command)))
@@ -324,6 +530,10 @@ async fn main() {
                 println!("anpdf {}", env!("CARGO_PKG_VERSION"));
                 Ok(None)
             }
+            Action::Completions(shell) => {
+                print!("{}", shell.script());
+                Ok(None)
+            }
             Action::Run(o) => {
                 if o.command == "operations" {
                     return Ok(Some(contract::discovery()));
@@ -402,7 +612,7 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_qpdf;
+    use super::{Shell, resolve_qpdf};
     use std::{ffi::OsString, fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
     #[test]
@@ -436,5 +646,27 @@ mod tests {
         // If one of STANDARD_QPDF_PATHS exists on the host, it wins; otherwise `trusted/qpdf` wins over `writable/qpdf`.
         assert!(found.is_absolute());
         assert_ne!(found, writable.join("qpdf"));
+    }
+
+    #[test]
+    fn shell_completions_cover_commands_and_reject_unknown_shells() {
+        for name in ["bash", "zsh", "fish"] {
+            let script = Shell::parse(name).unwrap().script();
+            for cmd in [
+                "inspect",
+                "merge",
+                "extract",
+                "split",
+                "remove-pages",
+                "compress",
+                "completions",
+                "serve",
+                "mcp",
+            ] {
+                assert!(script.contains(cmd), "{name} missing {cmd}");
+            }
+        }
+        assert!(Shell::parse("pwsh").is_err());
+        assert!(Shell::parse("").is_err());
     }
 }

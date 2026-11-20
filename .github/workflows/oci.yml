@@ -28,7 +28,17 @@ jobs:
           printf 'version=%s\ntag=%s\n' "$version" "$tag" >> "$GITHUB_OUTPUT"
   image:
     needs: prepare
-    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-26.04
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-26.04-arm
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -36,9 +46,6 @@ jobs:
       # Build-record bundles are not release artifacts; never upload them.
       DOCKER_BUILD_RECORD_UPLOAD: "false"
       DOCKER_BUILD_SUMMARY: "false"
-    outputs:
-      image: ${{ steps.meta.outputs.image }}
-      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,20 +56,20 @@ jobs:
         run: |
           owner=$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
           printf 'image=ghcr.io/%s/anpdf\n' "$owner" >> "$GITHUB_OUTPUT"
-      - name: Build local linux/amd64 image for restricted execution
+      - name: Build local ${{ matrix.platform }} image for restricted execution
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: containers/Dockerfile
-          platforms: linux/amd64
+          platforms: ${{ matrix.platform }}
           build-args: APP_VERSION=${{ needs.prepare.outputs.version }}
           load: true
           push: false
-          tags: anpdf:${{ needs.prepare.outputs.version }}-${{ github.sha }}
+          tags: anpdf:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}-${{ github.sha }}
           provenance: false
           sbom: false
       - name: Non-root, read-only, network-none smoke test
-        run: sh containers/smoke.sh anpdf:${{ needs.prepare.outputs.version }}-${{ github.sha }}
+        run: sh containers/smoke.sh anpdf:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}-${{ github.sha }}
       - name: Prepare export directory
         run: mkdir -p build/artifacts
       - name: Export OCI archive for SBOM and vulnerability scan
@@ -70,10 +77,10 @@ jobs:
         with:
           context: .
           file: containers/Dockerfile
-          platforms: linux/amd64
+          platforms: ${{ matrix.platform }}
           build-args: APP_VERSION=${{ needs.prepare.outputs.version }}
           push: false
-          tags: ${{ steps.meta.outputs.image }}:${{ needs.prepare.outputs.version }}-${{ github.sha }}
+          tags: ${{ steps.meta.outputs.image }}:${{ needs.prepare.outputs.version }}-${{ matrix.arch }}-${{ github.sha }}
           outputs: type=oci,dest=build/artifacts/anpdf.oci.tar
           provenance: mode=min
           sbom: false
@@ -81,31 +88,27 @@ jobs:
         run: |
           python3 build/get-tool.py syft build/work/syft
           python3 build/get-tool.py grype build/work/grype
-          build/work/syft/syft scan oci-archive:build/artifacts/anpdf.oci.tar -o spdx-json=build/artifacts/anpdf-linux-amd64.spdx.json
-          build/work/grype/grype oci-archive:build/artifacts/anpdf.oci.tar -o json > build/artifacts/anpdf-linux-amd64.grype.json
+          build/work/syft/syft scan oci-archive:build/artifacts/anpdf.oci.tar -o "spdx-json=build/artifacts/anpdf-linux-${{ matrix.arch }}.spdx.json"
+          build/work/grype/grype oci-archive:build/artifacts/anpdf.oci.tar -o json > "build/artifacts/anpdf-linux-${{ matrix.arch }}.grype.json"
           python3 build/oci-audit.py \
-            --sbom build/artifacts/anpdf-linux-amd64.spdx.json \
-            --grype build/artifacts/anpdf-linux-amd64.grype.json \
-            --out build/artifacts/oci-audit-report.json
+            --sbom "build/artifacts/anpdf-linux-${{ matrix.arch }}.spdx.json" \
+            --grype "build/artifacts/anpdf-linux-${{ matrix.arch }}.grype.json" \
+            --out "build/artifacts/oci-audit-report-linux-${{ matrix.arch }}.json"
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Push linux/amd64 OCI image to GHCR
+      - name: Push ${{ matrix.platform }} OCI image by digest to GHCR
         id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: containers/Dockerfile
-          platforms: linux/amd64
+          platforms: ${{ matrix.platform }}
           build-args: APP_VERSION=${{ needs.prepare.outputs.version }}
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.image }}:${{ needs.prepare.outputs.version }}-${{ github.sha }}
-            ${{ steps.meta.outputs.image }}:${{ needs.prepare.outputs.version }}
-            ${{ steps.meta.outputs.image }}:latest
+          outputs: type=image,"name=${{ steps.meta.outputs.image }}",push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -114,22 +117,95 @@ jobs:
       - name: Pull published digest and repeat the restricted smoke test
         run: |
           ref='${{ steps.meta.outputs.image }}@${{ steps.push.outputs.digest }}'
-          docker pull --platform linux/amd64 "$ref"
+          docker pull --platform ${{ matrix.platform }} "$ref"
           sh containers/smoke.sh "$ref"
       - name: Record digest and checksums
         run: |
-          printf '%s@%s\n' '${{ steps.meta.outputs.image }}' '${{ steps.push.outputs.digest }}' > build/artifacts/oci-digest.txt
-          (cd build/artifacts && sha256sum anpdf-linux-amd64.spdx.json anpdf-linux-amd64.grype.json oci-audit-report.json oci-digest.txt > SHA256SUMS-oci.txt)
+          arch="${{ matrix.arch }}"
+          printf '%s@%s\n' '${{ steps.meta.outputs.image }}' '${{ steps.push.outputs.digest }}' > "build/artifacts/oci-digest-linux-${arch}.txt"
+          (cd build/artifacts && sha256sum \
+            "anpdf-linux-${arch}.spdx.json" \
+            "anpdf-linux-${arch}.grype.json" \
+            "oci-audit-report-linux-${arch}.json" \
+            "oci-digest-linux-${arch}.txt" > "SHA256SUMS-oci-linux-${arch}.txt")
       - name: Upload OCI SBOM, scan, and digest artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: oci-linux-amd64
+          name: oci-linux-${{ matrix.arch }}
           path: |
-            build/artifacts/anpdf-linux-amd64.spdx.json
-            build/artifacts/anpdf-linux-amd64.grype.json
-            build/artifacts/oci-audit-report.json
+            build/artifacts/anpdf-linux-${{ matrix.arch }}.spdx.json
+            build/artifacts/anpdf-linux-${{ matrix.arch }}.grype.json
+            build/artifacts/oci-audit-report-linux-${{ matrix.arch }}.json
+            build/artifacts/oci-digest-linux-${{ matrix.arch }}.txt
+            build/artifacts/SHA256SUMS-oci-linux-${{ matrix.arch }}.txt
+  image-index:
+    needs: [prepare, image]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      digest: ${{ steps.index.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oci-linux-amd64
+          path: build/artifacts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oci-linux-arm64
+          path: build/artifacts
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve GHCR image name and publish multi-arch index
+        id: meta
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          owner=$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          image="ghcr.io/${owner}/anpdf"
+          amd64_ref=$(cat build/artifacts/oci-digest-linux-amd64.txt)
+          arm64_ref=$(cat build/artifacts/oci-digest-linux-arm64.txt)
+          docker buildx imagetools create \
+            -t "${image}:${VERSION}-${GITHUB_SHA}" \
+            -t "${image}:${VERSION}" \
+            -t "${image}:latest" \
+            "$amd64_ref" \
+            "$arm64_ref"
+          printf 'image=%s\n' "$image" >> "$GITHUB_OUTPUT"
+      - name: Inspect and verify published multi-arch OCI index
+        id: index
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+          digest=$(docker buildx imagetools inspect --raw "${IMAGE}:${VERSION}" | sha256sum | awk '{print "sha256:" $1}')
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          docker pull "${IMAGE}@${digest}"
+          sh containers/smoke.sh "${IMAGE}@${digest}"
+          {
+            printf 'index=%s@%s\n' "$IMAGE" "$digest"
+            printf 'linux/amd64=%s\n' "$(cat build/artifacts/oci-digest-linux-amd64.txt)"
+            printf 'linux/arm64=%s\n' "$(cat build/artifacts/oci-digest-linux-arm64.txt)"
+          } > build/artifacts/oci-digest.txt
+          (cd build/artifacts && sha256sum oci-digest.txt > SHA256SUMS-oci-index.txt)
+      - name: Upload OCI index digest artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oci-index
+          path: |
             build/artifacts/oci-digest.txt
-            build/artifacts/SHA256SUMS-oci.txt
+            build/artifacts/SHA256SUMS-oci-index.txt
   macos-arm64:
     needs: prepare
     runs-on: macos-26
@@ -153,6 +229,7 @@ jobs:
           python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
           python3 fixtures/generate.py build/work/fixtures
           ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf --version
+          for shell in bash zsh fish; do ./target/release/anpdf completions "$shell" >/dev/null; done
           ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf operations | python3 -c 'import json,sys; v=json.load(sys.stdin); assert len(v["operations"])>=6'
           ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf merge --root build/work/fixtures --request-json '{"inputs":[{"path":"three.pdf"},{"path":"one.pdf"}],"output":{"path":"merged.pdf"}}' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert v["result"]["pageCount"]==4'
           ANPDF_QPDF="$(cat build/work/qpdf-path)" ./target/release/anpdf compress --root build/work/fixtures --request-json '{"input":{"path":"three.pdf"},"output":{"path":"compressed.pdf"}}' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert v["result"]["pageCount"]==3 and v["result"]["savedBytes"]>0'
@@ -174,7 +251,7 @@ jobs:
             build/artifacts/anpdf-${{ needs.prepare.outputs.version }}-macos-arm64.tar.gz
             build/artifacts/SHA256SUMS-macos-arm64.txt
   release:
-    needs: [prepare, image, macos-arm64]
+    needs: [prepare, image-index, macos-arm64]
     runs-on: ubuntu-26.04
     permissions:
       contents: write
@@ -183,15 +260,15 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
-      - name: Publish prerelease assets
+      - name: Publish development release assets
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
           TAG: ${{ needs.prepare.outputs.tag }}
-          IMAGE: ${{ needs.image.outputs.image }}
-          DIGEST: ${{ needs.image.outputs.digest }}
+          IMAGE: ${{ needs.image-index.outputs.image }}
+          DIGEST: ${{ needs.image-index.outputs.digest }}
         run: |
-          notes=$(printf 'Preliminary `%s` build from `%s`.\n\n- **OCI (`linux/amd64`):** `%s@%s`\n  - Tags: `%s-%s`, `%s`, `latest`\n- **Native (`macos/arm64`):** `anpdf-%s-macos-arm64.tar.gz` (requires qpdf 12.4.2 on PATH or `ANPDF_QPDF`)\n- **Verification evidence:** Syft SPDX SBOM, Grype vulnerability report, and license/crate audit (`oci-audit-report.json`)\n' \
+          notes=$(printf 'Development `%s` build from `%s` (not production-qualified).\n\n- **OCI (`linux/amd64`, `linux/arm64`):** `%s@%s`\n  - Tags: `%s-%s`, `%s`, `latest`\n- **Native (`macos/arm64`):** `anpdf-%s-macos-arm64.tar.gz` (requires qpdf 12.4.2 on PATH or `ANPDF_QPDF`)\n- **Verification evidence:** per-arch Syft SPDX SBOMs, Grype vulnerability reports, and license/crate audits (`oci-audit-report-linux-{amd64,arm64}.json`)\n' \
             "$VERSION" "${GITHUB_SHA}" "$IMAGE" "$DIGEST" "$VERSION" "${GITHUB_SHA}" "$VERSION" "$VERSION")
           if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release edit "$TAG" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --notes "$notes" --prerelease

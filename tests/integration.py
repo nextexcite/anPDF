@@ -178,8 +178,8 @@ def run():
         assert mixed_inspect['pages']==[{'pageNumber':1,'rotation':0,'widthPoints':300.0,'heightPoints':200.0},{'pageNumber':2,'rotation':90,'widthPoints':310.0,'heightPoints':200.0}]
         action_inspect=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'action.pdf'}})]))['result']
         assert action_inspect['actions']=='present'
-        # Verify CLI help/version and trusted-PATH qpdf auto-discovery.
-        for args in [['--help'],['-h'],['help'],['split','--help'],['--version'],['-V'],['version']]:
+        # Verify CLI help/version/completions and trusted-PATH qpdf auto-discovery.
+        for args in [['--help'],['-h'],['help'],['split','--help'],['completions','--help'],['completions','bash'],['completions','zsh'],['completions','fish'],['--version'],['-V'],['version']]:
             r=subprocess.run([str(BIN),*args],capture_output=True,text=True);assert r.returncode==0 and r.stdout and not r.stderr,(args,r)
         if not any(pathlib.Path(p).exists() for p in ['/opt/qpdf/bin/qpdf','/usr/bin/qpdf','/opt/homebrew/bin/qpdf','/usr/local/bin/qpdf']):
             env=dict(os.environ);env.pop('ANPDF_QPDF',None);env['PATH']=f"{QPDF.parent}:/usr/bin:/bin"
@@ -190,7 +190,7 @@ def run():
         result=subprocess.run([str(BIN),'extract','--root',str(roots['cli']),'--dry-run'],input=json.dumps(req),text=True,capture_output=True);assert result.returncode==0 and json.loads(result.stdout)['dryRun'];assert not (roots['cli']/'dry.pdf').exists()
         sreq={'input':{'path':'three.pdf'},'parts':[{'pages':[1],'output':{'path':'dry-1.pdf'}},{'pages':[2,3],'output':{'path':'dry-2.pdf'}}]}
         result=subprocess.run([str(BIN),'split','--root',str(roots['cli']),'--dry-run'],input=json.dumps(sreq),text=True,capture_output=True);assert result.returncode==0 and json.loads(result.stdout)['dryRun'];assert not (roots['cli']/'dry-1.pdf').exists() and not (roots['cli']/'dry-2.pdf').exists()
-        for args in [['inspect','--bogus'],['inspect','--request-json','{'],['fill-forms']]:
+        for args in [['inspect','--bogus'],['inspect','--request-json','{'],['completions'],['completions','bogus'],['fill-forms']]:
             r=subprocess.run([str(BIN),*args],capture_output=True,text=True);assert r.returncode and not r.stdout;json.loads(r.stderr)
         mcp_send(mcp,{'jsonrpc':'2.0','id':100,'method':'tools/call','params':{'name':'fillForms','arguments':{}}});assert mcp_read(mcp)['error']['code']==-32602
         print(json.dumps({'crossSurfaceCases':len(corpus),'surfaces':3,'inputPreservation':'passed','pageOrder':'Poppler text verified','httpPolicy':'passed','mcpLifecycle':'passed'}))

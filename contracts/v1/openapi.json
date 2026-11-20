@@ -1508,7 +1508,7 @@
       }
     }
   },
-  "x-anpdf-status": "preliminary 0.1.0-alpha.2 contract; qpdf 12.4.2 backend required",
+  "x-anpdf-status": "development 0.2.0 contract; qpdf 12.4.2 backend required",
   "security": [
     {
       "localBearer": []
