@@ -60,11 +60,11 @@ Install via Homebrew directly from this repository (installs `qpdf` and shell co
 brew tap nextexcite/anpdf
 brew trust --formula nextexcite/anpdf/anpdf   # current Homebrew requires trusting non-official tap formulae
 brew install anpdf
+anpdf --version
+```
 
 > [!NOTE]
 > If you previously tapped this repository directly (`brew tap nextexcite/anpdf https://github.com/nextexcite/anPDF`), migrate once: `brew untap nextexcite/anpdf && brew tap nextexcite/anpdf` — installed `anpdf` stays installed.
-anpdf --version
-```
 
 Or download `anpdf-0.3.0-macos-arm64.tar.gz` from [GitHub Releases](https://github.com/nextexcite/anPDF/releases), verify against `SHA256SUMS-macos-arm64.txt`, and install `qpdf` (`brew install qpdf`).
 
