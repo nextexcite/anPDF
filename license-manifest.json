@@ -913,6 +913,29 @@
       "decision": "permissive alternative inventoried; release artifact review pending"
     },
     {
+      "component": "chacha20",
+      "version": "0.10.2",
+      "artifactSha256": "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06",
+      "source": "https://crates.io/crates/chacha20/0.10.2",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "a9040321c3712d8fd0b09cf52b17445de04a23a10165049ae187cd39e5c86be5"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/b8c6939380a400f53e11923d50fcc4dd2fa1ba8339fd9d04cda38a0251b6c9b0.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "b8c6939380a400f53e11923d50fcc4dd2fa1ba8339fd9d04cda38a0251b6c9b0"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
       "component": "chrono",
       "version": "0.4.45",
       "artifactSha256": "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327",
@@ -3019,9 +3042,9 @@
     },
     {
       "component": "lopdf",
-      "version": "0.38.0",
-      "artifactSha256": "c7184fdea2bc3cd272a1acec4030c321a8f9875e877b3f92a53f2f6033fdc289",
-      "source": "https://crates.io/crates/lopdf/0.38.0",
+      "version": "0.42.0",
+      "artifactSha256": "25aab26d99567469098e64a02f42679f8965c6401263eefa31d8f2dcc37a221c",
+      "source": "https://crates.io/crates/lopdf/0.42.0",
       "spdxExpression": "MIT",
       "selectedAlternative": "MIT",
       "scope": "native Rust dependency graph; build and runtime",
@@ -3350,24 +3373,6 @@
           "file": "THIRD_PARTY_LICENSES/4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0.txt",
           "originalName": "LICENSE",
           "sha256": "4dbda04344456f09a7a588140455413a9ac59b6b26a1ef7cdf9c800c012d87f0"
-        }
-      ],
-      "decision": "permissive alternative inventoried; release artifact review pending"
-    },
-    {
-      "component": "nom_locate",
-      "version": "5.0.0",
-      "artifactSha256": "0b577e2d69827c4740cba2b52efaad1c4cc7c73042860b199710b3575c68438d",
-      "source": "https://crates.io/crates/nom_locate/5.0.0",
-      "spdxExpression": "MIT",
-      "selectedAlternative": "MIT",
-      "scope": "native Rust dependency graph; build and runtime",
-      "modifications": "none",
-      "notices": [
-        {
-          "file": "THIRD_PARTY_LICENSES/12de15dd3b3b4eae2ace70f8cb7ead8e780c07e5aadf25f61e3ebdc981c01c15.txt",
-          "originalName": "LICENSE",
-          "sha256": "12de15dd3b3b4eae2ace70f8cb7ead8e780c07e5aadf25f61e3ebdc981c01c15"
         }
       ],
       "decision": "permissive alternative inventoried; release artifact review pending"
@@ -3918,29 +3923,6 @@
       "decision": "permissive alternative inventoried; release artifact review pending"
     },
     {
-      "component": "ppv-lite86",
-      "version": "0.2.21",
-      "artifactSha256": "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9",
-      "source": "https://crates.io/crates/ppv-lite86/0.2.21",
-      "spdxExpression": "MIT OR Apache-2.0",
-      "selectedAlternative": "MIT",
-      "scope": "native Rust dependency graph; build and runtime",
-      "modifications": "none",
-      "notices": [
-        {
-          "file": "THIRD_PARTY_LICENSES/0218327e7a480793ffdd4eb792379a9709e5c135c7ba267f709d6f6d4d70af0a.txt",
-          "originalName": "LICENSE-APACHE",
-          "sha256": "0218327e7a480793ffdd4eb792379a9709e5c135c7ba267f709d6f6d4d70af0a"
-        },
-        {
-          "file": "THIRD_PARTY_LICENSES/4cada0bd02ea3692eee6f16400d86c6508bbd3bafb2b65fed0419f36d4f83e8f.txt",
-          "originalName": "LICENSE-MIT",
-          "sha256": "4cada0bd02ea3692eee6f16400d86c6508bbd3bafb2b65fed0419f36d4f83e8f"
-        }
-      ],
-      "decision": "permissive alternative inventoried; release artifact review pending"
-    },
-    {
       "component": "proc-macro2",
       "version": "1.0.107",
       "artifactSha256": "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9",
@@ -4070,37 +4052,9 @@
     },
     {
       "component": "rand",
-      "version": "0.9.5",
-      "artifactSha256": "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41",
-      "source": "https://crates.io/crates/rand/0.9.5",
-      "spdxExpression": "MIT OR Apache-2.0",
-      "selectedAlternative": "MIT",
-      "scope": "native Rust dependency graph; build and runtime",
-      "modifications": "none",
-      "notices": [
-        {
-          "file": "THIRD_PARTY_LICENSES/90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5.txt",
-          "originalName": "COPYRIGHT",
-          "sha256": "90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5"
-        },
-        {
-          "file": "THIRD_PARTY_LICENSES/35242e7a83f69875e6edeff02291e688c97caafe2f8902e4e19b49d3e78b4cab.txt",
-          "originalName": "LICENSE-APACHE",
-          "sha256": "35242e7a83f69875e6edeff02291e688c97caafe2f8902e4e19b49d3e78b4cab"
-        },
-        {
-          "file": "THIRD_PARTY_LICENSES/209fbbe0ad52d9235e37badf9cadfe4dbdc87203179c0899e738b39ade42177b.txt",
-          "originalName": "LICENSE-MIT",
-          "sha256": "209fbbe0ad52d9235e37badf9cadfe4dbdc87203179c0899e738b39ade42177b"
-        }
-      ],
-      "decision": "permissive alternative inventoried; release artifact review pending"
-    },
-    {
-      "component": "rand_chacha",
-      "version": "0.9.0",
-      "artifactSha256": "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb",
-      "source": "https://crates.io/crates/rand_chacha/0.9.0",
+      "version": "0.10.4",
+      "artifactSha256": "8f6fa277c67e6ea590466f04c3fe82cb509f0864fe470643e5570de9514a9b11",
+      "source": "https://crates.io/crates/rand/0.10.4",
       "spdxExpression": "MIT OR Apache-2.0",
       "selectedAlternative": "MIT",
       "scope": "native Rust dependency graph; build and runtime",
@@ -4126,18 +4080,18 @@
     },
     {
       "component": "rand_core",
-      "version": "0.9.5",
-      "artifactSha256": "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c",
-      "source": "https://crates.io/crates/rand_core/0.9.5",
+      "version": "0.10.1",
+      "artifactSha256": "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69",
+      "source": "https://crates.io/crates/rand_core/0.10.1",
       "spdxExpression": "MIT OR Apache-2.0",
       "selectedAlternative": "MIT",
       "scope": "native Rust dependency graph; build and runtime",
       "modifications": "none",
       "notices": [
         {
-          "file": "THIRD_PARTY_LICENSES/90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5.txt",
+          "file": "THIRD_PARTY_LICENSES/92b81db30f7ab6d693e0af5661a40d273ca1947e891123ed823924192c10cbc7.txt",
           "originalName": "COPYRIGHT",
-          "sha256": "90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5"
+          "sha256": "92b81db30f7ab6d693e0af5661a40d273ca1947e891123ed823924192c10cbc7"
         },
         {
           "file": "THIRD_PARTY_LICENSES/6df43f6f4b5d4587f3d8d71e45532c688fd168afa5fe89d571cb32fa09c4ef51.txt",
@@ -4145,9 +4099,9 @@
           "sha256": "6df43f6f4b5d4587f3d8d71e45532c688fd168afa5fe89d571cb32fa09c4ef51"
         },
         {
-          "file": "THIRD_PARTY_LICENSES/209fbbe0ad52d9235e37badf9cadfe4dbdc87203179c0899e738b39ade42177b.txt",
+          "file": "THIRD_PARTY_LICENSES/8b6e9feec03e7c9a5facb26855cecd31662bf989b636bcfe79521bdf8ac863f0.txt",
           "originalName": "LICENSE-MIT",
-          "sha256": "209fbbe0ad52d9235e37badf9cadfe4dbdc87203179c0899e738b39ade42177b"
+          "sha256": "8b6e9feec03e7c9a5facb26855cecd31662bf989b636bcfe79521bdf8ac863f0"
         }
       ],
       "decision": "permissive alternative inventoried; release artifact review pending"
