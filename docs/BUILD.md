@@ -8,6 +8,27 @@ tag alignment on tag pushes), so untrusted PRs never receive package or release 
 
 Versioning convention: `< 0.5.0` tags use clean milestone versions (`0.2.0`, `v0.2.0`); SemVer prerelease identifiers (`-alpha.N`, `-rc.N`) start at `>= 0.5.0`.
 
+## Default content engine
+
+Standard native, Homebrew, and OCI releases use PDFium for `extractText` and
+`renderPage`; qpdf remains the structural engine. PDFOxide ships separately under
+its own preview tag. `cargo build --locked` includes PDFium support;
+`cargo build --locked --no-default-features` builds the structural-only variant.
+Source builds need `python3 build/get-pdfium.py build/work/pdfium` and either
+`ANPDF_PDFIUM_LIB` set to its printed path or the library installed beside the binary.
+
+Library precedence is `--pdfium-lib` > `ANPDF_PDFIUM_LIB` >
+`<canonical-executable-dir>/../lib/anpdf/libpdfium.{so,dylib}` >
+`<canonical-executable-dir>/libpdfium.{so,dylib}`. Missing libraries leave content
+operations unavailable. The native tarball contains `anpdf`, `libpdfium.dylib`,
+and `PDFIUM_LICENSES/` (upstream LICENSE plus licenses directory). Homebrew installs
+the dylib in `lib/anpdf/` and notices under its documentation directory. Its formula
+URL and SHA-256 remain release-managed: bump both to the newly published tarball
+before distributing this formula change; the old v0.2.0 tarball lacks PDFium.
+OCI installs `/usr/local/lib/anpdf/libpdfium.so`, sets `ANPDF_PDFIUM_LIB`, and
+carries `/usr/share/licenses/pdfium/`. Binary acquisition is SHA-256 pinned for
+Linux x64/arm64 and macOS arm64; the dynamic library is not statically linked.
+
 ## Published development artifacts
 
 Each release run of `.github/workflows/oci.yml` builds, scans, smoke-tests, and publishes:
@@ -52,6 +73,11 @@ The native CI matrix (`.github/workflows/ci.yml`) runs:
 - `ubuntu-26.04` (Linux amd64, required)
 - `macos-26` (macOS arm64, experimental)
 - `forge-output` (`ubuntu-26.04`) and `privacy` (`ubuntu-26.04`)
+
+An additional Ubuntu native leg verifies `--no-default-features`. The PDFium
+Ubuntu/macOS matrix tests default builds with bundled-library discovery and CJK
+fixtures. `oci-smoke` builds and loads linux/amd64 without pushing, then exercises
+merge, PDFium text, and PNG rendering with the restricted runtime flags.
 
 Poppler and upstream qpdf binary archives are test tools, not runtime image dependencies.
 OpenAPI validation and optional signed/CJK fixtures can use pinned Python packages from

@@ -76,7 +76,7 @@ impl Shell {
             COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --pdfium-lib --help -h" -- "$cur") )
             ;;
         operations)
-            COMPREPLY=( $(compgen -W "--help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--pdfium-lib --help -h" -- "$cur") )
             ;;
         schema)
             COMPREPLY=( $(compgen -W "inspectPdf mergePdf extractPdf splitPdf removePages compressPdf extractText renderPage --help -h" -- "$cur") )
@@ -157,7 +157,7 @@ _anpdf() {
                 '(-h --help)'{-h,--help}'[Show command help]'
             ;;
         operations)
-            _arguments -s : '(-h --help)'{-h,--help}'[Show command help]'
+            _arguments -s : '--pdfium-lib[Absolute path to optional PDFium library]:library:_files' '(-h --help)'{-h,--help}'[Show command help]'
             ;;
         schema)
             _arguments -s : \
@@ -209,6 +209,7 @@ complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l 
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l qpdf -r -F -d 'Absolute path to qpdf'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l qpdf-exact -d 'Require tested qpdf 12.4.2'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l pdfium-lib -r -F -d 'Absolute path to optional PDFium library'
+complete -c anpdf -n "__fish_seen_subcommand_from operations" -l pdfium-lib -r -F -d 'Absolute path to optional PDFium library'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-json -r -d 'Inline JSON request payload'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-file -r -F -d 'Read JSON request from file'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l dry-run -d 'Validate request without processing the PDF'
@@ -392,6 +393,39 @@ fn resolve_qpdf(
     Ok(PathBuf::from("/usr/bin/qpdf"))
 }
 
+fn resolve_pdfium(
+    flag: Option<PathBuf>,
+    env_library: Option<OsString>,
+    executable: Option<PathBuf>,
+) -> Result<Option<PathBuf>> {
+    if let Some(path) = flag.or_else(|| env_library.filter(|v| !v.is_empty()).map(PathBuf::from)) {
+        if !path.is_absolute() {
+            return Err(Error("INVALID_REQUEST"));
+        }
+        return Ok(path.is_file().then_some(path));
+    }
+    let Some(executable) = executable.and_then(|p| p.canonicalize().ok()) else {
+        return Ok(None);
+    };
+    let Some(dir) = executable.parent() else {
+        return Ok(None);
+    };
+    let library = if cfg!(target_os = "macos") {
+        "libpdfium.dylib"
+    } else {
+        "libpdfium.so"
+    };
+    for candidate in [dir.join("../lib/anpdf").join(library), dir.join(library)] {
+        if let Ok(path) = candidate.canonicalize()
+            && path.is_file()
+            && path.parent().is_some_and(is_trusted_dir)
+        {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
 fn parse_action() -> Result<Action> {
     let mut args = std::env::args().skip(1);
     let command = args.next().ok_or(Error("INVALID_REQUEST"))?;
@@ -461,9 +495,7 @@ fn parse_action() -> Result<Action> {
         root: PathBuf::from("."),
         qpdf: PathBuf::new(),
         qpdf_exact: false,
-        pdfium_lib: std::env::var_os("ANPDF_PDFIUM_LIB")
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from),
+        pdfium_lib: None,
         request: None,
         dry: false,
         port: 8787,
@@ -531,15 +563,18 @@ fn parse_action() -> Result<Action> {
             "--token-file",
         ],
         "mcp" => &["--root", "--qpdf", "--qpdf-exact", "--pdfium-lib"],
-        "operations" | "schema" => &[],
+        "operations" => &["--pdfium-lib"],
+        "schema" => &[],
         _ => return Err(Error("UNSUPPORTED_OPERATION")),
     };
     if seen.iter().any(|s| !allowed.contains(&s.as_str())) {
         return Err(Error("INVALID_REQUEST"));
     }
-    if o.pdfium_lib.as_ref().is_some_and(|p| !p.is_absolute()) {
-        return Err(Error("INVALID_REQUEST"));
-    }
+    o.pdfium_lib = resolve_pdfium(
+        o.pdfium_lib,
+        std::env::var_os("ANPDF_PDFIUM_LIB"),
+        std::env::current_exe().ok(),
+    )?;
     if !matches!(o.command.as_str(), "operations" | "schema") {
         o.qpdf = resolve_qpdf(
             qpdf_flag,
@@ -709,8 +744,80 @@ async fn async_main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{Shell, resolve_qpdf};
+    use super::{Shell, resolve_pdfium, resolve_qpdf};
     use std::{ffi::OsString, fs, os::unix::fs::PermissionsExt, path::PathBuf};
+
+    #[test]
+    fn pdfium_discovery_precedence_and_bundled_layouts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        let lib = tmp.path().join("lib/anpdf");
+        fs::create_dir(&bin).unwrap();
+        fs::create_dir_all(&lib).unwrap();
+        let executable = bin.join("anpdf");
+        fs::write(&executable, b"synthetic executable").unwrap();
+        let name = if cfg!(target_os = "macos") {
+            "libpdfium.dylib"
+        } else {
+            "libpdfium.so"
+        };
+        let bundled = lib.join(name);
+        let flat = bin.join(name);
+        assert_eq!(
+            resolve_pdfium(None, None, Some(executable.clone())).unwrap(),
+            None
+        );
+        fs::write(&flat, b"flat").unwrap();
+        assert_eq!(
+            resolve_pdfium(None, None, Some(executable.clone())).unwrap(),
+            Some(flat.clone())
+        );
+        fs::write(&bundled, b"bundled").unwrap();
+        let link = tmp.path().join("anpdf-link");
+        std::os::unix::fs::symlink(&executable, &link).unwrap();
+        assert_eq!(
+            resolve_pdfium(None, Some(OsString::new()), Some(link.clone())).unwrap(),
+            Some(bundled.clone())
+        );
+        assert_eq!(
+            resolve_pdfium(
+                None,
+                Some(flat.clone().into_os_string()),
+                Some(link.clone())
+            )
+            .unwrap(),
+            Some(flat.clone())
+        );
+        assert_eq!(
+            resolve_pdfium(
+                Some(bundled.clone()),
+                Some(flat.into_os_string()),
+                Some(link.clone())
+            )
+            .unwrap(),
+            Some(bundled.clone())
+        );
+        assert_eq!(
+            resolve_pdfium(Some(tmp.path().join("missing")), None, Some(link)).unwrap(),
+            None
+        );
+        assert!(resolve_pdfium(Some("relative".into()), None, None).is_err());
+        assert!(resolve_pdfium(None, Some("relative".into()), None).is_err());
+        assert_eq!(
+            resolve_pdfium(Some("/dev/null".into()), None, None).unwrap(),
+            None
+        );
+        assert_eq!(resolve_pdfium(None, None, None).unwrap(), None);
+        fs::remove_file(&bundled).unwrap();
+        std::os::unix::fs::symlink(&lib, &bundled).unwrap();
+        assert_ne!(
+            resolve_pdfium(None, None, Some(executable.clone())).unwrap(),
+            Some(bundled.clone())
+        );
+        assert_eq!(resolve_pdfium(Some(bundled), None, None).unwrap(), None);
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o777)).unwrap();
+        assert_eq!(resolve_pdfium(None, None, Some(executable)).unwrap(), None);
+    }
 
     #[test]
     fn resolve_qpdf_prefers_explicit_and_rejects_untrusted_path() {
