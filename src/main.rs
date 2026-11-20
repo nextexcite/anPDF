@@ -822,6 +822,7 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
     let mut cli = CliArgs::default();
     let mut positionals: Vec<String> = Vec::new();
     let mut qpdf_flag = None;
+    let mut request_file: Option<PathBuf> = None;
     if o.command == "schema" {
         let arg = args.next().ok_or(Error("INVALID_REQUEST"))?;
         if arg == "--help" || arg == "-h" {
@@ -865,9 +866,7 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
             "--qpdf-exact" => o.qpdf_exact = true,
             "--request-json" => o.request = Some(args.next().ok_or(Error("INVALID_REQUEST"))?),
             "--request-file" => {
-                let p = args.next().ok_or(Error("INVALID_REQUEST"))?;
-                let f = std::fs::File::open(p)?;
-                o.request = Some(read(f)?)
+                request_file = Some(PathBuf::from(args.next().ok_or(Error("INVALID_REQUEST"))?))
             }
             "--dry-run" => o.dry = true,
             "--port" => {
@@ -933,6 +932,9 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
     }
     if seen.contains("--request-json") && seen.contains("--request-file") {
         return Err(Error("INVALID_REQUEST"));
+    }
+    if let Some(p) = request_file {
+        o.request = Some(read(std::fs::File::open(p)?)?)
     }
     let base: &[&str] = &[
         "--root",
@@ -1425,6 +1427,21 @@ mod tests {
             parse_action(["schema", "--help"].iter().copied().map(String::from)),
             Ok(Action::Help(Some(topic))) if topic == "schema"
         ));
+        // A trailing --help short-circuits even after --request-file names a
+        // missing file; without --help the file error surfaces normally.
+        assert!(matches!(
+            parse_action(
+                ["inspect", "--request-file", "definitely-missing.json", "--help"]
+                    .iter()
+                    .copied()
+                    .map(String::from)
+            ),
+            Ok(Action::Help(Some(topic))) if topic == "inspect"
+        ));
+        assert_eq!(
+            parse_err(&["inspect", "--request-file", "definitely-missing.json"]),
+            "NOT_FOUND"
+        );
     }
 
     #[test]
