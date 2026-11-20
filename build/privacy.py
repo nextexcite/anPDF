@@ -37,7 +37,8 @@ for oid in blobs:
     raw=run('cat-file','blob',oid);text=raw.decode('utf8','replace')
     if any(p.search(text) for p in patterns):bad_blobs.add(oid)
     if any(m.group()!=b'contributors@anpdf.invalid' for m in email.finditer(raw)):email_blobs[oid]=hashlib.sha256(raw).hexdigest()
-refs=run('for-each-ref','--format=%(refname)').decode().splitlines()+['HEAD']
+refs=run('for-each-ref','--format=%(refname)').decode().splitlines()
+if subprocess.run(['git','rev-parse','--verify','HEAD'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0:refs.append('HEAD')
 for ref in refs:
     sanctioned=set()
     manifest=subprocess.run(['git','show',ref+':license-manifest.json'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)

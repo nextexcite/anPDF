@@ -63,6 +63,10 @@ class PrivacyTests(unittest.TestCase):
         self.git('switch', 'main')
         self.check(0)
 
+    def test_refs_are_scanned_when_head_is_unborn(self):
+        self.git('symbolic-ref', 'HEAD', 'refs/heads/unborn')
+        self.check(0)
+
     def test_missing_manifest_and_duplicate_reachability(self):
         self.notice()
         self.commit()
