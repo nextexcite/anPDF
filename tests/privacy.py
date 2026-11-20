@@ -99,6 +99,90 @@ class PrivacyTests(unittest.TestCase):
                 self.commit()
                 self.check(2)
 
+    def identity_hash(self, identity):
+        keys = ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL',
+                'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']
+        return hashlib.sha256(('\n'.join(identity[k] for k in keys) + '\n').encode()).hexdigest()
+
+    def baseline(self, hashes, exceptions=None):
+        (self.root / 'build').mkdir(exist_ok=True)
+        (self.root / 'build/privacy-baseline.json').write_text(json.dumps({
+            'identityExceptions': exceptions or [], 'webMergeIdentitySha256': hashes
+        }))
+
+    def synthetic_commit(self, identity, parents):
+        args = ['git', 'commit-tree', self.git('rev-parse', 'HEAD^{tree}').decode().strip()]
+        for parent in parents:
+            args.extend(['-p', parent])
+        commit = subprocess.check_output(args, cwd=self.root, env=identity,
+                                         input=b'Synthetic identity fixture\n').decode().strip()
+        self.git('update-ref', 'refs/heads/candidate', commit)
+        return commit
+
+    def approved_identity(self):
+        return dict(self.env, GIT_AUTHOR_NAME='Synthetic merge author')
+
+    def test_approved_merge_identity_passes(self):
+        identity = self.approved_identity()
+        self.baseline([self.identity_hash(identity)])
+        parent = self.git('rev-parse', 'HEAD').decode().strip()
+        other = self.synthetic_commit(self.env, [parent])
+        self.synthetic_commit(identity, [parent, other])
+        self.check(0)
+
+    def test_approved_identity_rejects_single_parent_and_root(self):
+        identity = self.approved_identity()
+        self.baseline([self.identity_hash(identity)])
+        parent = self.git('rev-parse', 'HEAD').decode().strip()
+        for parents in [[parent], []]:
+            with self.subTest(parents=parents):
+                self.synthetic_commit(identity, parents)
+                self.check(1)
+
+    def test_merge_requires_every_identity_field_to_match(self):
+        identity = self.approved_identity()
+        self.baseline([self.identity_hash(identity)])
+        parent = self.git('rev-parse', 'HEAD').decode().strip()
+        other = self.synthetic_commit(self.env, [parent])
+        variants = {
+            'GIT_AUTHOR_NAME': 'Different synthetic author',
+            'GIT_AUTHOR_EMAIL': 'different' + '@example.invalid',
+            'GIT_COMMITTER_NAME': 'Different synthetic committer',
+            'GIT_COMMITTER_EMAIL': 'different' + '@example.invalid',
+        }
+        for key, value in variants.items():
+            with self.subTest(field=key):
+                self.synthetic_commit(dict(identity, **{key: value}), [parent, other])
+                self.check(1)
+
+    def test_malformed_web_merge_baselines_fail(self):
+        for hashes in [None, {}, 'a' * 64, ['a' * 63], ['g' * 64],
+                       [42], ['a' * 64, 'a' * 64]]:
+            with self.subTest(hashes=hashes):
+                self.baseline(hashes)
+                self.check(1)
+        path = self.root / 'build/privacy-baseline.json'
+        for document in [
+            {'identityExceptions': []},
+            {'identityExceptions': [], 'webMergeIdentitySha256': [], 'unknown': []},
+        ]:
+            path.write_text(json.dumps(document))
+            self.check(1)
+        path.write_text('{"identityExceptions":[],"webMergeIdentitySha256":[],"webMergeIdentitySha256":[]}')
+        self.check(1)
+
+    def test_per_commit_exception_still_requires_exact_hash(self):
+        identity = self.approved_identity()
+        parent = self.git('rev-parse', 'HEAD').decode().strip()
+        commit = self.synthetic_commit(identity, [parent])
+        exception = {'commit': commit, 'identitySha256': self.identity_hash(identity),
+                     'reason': 'Synthetic reviewed exception.'}
+        self.baseline([], [exception])
+        self.check(0)
+        exception['identitySha256'] = '0' * 64
+        self.baseline([], [exception])
+        self.check(1)
+
 
 if __name__ == '__main__':
     unittest.main()
