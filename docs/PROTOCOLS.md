@@ -86,17 +86,22 @@ target/debug/anpdf render-page --root ./docs --request-json '{"input":{"path":"s
 The adapter uses `pdf_oxide` 0.3.78's embedded text and native PNG renderer in
 a short-lived subprocess. It does not enable OCR. Missing embedded fonts may
 use system fonts, so control the font environment when comparing pixels across
-machines. Rendering pages with a non-default PDF `/UserUnit` returns
-`UNSUPPORTED_OPERATION` rather than an image at the wrong DPI.
+machines. With `extractText`, filled form text-field values can appear in
+`text` but are not included in `spans`, so callers cannot locate those values
+from the extraction result. For pages with a non-default PDF `/UserUnit`,
+`renderPage` returns `UNSUPPORTED_OPERATION` rather than an image at the
+wrong DPI.
 The feature build is for evaluation, not the default distribution.
 Run the existing cross-surface fixture suite with `ANPDF_EXPECT_PDFOXIDE=1`
 and `ANPDF_QPDF` pointing at the pinned qpdf.
 
 A separate experimental artifact can be built with
 `cargo build --locked --release --features pdfoxide`. The stock release
-workflow still builds the default binary; a separate release tag would need
-variant-specific packaging, dependency/font notices, SBOM and platform
-qualification before publication.
+workflow still builds the default binary. The Rust dependency and bundled font
+notices are indexed in `license-manifest.json`; verify them with
+`python3 build/licenses.py --check --features pdfoxide`. A separate release tag
+would still need variant-specific packaging, artifact-level SBOM and notice
+review, and platform qualification before publication.
 
 MCP is newline-delimited JSON-RPC 2.0 on stdio, negotiating version 2025-11-25.
 Send each line and await its response; initialization notification has no response:
