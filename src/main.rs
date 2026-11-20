@@ -1,5 +1,5 @@
 use anpdf::{
-    Dispatcher,
+    BackendRegistry, Dispatcher,
     backend::Control,
     contract,
     error::{Error, Result},
@@ -49,7 +49,7 @@ impl Shell {
     fi
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "inspect validate merge extract split remove-pages compress operations schema serve mcp completions help version --help -h --version -V" -- "$cur") )
+        COMPREPLY=( $(compgen -W "inspect validate merge extract split remove-pages compress extract-text render-page operations schema serve mcp completions help version --help -h --version -V" -- "$cur") )
         return 0
     fi
 
@@ -66,7 +66,7 @@ impl Shell {
     esac
 
     case "$cmd" in
-        inspect|validate|merge|extract|split|remove-pages|compress)
+        inspect|validate|merge|extract|split|remove-pages|compress|extract-text|render-page)
             COMPREPLY=( $(compgen -W "--root --qpdf --request-json --request-file --dry-run --help -h" -- "$cur") )
             ;;
         serve)
@@ -79,13 +79,13 @@ impl Shell {
             COMPREPLY=( $(compgen -W "--help -h" -- "$cur") )
             ;;
         schema)
-            COMPREPLY=( $(compgen -W "inspectPdf mergePdf extractPdf splitPdf removePages compressPdf --help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "inspectPdf mergePdf extractPdf splitPdf removePages compressPdf extractText renderPage --help -h" -- "$cur") )
             ;;
         completions)
             COMPREPLY=( $(compgen -W "bash zsh fish --help -h" -- "$cur") )
             ;;
         help)
-            COMPREPLY=( $(compgen -W "inspect validate merge extract split remove-pages compress operations schema serve mcp completions" -- "$cur") )
+            COMPREPLY=( $(compgen -W "inspect validate merge extract split remove-pages compress extract-text render-page operations schema serve mcp completions" -- "$cur") )
             ;;
     esac
     return 0
@@ -106,6 +106,8 @@ _anpdf() {
         'split:Split a PDF into 2..20 page-subset outputs'
         'remove-pages:Remove selected pages and keep remaining pages'
         'compress:Compress PDF streams (lossless) or images (lossy)'
+        'extract-text:Extract embedded text and bounding boxes'
+        'render-page:Render one page to PNG'
         'operations:Print supported operations, schemas, and limits'
         'schema:Print JSON schemas for one operation'
         'serve:Run authenticated loopback HTTP server'
@@ -119,10 +121,10 @@ _anpdf() {
         '--qpdf[Absolute path to qpdf binary]:qpdf:_files'
         '--request-json[Inline JSON request payload]:json:'
         '--request-file[Read JSON request payload from file]:file:_files'
-        '--dry-run[Validate request and destination policy without running qpdf]'
+        '--dry-run[Validate request and destination policy without processing the PDF]'
         '(-h --help)'{-h,--help}'[Show command help]'
     )
-    schema_ops=(inspectPdf mergePdf extractPdf splitPdf removePages compressPdf)
+    schema_ops=(inspectPdf mergePdf extractPdf splitPdf removePages compressPdf extractText renderPage)
     shells=(bash zsh fish)
 
     if (( CURRENT == 2 )); then
@@ -131,7 +133,7 @@ _anpdf() {
     fi
 
     case "$words[2]" in
-        inspect|validate|merge|extract|split|remove-pages|compress)
+        inspect|validate|merge|extract|split|remove-pages|compress|extract-text|render-page)
             _arguments -s : $pdf_ops
             ;;
         serve)
@@ -175,9 +177,9 @@ fi
 "#
             }
             Self::Fish => {
-                r#"set -l anpdf_cmds inspect validate merge extract split remove-pages compress operations schema serve mcp completions help version
-set -l anpdf_pdf_cmds inspect validate merge extract split remove-pages compress
-set -l anpdf_schema_ops inspectPdf mergePdf extractPdf splitPdf removePages compressPdf
+                r#"set -l anpdf_cmds inspect validate merge extract split remove-pages compress extract-text render-page operations schema serve mcp completions help version
+set -l anpdf_pdf_cmds inspect validate merge extract split remove-pages compress extract-text render-page
+set -l anpdf_schema_ops inspectPdf mergePdf extractPdf splitPdf removePages compressPdf extractText renderPage
 
 complete -c anpdf -f
 complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a inspect -d 'Inspect PDF structure, metadata, and page geometry'
@@ -187,6 +189,8 @@ complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a extract -d
 complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a split -d 'Split a PDF into 2..20 page-subset outputs'
 complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a remove-pages -d 'Remove selected pages and keep remaining pages'
 complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a compress -d 'Compress PDF streams or images'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a extract-text -d 'Extract embedded text and bounding boxes'
+complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a render-page -d 'Render one page to PNG'
 complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a operations -d 'Print supported operations, schemas, and limits'
 complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a schema -d 'Print JSON schemas for one operation'
 complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a serve -d 'Run authenticated loopback HTTP server'
@@ -199,7 +203,7 @@ complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l 
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l qpdf -r -F -d 'Absolute path to qpdf'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-json -r -d 'Inline JSON request payload'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-file -r -F -d 'Read JSON request from file'
-complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l dry-run -d 'Validate request without running qpdf'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l dry-run -d 'Validate request without processing the PDF'
 complete -c anpdf -n "__fish_seen_subcommand_from serve" -l port -r -d 'Loopback HTTP port'
 complete -c anpdf -n "__fish_seen_subcommand_from serve" -l token-file -r -F -d 'Bearer token file'
 complete -c anpdf -n "__fish_seen_subcommand_from schema" -a "$anpdf_schema_ops" -d 'Operation ID'
@@ -242,6 +246,8 @@ COMMANDS:\n\
   split                Split a PDF into 2..20 page-subset outputs\n\
   remove-pages         Remove selected pages and keep the remaining pages\n\
   compress             Compress PDF streams (lossless) or images (lossy)\n\
+  extract-text         Extract embedded text and bounding boxes (optional engine)\n\
+  render-page          Render one page to PNG (optional engine)\n\
   operations           Print supported operations, schemas, limits, and unsupported list\n\
   schema <operationId> Print JSON schemas for one operation\n\
   serve                Run authenticated loopback HTTP server (127.0.0.1)\n\
@@ -254,7 +260,7 @@ COMMON OPTIONS:\n\
   --qpdf <abs-path>    Absolute path to qpdf 12.4.2 (overrides ANPDF_QPDF)\n\
   --request-json <str> Inline JSON request payload (or pass JSON on stdin)\n\
   --request-file <f>   Read JSON request payload from file\n\
-  --dry-run            Validate request and destination policy without running qpdf\n\n\
+  --dry-run            Validate request and destination policy without processing the PDF\n\n\
 SERVER OPTIONS:\n\
   --port <port>        Loopback HTTP port for serve (default: 8787)\n\
   --token-file <file>  Bearer token file (>=32 ASCII graphic chars) for serve\n\n\
@@ -297,6 +303,18 @@ Request: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[2],\"output\":{\"path\":\"
             "USAGE: anpdf compress [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
 Operation: compressPdf (mode: lossless | lossy, optional jpegQuality 0..100 in lossy mode)\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"compressed.pdf\"},\"mode\":\"lossless\"}\n"
+                .into()
+        }
+        Some("extract-text") => {
+            "USAGE: anpdf extract-text [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
+Operation: extractText (optional text engine required)\n\
+Request: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[1,3]}\n"
+                .into()
+        }
+        Some("render-page") => {
+            "USAGE: anpdf render-page [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
+Operation: renderPage (optional rendering engine required)\n\
+Request: {\"input\":{\"path\":\"doc.pdf\"},\"page\":1,\"output\":{\"path\":\"page.png\"}}\n"
                 .into()
         }
         Some("serve") => "USAGE: anpdf serve --token-file <file> [--root <dir>] [--qpdf <abs-path>] [--port <port>]\n".into(),
@@ -406,6 +424,8 @@ fn parse_action() -> Result<Action> {
                 | "split"
                 | "remove-pages"
                 | "compress"
+                | "extract-text"
+                | "render-page"
                 | "serve"
                 | "mcp"
                 | "operations"
@@ -470,7 +490,8 @@ fn parse_action() -> Result<Action> {
         return Err(Error("INVALID_REQUEST"));
     }
     let allowed: &[&str] = match o.command.as_str() {
-        "inspect" | "validate" | "merge" | "extract" | "split" | "remove-pages" | "compress" => &[
+        "inspect" | "validate" | "merge" | "extract" | "split" | "remove-pages" | "compress"
+        | "extract-text" | "render-page" => &[
             "--root",
             "--qpdf",
             "--request-json",
@@ -512,8 +533,14 @@ fn id(command: &str) -> &'static str {
         "split" => "splitPdf",
         "remove-pages" => "removePages",
         "compress" => "compressPdf",
+        "extract-text" => "extractText",
+        "render-page" => "renderPage",
         _ => "unknown",
     }
+}
+
+fn configured_registry(executable: PathBuf) -> BackendRegistry {
+    BackendRegistry::with_qpdf(executable)
 }
 
 #[tokio::main]
@@ -536,7 +563,7 @@ async fn main() {
             }
             Action::Run(o) => {
                 if o.command == "operations" {
-                    return Ok(Some(contract::discovery()));
+                    return Ok(Some(contract::discovery_with(&configured_registry(o.qpdf))));
                 }
                 if o.command == "schema" {
                     return contract::operation(o.schema.as_deref().unwrap())
@@ -550,7 +577,7 @@ async fn main() {
                         })
                         .ok_or(Error("UNSUPPORTED_OPERATION"));
                 }
-                let d = Arc::new(Dispatcher::new(&o.root, o.qpdf)?);
+                let d = Arc::new(Dispatcher::with_registry(&o.root, configured_registry(o.qpdf))?);
                 match o.command.as_str() {
                     "serve" => {
                         let file = o.token_file.ok_or(Error("INVALID_REQUEST"))?;

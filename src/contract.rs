@@ -1,3 +1,4 @@
+use crate::BackendRegistry;
 use serde_json::{Value, json};
 use std::sync::OnceLock;
 
@@ -55,12 +56,26 @@ pub fn valid_output(id: &str, value: &Value) -> bool {
     })
 }
 pub fn discovery() -> Value {
-    let ops: Vec<Value> = operations().into_iter().map(|(path, op)| json!({
-        "operationId": op["operationId"], "description": op["summary"], "path":path,
-        "status":"implemented; qpdf 12.4.2 backend required", "inputSchema":input(op["operationId"].as_str().unwrap()),
-        "outputSchema":resolve(&op["responses"]["200"]["content"]["application/json"]["schema"]),
-        "errorSchema":resolve(&document()["components"]["schemas"]["Error"])
-    })).collect();
+    discovery_with(&BackendRegistry::with_qpdf(Default::default()))
+}
+pub fn discovery_with(registry: &BackendRegistry) -> Value {
+    let ops: Vec<Value> = operations().into_iter().map(|(path, op)| {
+        let id = op["operationId"].as_str().unwrap();
+        let engines = registry.engines(id);
+        let status = if engines.is_empty() {
+            "unavailable; no engine configured"
+        } else if matches!(id, "extractText" | "renderPage") {
+            "implemented; configured engine required"
+        } else {
+            "implemented; qpdf 12.4.2 backend required"
+        };
+        json!({
+            "operationId": id, "description": op["summary"], "path":path,
+            "status":status, "engines":engines, "inputSchema":input(id),
+            "outputSchema":resolve(&op["responses"]["200"]["content"]["application/json"]["schema"]),
+            "errorSchema":resolve(&document()["components"]["schemas"]["Error"])
+        })
+    }).collect();
     json!({"contractVersion":VERSION,"operations":ops,
         "limits":{"inputBytes":104857600,"totalInputBytes":262144000,"outputBytes":262144000,"pages":2000,"files":20,"wallSeconds":60,"concurrency":2},
         "unsupported":["reorderPages","fillForms","visualSigning","certificateSigning"],

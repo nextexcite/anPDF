@@ -13,6 +13,8 @@ status, and explicit unsupported/excluded capabilities.
 | splitPdf | split | POST /v1/split | splitPdf |
 | removePages | remove-pages | POST /v1/remove-pages | removePages |
 | compressPdf | compress | POST /v1/compress | compressPdf |
+| extractText | extract-text | POST /v1/extract-text | extractText |
+| renderPage | render-page | POST /v1/render-page | renderPage |
 
 CLI discovery/utility commands: `operations`, `schema <operationId>`, `completions <bash|zsh|fish>`, `help [command]` / `--help` / `-h`, `version` / `--version` / `-V`.
 When neither `--qpdf` nor `ANPDF_QPDF` is set, the CLI/server checks standard system paths (`/opt/qpdf/bin/qpdf`, `/usr/bin/qpdf`, `/opt/homebrew/bin/qpdf`, `/usr/local/bin/qpdf`) and trusted `PATH` directories (absolute, owned by the effective user or root, without group/other write bits).
@@ -35,6 +37,39 @@ Messages never include raw backend output, absolute input paths, or credentials.
 CLI cancellation/termination exits 130 after cancelling work. `--dry-run` returns
 a surface-control response identifying that content validation still requires
 processing; it is not a PDF success result or a fourth PDF operation.
+
+### Optional text and rendering engines
+
+`extractText` takes `input` and a strictly increasing list of 1–100 one-based
+`pages`. It returns each requested page's plain text and positioned spans in
+engine reading order. Bounds are axis-aligned in unrotated PDF default user
+space (origin not rebased to the crop box, x right, y up). A page without
+embedded text can return empty text and spans; there is no OCR. The compact
+success envelope is limited to 8 MiB.
+
+`renderPage` takes `input`, a one-based `page`, `output` and optional
+`dpi` (36–300, default 144). It writes a PNG of the visible page after crop
+and rotation, on white and without annotations, and returns the path, SHA-256,
+byte count, media type and pixel dimensions. Rendering is limited to 8192
+pixels per side, 16,777,216 total pixels and 64 MiB. The normal `output.replaceExisting`
+policy applies and the original PDF is never overwritten.
+
+Both operations accept an optional `engine` ID and report the selected
+`engine` in the result. CLI and HTTP discovery list configured `engines` in
+preference order; they do not probe engine health. MCP lists both schemas even
+when a backend is not installed. Missing providers, including an explicit
+engine not registered for that capability, return `BACKEND_UNAVAILABLE` before
+opening the input. No request is retried on a different engine. The qpdf-only
+build exposes both contracts but includes neither optional provider.
+
+The shared dispatcher preflights PDFs with qpdf, enforces input and destination
+policy, and gives the selected provider only private staging paths and the
+shared job deadline/cancellation control. Signed and form-bearing inputs
+are not blocked by the PDF preservation policy for these non-mutating
+operations; encrypted inputs remain unsupported. Engine adapters must use
+bounded workers and enforce raster/text limits before allocating or emitting
+large results. The gateway validates the result schema and bounds, and checks
+the PNG signature and dimensions before atomically publishing the artifact.
 
 MCP is newline-delimited JSON-RPC 2.0 on stdio, negotiating version 2025-11-25.
 Send each line and await its response; initialization notification has no response:

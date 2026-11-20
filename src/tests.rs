@@ -4,6 +4,216 @@ use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
 };
+
+mod content_operations {
+    use crate::{
+        BackendRegistry, Dispatcher,
+        backend::{Backend, CompressMode, Control, ExtractTextBackend, RenderPageBackend},
+        error::{Error, Result},
+    };
+    use serde_json::{Value, json};
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::{Arc, atomic::Ordering},
+    };
+
+    struct Inspect;
+    impl Backend for Inspect {
+        fn inspect(&self, path: &Path, _: &Control) -> Result<(Value, Vec<Value>)> {
+            let encrypted = fs::read(path)? == b"encrypted";
+            Ok((
+                json!({
+                    "pageCount": 2, "pdfVersion": "1.7", "structuralStatus": "valid",
+                    "encrypted": encrypted, "forms": "present", "signatures": "present",
+                    "signatureValidity": "notChecked", "actions": "absent",
+                    "hasOutline": false, "hasAttachments": false, "metadata": {},
+                    "pages": ([1, 2].map(|n| json!({"pageNumber": n, "rotation": 0,
+                        "widthPoints": 100, "heightPoints": 100})))
+                }),
+                vec![],
+            ))
+        }
+
+        fn transform(
+            &self,
+            _: &[PathBuf],
+            _: Option<&[u64]>,
+            _: &Path,
+            _: &Control,
+        ) -> Result<Vec<Value>> {
+            unreachable!()
+        }
+
+        fn compress(&self, _: &Path, _: CompressMode, _: &Path, _: &Control) -> Result<Vec<Value>> {
+            unreachable!()
+        }
+    }
+
+    struct Text(&'static str);
+    impl ExtractTextBackend for Text {
+        fn extract_text(
+            &self,
+            path: &Path,
+            pages: &[u64],
+            _: &Control,
+        ) -> Result<(Vec<Value>, Vec<Value>)> {
+            assert_eq!(path.file_name().unwrap(), "input-0.pdf");
+            if self.0 == "fails" {
+                return Err(Error("INTERNAL"));
+            }
+            let pages = pages.iter().map(|page| {
+                let right = if self.0 == "wrong-bounds" { 0 } else { 3 };
+                let number = if self.0 == "wrong-page" { page + 1 } else { *page };
+                let text = if self.0 == "too-big" { "x".repeat(crate::backend::MAX_TEXT_RESPONSE_BYTES) } else { self.0.to_owned() };
+                json!({"page":number,"text":text,"spans":[{"text":self.0,"bounds":{"left":1,"right":right,"bottom":2,"top":4}}]})
+            }).collect();
+            Ok((pages, vec![]))
+        }
+    }
+
+    #[test]
+    fn text_selection_and_output_validation() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("doc.pdf"), b"original").unwrap();
+        fs::write(root.path().join("encrypted.pdf"), b"encrypted").unwrap();
+        let mut registry = BackendRegistry::with_structural(Arc::new(Inspect));
+        for id in [
+            "first",
+            "second",
+            "wrong-page",
+            "wrong-bounds",
+            "fails",
+            "too-big",
+        ] {
+            registry.register_text(id, Arc::new(Text(id))).unwrap();
+        }
+        assert!(
+            registry
+                .register_text("second", Arc::new(Text("duplicate")))
+                .is_err()
+        );
+        let dispatcher = Dispatcher::with_registry(root.path(), registry).unwrap();
+        let discovery = dispatcher.discovery();
+        let text = discovery["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|op| op["operationId"] == "extractText")
+            .unwrap();
+        assert_eq!(text["engines"][0], "first");
+        assert_eq!(text["engines"][1], "second");
+        let mut request = json!({"input":{"path":"doc.pdf"},"pages":[1,2.0]});
+        let call = |request: &Value| {
+            dispatcher.dispatch("extractText", request, false, &Control::default())
+        };
+        let result = call(&request).unwrap();
+        assert_eq!(result["result"]["engine"], "first");
+        assert_eq!(result["result"]["pages"][1]["page"], 2);
+        assert_eq!(result["result"]["pages"][1]["text"], "first");
+        request["engine"] = json!("second");
+        assert_eq!(
+            call(&request).unwrap()["result"]["pages"][0]["text"],
+            "second"
+        );
+        for (engine, code) in [
+            ("missing", "BACKEND_UNAVAILABLE"),
+            ("fails", "INTERNAL"),
+            ("wrong-page", "INTERNAL"),
+            ("wrong-bounds", "INTERNAL"),
+            ("too-big", "LIMIT_EXCEEDED"),
+        ] {
+            request["engine"] = json!(engine);
+            request["pages"] = json!([1]);
+            assert_eq!(call(&request).unwrap_err().0, code);
+        }
+        request["engine"] = json!("first");
+        request["pages"] = json!([3]);
+        assert_eq!(call(&request).unwrap_err().0, "INVALID_REQUEST");
+        request["input"]["path"] = json!("encrypted.pdf");
+        request["pages"] = json!([1]);
+        assert_eq!(call(&request).unwrap_err().0, "ENCRYPTED_UNSUPPORTED");
+        assert_eq!(fs::read(root.path().join("doc.pdf")).unwrap(), b"original");
+    }
+
+    const WHITE_PIXEL: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x02\0\0\0\x90wS\xde\0\0\0\x0cIDATx\x9cc\xf8\xff\xff?\0\x05\xfe\x02\xfe\r\xefF\xb8\0\0\0\0IEND\xaeB\x60\x82";
+
+    struct Render(&'static str);
+    impl RenderPageBackend for Render {
+        fn render_page(
+            &self,
+            input: &Path,
+            page: u64,
+            dpi: u32,
+            output: &Path,
+            control: &Control,
+        ) -> Result<Vec<Value>> {
+            assert_eq!(page, 2);
+            assert_eq!(dpi, 144);
+            assert_eq!(input.parent(), output.parent());
+            match self.0 {
+                "invalid" => fs::write(output, b"not an image")?,
+                "oversized" => {
+                    let mut data = WHITE_PIXEL.to_vec();
+                    data[16..20].copy_from_slice(&8193u32.to_be_bytes());
+                    fs::write(output, data)?;
+                }
+                "cancelled" => {
+                    fs::write(output, WHITE_PIXEL)?;
+                    control.cancelled.store(true, Ordering::Relaxed);
+                }
+                _ => fs::write(output, WHITE_PIXEL)?,
+            }
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn render_checks_staging_and_publishes_only_validated_output() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("doc.pdf");
+        let output = root.path().join("page.png");
+        fs::write(&input, b"original").unwrap();
+        let mut registry = BackendRegistry::with_structural(Arc::new(Inspect));
+        for id in ["default", "invalid", "oversized", "cancelled"] {
+            registry
+                .register_renderer(id, Arc::new(Render(id)))
+                .unwrap();
+        }
+        let dispatcher = Dispatcher::with_registry(root.path(), registry).unwrap();
+        let mut request = json!({"input":{"path":"doc.pdf"},"page":2,"output":{"path":"page.png"}});
+        let run = |request: &Value, dry| {
+            dispatcher.dispatch("renderPage", request, dry, &Control::default())
+        };
+        assert_eq!(run(&request, true).unwrap()["dryRun"], true);
+        assert!(!output.exists());
+        let result = run(&request, false).unwrap();
+        assert_eq!(result["result"]["engine"], "default");
+        assert_eq!(result["result"]["width"], 1);
+        assert_eq!(result["result"]["height"], 1);
+        assert_eq!(result["result"]["bytes"], WHITE_PIXEL.len());
+        assert_eq!(result["result"]["mediaType"], "image/png");
+        assert_eq!(fs::read(&output).unwrap(), WHITE_PIXEL);
+        assert_eq!(run(&request, false).unwrap_err().0, "OUTPUT_EXISTS");
+        fs::hard_link(&input, root.path().join("alias.png")).unwrap();
+        request["output"] = json!({"path":"alias.png","replaceExisting":true});
+        assert_eq!(run(&request, false).unwrap_err().0, "ACCESS_DENIED");
+
+        fs::write(&output, b"keep me").unwrap();
+        request["output"] = json!({"path":"page.png","replaceExisting":true});
+        for (engine, error) in [
+            ("invalid", "INTERNAL"),
+            ("oversized", "LIMIT_EXCEEDED"),
+            ("cancelled", "TIMEOUT"),
+        ] {
+            request["engine"] = json!(engine);
+            assert_eq!(run(&request, false).unwrap_err().0, error);
+            assert_eq!(fs::read(&output).unwrap(), b"keep me");
+        }
+        assert_eq!(fs::read(&input).unwrap(), b"original");
+    }
+}
+
 #[test]
 fn schema_rejects_unknown_properties_and_bad_pages() {
     assert!(contract::valid_input(
