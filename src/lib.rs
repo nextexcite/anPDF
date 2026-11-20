@@ -12,6 +12,7 @@ pub mod pdfium;
 #[cfg(feature = "pdfoxide")]
 pub mod pdfoxide;
 mod planner;
+pub mod resample;
 use backend::{Backend, CompressMode, Control};
 use error::{Error, Result};
 use filesystem::{TOTAL_LIMIT, Workspace};
@@ -127,20 +128,62 @@ impl Dispatcher {
         } else {
             None
         };
-        let compress_opts = if matches!(plan.job, Job::Compress) {
+        /// Descent ladder for size-targeted compression: (DPI cap, JPEG quality)
+        /// pairs from gentlest to hardest. `compressionLevel` bounds how far the
+        /// ladder may descend — level 2 floors at the 200dpi rung, level 3 (the
+        /// default floor for a bare target) at the 120dpi rung.
+        struct CompressSpec {
+            mode: CompressMode,
+            lossy: bool,
+            max_output_bytes: Option<u64>,
+            error_on_miss: bool,
+            level: Option<u64>,
+        }
+        const LADDER: &[(u32, u8)] = &[(300, 80), (200, 75), (150, 65), (120, 55)];
+        let compress_spec = if matches!(plan.job, Job::Compress) {
             let mode_str = request["mode"].as_str().unwrap_or("lossless");
             let jpeg_quality = request["jpegQuality"].as_u64();
-            let mode = if mode_str == "lossless" {
-                if jpeg_quality.is_some() {
+            let max_output = request
+                .get("maxOutputBytes")
+                .map(request_integer)
+                .transpose()?;
+            let level = request
+                .get("compressionLevel")
+                .map(request_integer)
+                .transpose()?;
+            if request.get("onTargetMiss").is_some() && max_output.is_none() {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            let lossy_requested = mode_str == "lossy";
+            match level {
+                Some(1) if lossy_requested => return Err(Error("INVALID_REQUEST")),
+                Some(2..=3) if mode_str == "lossless" && request.get("mode").is_some() => {
                     return Err(Error("INVALID_REQUEST"));
                 }
-                CompressMode::Lossless
-            } else {
+                Some(1..=3) | None => {}
+                Some(_) => return Err(Error("INVALID_REQUEST")),
+            }
+            let lossy = lossy_requested || level.is_some_and(|l| l >= 2) || max_output.is_some();
+            if jpeg_quality.is_some() && !lossy_requested {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            if lossy_requested && level == Some(1) {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            let mode = if lossy {
                 CompressMode::Lossy {
                     jpeg_quality: jpeg_quality.unwrap_or(80) as u8,
                 }
+            } else {
+                CompressMode::Lossless
             };
-            Some((mode_str.to_string(), mode))
+            Some(CompressSpec {
+                mode,
+                lossy,
+                max_output_bytes: max_output,
+                error_on_miss: request["onTargetMiss"].as_str() == Some("error"),
+                level,
+            })
         } else {
             None
         };
@@ -325,15 +368,87 @@ impl Dispatcher {
             return Ok(envelope);
         }
         let result = if let Some(destination) = destination {
-            if let Some((mode_str, compress_mode)) = compress_opts {
+            if let Some(spec) = compress_spec {
                 let out = staging.path().join("output.pdf");
-                warnings.extend(plan.structural.compress(
-                    &paths[0],
-                    compress_mode,
-                    &out,
-                    control,
-                )?);
-                let (report, w) = plan.structural.inspect(&out, control)?;
+                warnings.extend(
+                    plan.structural
+                        .compress(&paths[0], spec.mode, &out, control)?,
+                );
+                let mut techniques: Vec<&'static str> =
+                    vec!["flate-recompress", "object-streams", "resource-drop"];
+                if spec.lossy {
+                    techniques.push("jpeg-recompress");
+                }
+                let mut candidate = out.clone();
+                let mut candidate_bytes = std::fs::metadata(&out)?.len();
+                // Rungs the ladder may touch: a bare target descends to the
+                // level floor (default 120dpi); a level without a target pins
+                // exactly its rung; level 1 never resamples.
+                let rungs: &[(u32, u8)] = match (spec.max_output_bytes.is_some(), spec.level) {
+                    (_, Some(1)) => &[],
+                    (true, Some(2)) => &LADDER[..2],
+                    (true, _) => LADDER,
+                    (false, Some(2)) => &LADDER[1..2],
+                    (false, Some(3)) => &LADDER[3..4],
+                    (false, _) => &[],
+                };
+                if !rungs.is_empty() {
+                    match plan.resampler {
+                        None if spec.max_output_bytes.is_none() => {
+                            return Err(Error("BACKEND_UNAVAILABLE"))
+                        }
+                        None => warnings.push(json!({
+                            "code": "SIZE_TARGET_UNMET",
+                            "message": "Compressed output could not meet the requested maximum size; no image-resampling backend is configured."
+                        })),
+                        Some(resampler) => {
+                            'ladder: for (rung, (dpi, quality)) in rungs.iter().enumerate() {
+                        control.check()?;
+                        let raw = staging.path().join(format!("rung{rung}.raw.pdf"));
+                        let summary =
+                            resampler.resample_images(&paths[0], &raw, *dpi, *quality, control)?;
+                        let skipped = summary["imagesSkipped"].as_array().cloned().unwrap_or_default();
+                        if !skipped.is_empty() {
+                            warnings.push(json!({
+                                "code": "IMAGE_RESAMPLE_SKIPPED",
+                                "message": format!("{} images could not be safely resampled and were left unchanged.", skipped.len())
+                            }));
+                        }
+                        let processed = summary["imagesProcessed"].as_u64().unwrap_or(0);
+                        if processed == 0 {
+                            break 'ladder;
+                        }
+                        let finished = staging.path().join(format!("rung{rung}.pdf"));
+                        warnings.extend(plan.structural.compress(
+                            &raw,
+                            CompressMode::Lossy { jpeg_quality: *quality },
+                            &finished,
+                            control,
+                        )?);
+                        let finished_bytes = std::fs::metadata(&finished)?.len();
+                        if !techniques.contains(&"image-downsample") {
+                            techniques.push("image-downsample");
+                        }
+                        if finished_bytes < candidate_bytes {
+                            candidate = finished;
+                            candidate_bytes = finished_bytes;
+                        }
+                        // Resampling cannot close a gap made only of non-image bytes.
+                        let floor = summary["nonImageBytes"].as_u64().unwrap_or(0);
+                        if spec
+                            .max_output_bytes
+                            .is_some_and(|t| floor >= t || candidate_bytes <= t)
+                        {
+                            break 'ladder;
+                        }
+                        if spec.max_output_bytes.is_none() {
+                            break 'ladder;
+                        }
+                            }
+                        }
+                    }
+                }
+                let (report, w) = plan.structural.inspect(&candidate, control)?;
                 warnings.extend(w);
                 if report["pageCount"] != total_pages
                     || report["forms"] != "absent"
@@ -341,15 +456,18 @@ impl Dispatcher {
                 {
                     return Err(Error("PRESERVATION_UNKNOWN"));
                 }
-                let compressed_bytes = std::fs::metadata(&out)?.len();
+                let compressed_bytes = candidate_bytes;
                 let input_bytes = inputs[0].bytes;
                 let keep_original =
                     compressed_bytes >= input_bytes && request["allowLargerOutput"] != true;
-                let source = if keep_original { &paths[0] } else { &out };
+                let source = if keep_original { &paths[0] } else { &candidate };
                 let mut file = std::fs::File::open(source)?;
                 let bytes = file.metadata()?.len();
                 if bytes > TOTAL_LIMIT {
                     return Err(Error("LIMIT_EXCEEDED"));
+                }
+                if keep_original {
+                    techniques.clear();
                 }
                 let saved_bytes = input_bytes as i64 - bytes as i64;
                 let ratio = if keep_original {
@@ -365,7 +483,17 @@ impl Dispatcher {
                         "message": if keep_original { "Compressed output is not smaller; original bytes were kept." } else { "Compressed output is not smaller; compressed bytes were kept as requested." }
                     }));
                 }
-                let result = json!({
+                let target_met = spec.max_output_bytes.map(|t| bytes <= t);
+                if target_met == Some(false) {
+                    if spec.error_on_miss {
+                        return Err(Error("SIZE_TARGET_UNMET"));
+                    }
+                    warnings.push(json!({
+                        "code": "SIZE_TARGET_UNMET",
+                        "message": "Compressed output exceeds maxOutputBytes after descending the full ladder; smallest achieved bytes were published."
+                    }));
+                }
+                let mut result = json!({
                     "path": request["output"]["path"],
                     "sha256": filesystem::hash(&mut file)?,
                     "bytes": bytes,
@@ -373,9 +501,14 @@ impl Dispatcher {
                     "inputBytes": input_bytes,
                     "savedBytes": saved_bytes,
                     "compressionRatio": ratio,
-                    "mode": mode_str,
+                    "mode": if spec.lossy { "lossy" } else { "lossless" },
                     "outputSource": if keep_original { "original" } else { "compressed" },
+                    "techniques": techniques,
                 });
+                if let Some(target) = spec.max_output_bytes {
+                    result["targetBytes"] = json!(target);
+                    result["targetMet"] = json!(target_met.unwrap_or(false));
+                }
                 dedupe_warnings(&mut warnings);
                 let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
                 if !contract::valid_output(id, &envelope) {

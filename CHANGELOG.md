@@ -4,6 +4,20 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
+## [0.3.1] - 2026-11-20
+
+### Added
+- Size-targeted compression: `maxOutputBytes` descends a DPI/JPEG-quality
+  ladder through a sandboxed Rust resample worker (image XObjects decoded via
+  lopdf, resampled with Lanczos3, re-encoded as JPEG) until the target is met
+  or the ladder is exhausted. `compressionLevel` 1–3 presets the descent floor
+  (1 = lossless only, 2 ≈ 200dpi at high quality, 3 ≈ 120dpi); `onTargetMiss`
+  chooses best-effort publication with a `SIZE_TARGET_UNMET` warning or a 422
+  failure. Results report `techniques`, `targetBytes` and `targetMet`.
+- New synthetic fixtures (`oversampled.pdf`, `bitonal.pdf`) and benchmark
+  corpus cases (oversampled color scan, bitonal scan, un-subsetted CJK,
+  letterhead) covering the resample paths.
+
 ## [0.3.0] - 2026-11-20
 
 ### Added

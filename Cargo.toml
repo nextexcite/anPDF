@@ -1,13 +1,15 @@
 [package]
 name = "anpdf"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 license = "Apache-2.0"
 description = "Local agent-native PDF toolkit"
 rust-version = "1.100"
 
 [dependencies]
-image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+lopdf = { version = "0.38", default-features = false }
+flate2 = { version = "1", default-features = false }
 pdfium-render = { version = "=0.9.5", optional = true, default-features = false, features = ["pdfium_8125", "image_025", "thread_safe"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -20,7 +22,7 @@ pdf_oxide = { version = "=0.3.78", optional = true, features = ["rendering"] }
 
 [features]
 default = ["pdfium"]
-pdfium = ["dep:pdfium-render", "dep:image"]
+pdfium = ["dep:pdfium-render"]
 pdfoxide = ["dep:pdf_oxide"]
 
 [profile.release]

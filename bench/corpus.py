@@ -102,8 +102,45 @@ def generate(out, font=None, real_signed=True):
             c.setFont('SyntheticCJK', 14); c.drawString(20, 240, text)
         record('cjk', 'cjk', document(cjk), embeddedFontLicense='OFL-1.1',
                fontProvenance='Pinned Google Fonts NotoSansSC via build/get-test-font.py')
+        # Un-subsetted variant: registers the full instantiated font without
+        # fontTools subsetting, exercising the font-subsetting lever.
+        whole = instantiateVariableFont(TTFont(font), {'wght': 400}, inplace=True)
+        whole.recalcTimestamp = False
+        whole_buffer = io.BytesIO(); whole.save(whole_buffer); whole_buffer.seek(0)
+        pdfmetrics.registerFont(RLFont('SyntheticCJKFull', whole_buffer))
+        def cjk_full(c):
+            c.setFont('SyntheticCJKFull', 14); c.drawString(20, 240, text)
+        record('cjk-unsubset', 'cjk', document(cjk_full), embeddedFontLicense='OFL-1.1',
+               fontProvenance='Pinned Google Fonts NotoSansSC via build/get-test-font.py')
     else:
         manifest['skipped'].append({'id': 'cjk', 'reason': 'Pinned OFL font unavailable; run build/get-test-font.py'})
+        manifest['skipped'].append({'id': 'cjk-unsubset', 'reason': 'Pinned OFL font unavailable; run build/get-test-font.py'})
+
+    # Oversampled color scan: 1600x1200 RGB drawn into 300x225pt (~384dpi),
+    # far above any resample rung — the downsample lever must engage.
+    big = Image.new('RGB', (1600, 1200))
+    big.putdata([((x * 251 + y) % 256, (x + y * 17) % 256, (x * 3 + y) % 256)
+                 for y in range(1200) for x in range(1600)])
+    record('oversampled-scan', 'scanned',
+           document(lambda c: c.drawImage(ImageReader(big), 0, 0, 300, 225)), ocrOnly=True)
+
+    # Bitonal scan: 1-bit image like a fax/photocopy, also oversampled.
+    mono = Image.new('1', (1600, 2200))
+    mono.putdata([255 if ((x // 24) + (y // 28)) % 3 == 0 else 0
+                  for y in range(2200) for x in range(1600)])
+    record('bitonal-scan', 'scanned',
+           document(lambda c: c.drawImage(ImageReader(mono), 0, 0, 306, 421)), ocrOnly=True)
+
+    # Letterhead contract: mostly text with a small embedded logo strip,
+    # the "text + raw image letterhead" class from the size-target research.
+    logo = Image.new('RGB', (600, 120), 'white')
+    ImageDraw.Draw(logo).rectangle((10, 10, 590, 110), outline='black', width=4)
+    ImageDraw.Draw(logo).text((40, 45), 'SYNTHETIC LETTERHEAD', fill='black', font_size=40)
+    def letterhead(c):
+        c.drawImage(ImageReader(logo), 30, 380, 300, 60)
+        for i in range(14):
+            c.drawString(30, 340 - i * 22, f'Synthetic contract clause {i + 1}')
+    record('letterhead', 'text', document(letterhead))
 
     def bookmarks(c):
         for i, (title, level) in enumerate([('Chapter', 0), ('Section', 1), ('Appendix', 0)]):

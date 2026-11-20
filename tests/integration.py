@@ -227,7 +227,17 @@ def run():
           ('remove-pages',{'input':{'path':'signature-marker.pdf'},'pages':[1],'output':{'path':'bad.pdf'}},'SIGNED_UNSUPPORTED'),
           ('compress',{'input':{'path':'three.pdf'},'output':{'path':'compressed.pdf'}},None),
           ('compress',{'input':{'path':'three.pdf'},'output':{'path':'compressed-lossy.pdf'},'mode':'lossy','jpegQuality':75},None),
+          ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'resampled.pdf'},'maxOutputBytes':400000},None),
+          ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'resampled-tight.pdf'},'maxOutputBytes':20000},None),
+          ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'resampled-err.pdf'},'maxOutputBytes':20000,'onTargetMiss':'error'},'SIZE_TARGET_UNMET'),
+          ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'level-two.pdf'},'compressionLevel':2},None),
+          ('compress',{'input':{'path':'bitonal.pdf'},'output':{'path':'bitonal-l3.pdf'},'compressionLevel':3},None),
           ('compress',{'input':{'path':'three.pdf'},'output':{'path':'bad-compress.pdf'},'mode':'lossless','jpegQuality':75},'INVALID_REQUEST'),
+          ('compress',{'input':{'path':'three.pdf'},'output':{'path':'bad-level.pdf'},'mode':'lossless','compressionLevel':2},'INVALID_REQUEST'),
+          ('compress',{'input':{'path':'three.pdf'},'output':{'path':'bad-level9.pdf'},'compressionLevel':9},'INVALID_REQUEST'),
+          ('compress',{'input':{'path':'three.pdf'},'output':{'path':'bad-lossy1.pdf'},'mode':'lossy','compressionLevel':1},'INVALID_REQUEST'),
+          ('compress',{'input':{'path':'three.pdf'},'output':{'path':'bad-miss.pdf'},'onTargetMiss':'error'},'INVALID_REQUEST'),
+          ('compress',{'input':{'path':'three.pdf'},'output':{'path':'bad-target.pdf'},'maxOutputBytes':0},'INVALID_REQUEST'),
           ('compress',{'input':{'path':'form.pdf'},'output':{'path':'bad.pdf'}},'FORM_UNSUPPORTED'),
           ('compress',{'input':{'path':'signature-marker.pdf'},'output':{'path':'bad.pdf'}},'SIGNED_UNSUPPORTED'),
           ('merge',{'inputs':[{'path':'three.pdf'},{'path':'one.pdf'}],'output':{'path':'merged.pdf'}},'OUTPUT_EXISTS'),
@@ -428,6 +438,15 @@ def run():
         assert responses['large-extract.pdf']['result']['preservation']['attachments']=='omitted'
         assert any(w['code']=='PRESERVATION_OMITTED' and 'attachments' in w['message'] for w in responses['large-extract.pdf']['warnings'])
         assert responses['larger.pdf']['result']['outputSource']=='compressed' and responses['larger.pdf']['result']['bytes']>=responses['larger.pdf']['result']['inputBytes']
+        resampled=responses['resampled.pdf']['result']
+        assert resampled['targetBytes']==400000 and resampled['targetMet'] is True and 'image-downsample' in resampled['techniques'] and resampled['mode']=='lossy'
+        tight=responses['resampled-tight.pdf']
+        assert tight['result']['targetMet'] is False and 'image-downsample' in tight['result']['techniques'] and any(w['code']=='SIZE_TARGET_UNMET' for w in tight['warnings'])
+        assert 'image-downsample' in responses['level-two.pdf']['result']['techniques']
+        assert 'image-downsample' in responses['bitonal-l3.pdf']['result']['techniques']
+        for root in roots.values():
+            assert not (root/'resampled-err.pdf').exists()
+            assert digest(root/'resampled.pdf')!=digest(root/'oversampled.pdf')
         for root in roots.values():assert not (root/'split-rollback.pdf').exists()
         # Verify enriched inspectPdf metadata, page geometry, rotation, and action signals.
         mixed_inspect=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'mixed.pdf'}})]))['result']
