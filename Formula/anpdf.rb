@@ -1,3 +1,5 @@
+require "json"
+
 class Anpdf < Formula
   desc "Local, contract-validated, agent-native PDF toolkit"
   homepage "https://github.com/nextexcite/anPDF"
@@ -11,6 +13,8 @@ class Anpdf < Formula
 
   def install
     bin.install "anpdf"
+    (lib/"anpdf").install "libpdfium.dylib"
+    (doc/"pdfium").install Dir["PDFIUM_LICENSES/*"]
     doc.install "license-manifest.json"
     (doc/"THIRD_PARTY_LICENSES").install Dir["THIRD_PARTY_LICENSES/*"]
     generate_completions_from_executable(bin/"anpdf", "completions")
@@ -19,6 +23,10 @@ class Anpdf < Formula
   test do
     assert_match "anpdf #{version}", shell_output("#{bin}/anpdf --version")
     assert_match "inspectPdf", shell_output("#{bin}/anpdf operations")
+    operations = JSON.parse(shell_output("#{bin}/anpdf operations"))["operations"]
+    %w[extractText renderPage].each do |id|
+      assert_equal ["pdfium"], operations.find { |operation| operation["operationId"] == id }["engines"]
+    end
     assert_match "_anpdf", shell_output("#{bin}/anpdf completions bash")
   end
 end

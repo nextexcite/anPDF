@@ -5,6 +5,7 @@
 !build/
 build/*
 !build/forge-pin.json
+!build/get-pdfium.py
 !contracts/
 !contracts/**
 !generated/

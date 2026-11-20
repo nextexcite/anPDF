@@ -222,7 +222,9 @@ jobs:
       - name: Build release macOS arm64 binary
         env:
           RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src --remap-path-prefix=${{ runner.temp }}=/tmp
-        run: cargo auditable build --release --locked
+        run: |
+          python3 build/get-pdfium.py build/work/pdfium
+          cargo auditable build --release --locked
       - name: Smoke test release binary with pinned qpdf
         run: |
           mkdir -p build/work
@@ -240,7 +242,12 @@ jobs:
           stage="build/artifacts/anpdf-${VERSION}-macos-arm64"
           mkdir -p "$stage"
           cp target/release/anpdf LICENSE NOTICE license-manifest.json README.md "$stage/"
+          cp build/work/pdfium/lib/libpdfium.dylib "$stage/"
+          mkdir -p "$stage/PDFIUM_LICENSES"
+          cp build/work/pdfium/LICENSE "$stage/PDFIUM_LICENSES/"
+          cp -R build/work/pdfium/licenses "$stage/PDFIUM_LICENSES/"
           cp -R THIRD_PARTY_LICENSES "$stage/"
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" python3 build/smoke-content.py "$stage/anpdf" build/work/fixtures
           tar -C build/artifacts -czf "build/artifacts/anpdf-${VERSION}-macos-arm64.tar.gz" "anpdf-${VERSION}-macos-arm64"
           (cd build/artifacts && shasum -a 256 "anpdf-${VERSION}-macos-arm64.tar.gz" > SHA256SUMS-macos-arm64.txt)
       - name: Upload macOS arm64 release artifact
@@ -268,7 +275,7 @@ jobs:
           IMAGE: ${{ needs.image-index.outputs.image }}
           DIGEST: ${{ needs.image-index.outputs.digest }}
         run: |
-          notes=$(printf 'Development `%s` build from `%s` (not production-qualified).\n\n- **OCI (`linux/amd64`, `linux/arm64`):** `%s@%s`\n  - Tags: `%s-%s`, `%s`, `latest`\n- **Native (`macos/arm64`):** `anpdf-%s-macos-arm64.tar.gz` (requires qpdf 12.4.2 on PATH or `ANPDF_QPDF`)\n- **Verification evidence:** per-arch Syft SPDX SBOMs, Grype vulnerability reports, and license/crate audits (`oci-audit-report-linux-{amd64,arm64}.json`)\n' \
+          notes=$(printf 'Development `%s` build from `%s` (not production-qualified).\n\n- **OCI (`linux/amd64`, `linux/arm64`):** `%s@%s`\n  - Tags: `%s-%s`, `%s`, `latest`\n- **Native (`macos/arm64`):** `anpdf-%s-macos-arm64.tar.gz` (requires qpdf 12.4.2 on PATH or `ANPDF_QPDF`)\n- **Text/render engine:** bundled PDFium (qpdf remains the structural engine).\n- **Verification evidence:** per-arch Syft SPDX SBOMs, Grype vulnerability reports, and license/crate audits (`oci-audit-report-linux-{amd64,arm64}.json`)\n' \
             "$VERSION" "${GITHUB_SHA}" "$IMAGE" "$DIGEST" "$VERSION" "${GITHUB_SHA}" "$VERSION" "$VERSION")
           if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release edit "$TAG" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --notes "$notes" --prerelease

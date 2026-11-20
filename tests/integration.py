@@ -95,7 +95,7 @@ def run():
             b'<< /Type /XObject /Subtype /Form /BBox [0 0 300 200] /Resources << >> /Length 26 >>\nstream\n1 0 0 rg 0 0 300 200 re f\n\nendstream',
         ]))
         (root/'huge.pdf').write_bytes(gen.pdf(['HUGE']).replace(b'300 200',b'9000 9000'))
-        if os.environ.get('ANPDF_PDFIUM_LIB') and os.environ.get('ANPDF_TEST_FONT'):
+        if os.environ.get('ANPDF_TEST_FONT'):
             from fontTools.ttLib import TTFont
             from fontTools.varLib.instancer import instantiateVariableFont
             from fontTools import subset
@@ -131,7 +131,7 @@ def run():
         assert {t['name'] for t in tools}=={o['operationId'] for o in discovery['operations']}
         for tool in tools:
             op=next(o for o in discovery['operations'] if o['operationId']==tool['name']);assert tool['inputSchema']==op['inputSchema'];assert tool['outputSchema']==op['outputSchema']
-        pdfium=bool(os.environ.get('ANPDF_PDFIUM_LIB')) and any(o['operationId']=='extractText' and o['engines']==['pdfium'] for o in discovery['operations'])
+        pdfium=any(o['operationId']=='extractText' and o['engines']==['pdfium'] for o in discovery['operations'])
         for name,read_only in [('extractText',True),('renderPage',False)]:
             op=next(o for o in discovery['operations'] if o['operationId']==name);assert op['engines']==(['pdfium'] if pdfium else [])
             tool=next(t for t in tools if t['name']==name);assert tool['annotations']['readOnlyHint']==read_only
