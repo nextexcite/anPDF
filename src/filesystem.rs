@@ -122,6 +122,7 @@ impl Workspace {
         match e.1 {
             Some(d) => Error(e.0, Some(format!("input '{path}': {d}"))),
             None if e.0 == "NOT_FOUND" => e.with(format!("input '{path}' does not exist")),
+            None if e.0 == "ACCESS_DENIED" => e.with(format!("input '{path}': access denied")),
             None => e.with(format!("input '{path}'")),
         }
     }
@@ -165,6 +166,7 @@ impl Workspace {
         let ctx = |e: Error| match e.1 {
             Some(d) => Error(e.0, Some(format!("output '{path}': {d}"))),
             None if e.0 == "NOT_FOUND" => e.with(format!("output '{path}' does not exist")),
+            None if e.0 == "ACCESS_DENIED" => e.with(format!("output '{path}': access denied")),
             None => e.with(format!("output '{path}'")),
         };
         let (dir, name) = self.parent(path).map_err(ctx)?;

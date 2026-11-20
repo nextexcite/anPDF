@@ -1500,11 +1500,39 @@ fn u64_field(v: &Value, k: &str) -> u64 {
     v.get(k).and_then(Value::as_u64).unwrap_or(0)
 }
 
+/// Filenames inherited from user input can carry terminal control
+/// characters; print them escaped rather than raw.
+fn tty_escape(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| {
+            if c.is_control() {
+                c.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
+}
+
+/// Result paths are workspace-relative; on a terminal print them
+/// anchored to the effective workspace root when it differs from the
+/// invoking directory, so the printed name is where the file is.
+fn tty_path<'a>(root: Option<&'a Path>, rel: &'a str) -> String {
+    let canon_root = root.and_then(|r| r.canonicalize().ok());
+    let canon_cwd = std::env::current_dir()
+        .ok()
+        .and_then(|c| c.canonicalize().ok());
+    match canon_root {
+        Some(r) if Some(&r) != canon_cwd.as_ref() => tty_escape(&r.join(rel).to_string_lossy()),
+        _ => tty_escape(rel),
+    }
+}
+
 /// Short plain-language rendering of a result envelope for terminals.
 /// Piped stdout keeps the compact envelope; `--json` prints it on a
 /// terminal too. Returns None for non-result payloads (operations,
 /// schema), which stay as JSON.
-fn human_result(v: &Value) -> Option<String> {
+fn human_result(v: &Value, root: Option<&Path>) -> Option<String> {
     if v.get("dryRun").and_then(Value::as_bool).unwrap_or(false) {
         return Some("request and destination policy valid (dry run — nothing written)".into());
     }
@@ -1525,16 +1553,21 @@ fn human_result(v: &Value) -> Option<String> {
             {
                 flags.push("encrypted".into());
             }
+            // forms/signatures/actions are "present"|"absent"|"unknown"
+            // strings, not booleans.
+            for k in ["forms", "signatures", "actions"] {
+                match str_field(result, k) {
+                    "present" => flags.push(k.into()),
+                    "unknown" => flags.push(format!("{k}?")),
+                    _ => {}
+                }
+            }
             if result
-                .get("forms")
+                .get("hasMetadata")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
             {
-                flags.push("has forms".into());
-            }
-            let sigs = u64_field(result, "signatures");
-            if sigs > 0 {
-                flags.push(format!("{sigs} signature(s)"));
+                flags.push("metadata".into());
             }
             if result
                 .get("hasOutline")
@@ -1559,7 +1592,7 @@ fn human_result(v: &Value) -> Option<String> {
         "mergePdf" | "extractPdf" | "removePages" => {
             lines.push(format!(
                 "wrote '{}' — {} pages, {}",
-                str_field(result, "path"),
+                tty_path(root, str_field(result, "path")),
                 u64_field(result, "pageCount"),
                 fmt_bytes(u64_field(result, "bytes"))
             ));
@@ -1574,7 +1607,7 @@ fn human_result(v: &Value) -> Option<String> {
             for o in &outputs {
                 lines.push(format!(
                     "  {} — {} pages, {}",
-                    str_field(o, "path"),
+                    tty_path(root, str_field(o, "path")),
                     u64_field(o, "pageCount"),
                     fmt_bytes(u64_field(o, "bytes"))
                 ));
@@ -1583,7 +1616,7 @@ fn human_result(v: &Value) -> Option<String> {
         "compressPdf" => {
             let mut line = format!(
                 "wrote '{}' — {} → {} ({})",
-                str_field(result, "path"),
+                tty_path(root, str_field(result, "path")),
                 fmt_bytes(u64_field(result, "inputBytes")),
                 fmt_bytes(u64_field(result, "bytes")),
                 str_field(result, "mode")
@@ -1637,7 +1670,7 @@ fn human_result(v: &Value) -> Option<String> {
         "renderPage" => {
             lines.push(format!(
                 "wrote '{}' — page {}, {}×{} @{} dpi via {}, {}",
-                str_field(result, "path"),
+                tty_path(root, str_field(result, "path")),
                 u64_field(result, "page"),
                 u64_field(result, "width"),
                 u64_field(result, "height"),
@@ -1721,6 +1754,10 @@ async fn async_main() {
         Err(e) => report_error(&e, &command, op),
     };
     let want_json = matches!(&action, Action::Run(o) if o.json);
+    let tty_root = match &action {
+        Action::Run(o) => Some(o.root.clone()),
+        _ => None,
+    };
     let result = async {
         match action {
             Action::Help(topic) => {
@@ -1824,7 +1861,10 @@ async fn async_main() {
                 if want_json {
                     println!("{pretty}");
                 } else {
-                    println!("{}", human_result(&v).unwrap_or(pretty));
+                    println!(
+                        "{}",
+                        human_result(&v, tty_root.as_deref()).unwrap_or(pretty)
+                    );
                 }
             } else {
                 println!("{v}");
@@ -2342,7 +2382,7 @@ mod tests {
                        "mode": "lossless", "outputSource": "compressed", "techniques": []},
             "warnings": [{"code": "NO_SIZE_REDUCTION", "message": "kept original"}]
         });
-        let s = super::human_result(&v).unwrap();
+        let s = super::human_result(&v, None).unwrap();
         assert!(s.contains("wrote 'x-compressed.pdf'"), "{s}");
         assert!(s.contains("saved"), "{s}");
         assert!(
@@ -2353,9 +2393,34 @@ mod tests {
             "outputs": [{"path": "a.pdf", "pageCount": 1, "bytes": 10},
                         {"path": "b.pdf", "pageCount": 2, "bytes": 20}]}});
         assert!(
-            super::human_result(&split)
+            super::human_result(&split, None)
                 .unwrap()
                 .contains("wrote 2 outputs")
+        );
+        // inspectPdf reports forms/signatures/actions as enum strings.
+        let insp = serde_json::json!({"operationId": "inspectPdf", "result": {
+            "pageCount": 2, "bytes": 9, "pdfVersion": "1.7", "structuralStatus": "valid",
+            "encrypted": false, "forms": "present", "signatures": "unknown",
+            "actions": "absent", "hasMetadata": true, "hasOutline": false,
+            "hasAttachments": false}});
+        let is = super::human_result(&insp, None).unwrap();
+        assert!(
+            is.contains("forms") && is.contains("signatures?") && is.contains("metadata"),
+            "{is}"
+        );
+        // Paths escape control chars and anchor to a non-cwd root.
+        let evil = serde_json::json!({"operationId": "mergePdf", "result": {
+            "path": "x\u{1b}[2K.pdf", "pageCount": 1, "bytes": 1}});
+        assert!(
+            super::human_result(&evil, None)
+                .unwrap()
+                .contains("\\u{1b}")
+        );
+        let tmp_root = std::env::temp_dir().canonicalize().unwrap();
+        assert!(
+            super::human_result(&evil, Some(&tmp_root))
+                .unwrap()
+                .contains(tmp_root.to_str().unwrap())
         );
         // --json is a presentation flag, not request shaping.
         match parse_action(
