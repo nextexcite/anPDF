@@ -33,7 +33,7 @@ Versioning convention:
 
 All three surfaces use the same validated operation contract. The Rust runtime accepts **qpdf 12.x >=12.4.2**, with **12.4.2** the tested version; other accepted versions emit `BACKEND_VERSION_UNTESTED` once per response. `ANPDF_QPDF_EXACT=1` or `--qpdf-exact` requires exactly 12.4.2 (enabled in CI and OCI). Pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Release builds publish multi-arch **`linux/amd64` + `linux/arm64` OCI images** (GHCR) and **`macos/arm64` native binaries** (GitHub Releases + Homebrew tap from this repository).
 
-The development contract also exposes [embedded text extraction and PNG rendering](docs/PROTOCOLS.md#optional-text-and-rendering-engines). These operations require optional engine providers; the qpdf-only build reports them as unavailable.
+The development contract also exposes [embedded text extraction and PNG rendering](docs/PROTOCOLS.md#text-and-rendering-engine). Standard releases use bundled PDFium for these operations; qpdf remains the structural engine. A `--no-default-features` build reports content operations as unavailable.
 
 Transforms currently **reject** encrypted, signed, form/XFA-bearing, or preservation-unknown PDFs. Inspection is structural—not visual, cryptographic, PDF/A, or malware certification.
 
@@ -116,14 +116,23 @@ sh containers/smoke.sh anpdf:0.2.0-local
 
 When modifying `contracts/v1/openapi.json`, regenerate `generated/` and run the Forge schema/TS checks documented in [docs/FORGE.md](docs/FORGE.md).
 
-## Optional experimental PDFium provider
+## Default PDFium text and rendering engine
 
-`cargo build --locked --features pdfium` enables an optional `pdfium-render 0.9.5`
-adapter for `extract-text` and `render-page`; the default build is unchanged.
-Fetch a checksum-pinned PDFium `chromium/8165` dynamic library with
-`python3 build/get-pdfium.py build/work/pdfium`, then set `ANPDF_PDFIUM_LIB` to
-the absolute library path printed by that command (or pass `--pdfium-lib`).
-qpdf 12.4.2 remains required for structural inspection and preservation gates.
+`cargo build --locked` includes the `pdfium-render 0.9.5` adapter for
+`extract-text` and `render-page`. Standard native, Homebrew, and OCI releases bundle
+the checksum-pinned PDFium `chromium/8165` dynamic library and its notices.
+qpdf remains required for structural inspection and preservation gates.
+PDFOxide ships separately under its own preview tag, not in standard releases.
+
+Library precedence is `--pdfium-lib` > `ANPDF_PDFIUM_LIB` >
+`<canonical-executable-dir>/../lib/anpdf/libpdfium.{so,dylib}` >
+`<canonical-executable-dir>/libpdfium.{so,dylib}`. Only regular files are registered;
+automatic discovery uses trusted directories. Explicit paths must be absolute.
+No library means `BACKEND_UNAVAILABLE`; there is no fallback engine.
+`anpdf operations` lists the registered engine; omit `engine` in requests to use it.
+For source builds, run `python3 build/get-pdfium.py build/work/pdfium` and set
+`ANPDF_PDFIUM_LIB` to the printed path, or copy the library beside the binary.
+Build without PDFium using `cargo build --locked --no-default-features`.
 
 ```sh
 anpdf extract-text --root ./docs --request-json '{"input":{"path":"sample.pdf"},"pages":[1],"engine":"pdfium"}'
@@ -135,8 +144,9 @@ capture, cancellation and deadline controls. This is not an OS network sandbox.
 Use only trusted library paths; the library itself is executable code.
 Text runs use PDF-space bounds and PDFium reading order; this is not OCR.
 Pixel dimensions round up from points × dpi / 72 and are checked before rendering.
-The fetcher supports Linux x64/arm64 and macOS arm64. Upstream notices are retained;
-this experimental adapter is not bundled in release images or native packages.
+The fetcher supports Linux x64/arm64 and macOS arm64. Upstream notices are retained
+in every bundled artifact. Development releases remain subject to the documented
+qualification gates; making PDFium the default is not a production-readiness claim.
 Page reordering, forms, signatures, OCR and existing-text replacement remain unimplemented.
 
 For the optional CJK integration case, fetch `build/get-test-font.py build/work/font`,

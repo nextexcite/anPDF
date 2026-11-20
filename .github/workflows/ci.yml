@@ -17,8 +17,13 @@ jobs:
         include:
           - runner: ubuntu-26.04
             experimental: false
+            cargo_args: ''
           - runner: macos-26
             experimental: true
+            cargo_args: ''
+          - runner: ubuntu-26.04
+            experimental: false
+            cargo_args: --no-default-features
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.experimental }}
     steps:
@@ -30,9 +35,9 @@ jobs:
       - name: Qualify Rust code and checked-in generation
         run: |
           cargo fmt --all --check
-          cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked
-          cargo build --locked
+          cargo clippy --locked --all-targets ${{ matrix.cargo_args }} -- -D warnings
+          cargo test --locked ${{ matrix.cargo_args }}
+          cargo build --locked ${{ matrix.cargo_args }}
       - name: Install independent PDF test tooling
         shell: bash
         run: |
@@ -51,7 +56,7 @@ jobs:
           build/work/test-venv/bin/python -m pip install -r build/test-requirements.txt
           ANPDF_QPDF="$(cat build/work/qpdf-path)" build/work/test-venv/bin/python tests/integration.py
       - name: Synthetic backend comparison
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.cargo_args == ''
         shell: bash
         run: |
           python3 -m venv build/work/bench-venv
@@ -62,7 +67,7 @@ jobs:
           python3 bench/corpus.py build/work/bench-corpus
           ANPDF_QPDF="$(cat build/work/qpdf-path)" python3 bench/harness.py --corpus build/work/bench-corpus --provider 'qpdf=python3 bench/providers/qpdf.py' --provider 'poppler=python3 bench/providers/poppler.py' --out build/work/bench-results
       - name: Upload backend comparison report
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.cargo_args == ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: backend-comparison
@@ -92,14 +97,39 @@ jobs:
           python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
           python3 build/get-pdfium.py build/work/pdfium > build/work/pdfium-path
           python3 build/get-test-font.py build/work/font
-      - name: Qualify optional isolated PDFium provider
+      - name: Qualify default bundled PDFium provider
         shell: bash
         run: |
           cargo fmt --all --check
-          cargo clippy --locked --all-targets --features pdfium -- -D warnings
-          cargo test --locked --features pdfium
-          cargo build --locked --features pdfium
-          ANPDF_QPDF="$(cat build/work/qpdf-path)" ANPDF_PDFIUM_LIB="$(cat build/work/pdfium-path)" ANPDF_TEST_FONT="$PWD/build/work/font/NotoSansSC.ttf" build/work/venv/bin/python tests/integration.py
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo build --locked
+          cp "$(cat build/work/pdfium-path)" target/debug/
+          unset ANPDF_PDFIUM_LIB
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" ANPDF_TEST_FONT="$PWD/build/work/font/NotoSansSC.ttf" build/work/venv/bin/python tests/integration.py
+  oci-smoke:
+    runs-on: ubuntu-26.04
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+      DOCKER_BUILD_SUMMARY: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build local amd64 image without publishing
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: containers/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: anpdf:ci
+          provenance: false
+          sbom: false
+      - name: Restricted structural and PDFium smoke tests
+        run: sh containers/smoke.sh anpdf:ci
   forge-output:
     runs-on: ubuntu-26.04
     steps:

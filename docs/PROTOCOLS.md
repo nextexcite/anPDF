@@ -38,7 +38,7 @@ CLI cancellation/termination exits 130 after cancelling work. `--dry-run` return
 a surface-control response identifying that content validation still requires
 processing; it is not a PDF success result or a fourth PDF operation.
 
-### Optional text and rendering engines
+### Text and rendering engine
 
 `extractText` takes `input` and a strictly increasing list of 1–100 one-based
 `pages`. It returns each requested page's plain text and positioned spans in
@@ -60,7 +60,18 @@ preference order; they do not probe engine health. MCP lists both schemas even
 when a backend is not installed. Missing providers, including an explicit
 engine not registered for that capability, return `BACKEND_UNAVAILABLE` before
 opening the input. No request is retried on a different engine. The qpdf-only
-build exposes both contracts but includes neither optional provider.
+build (`--no-default-features`) exposes both contracts without a content provider.
+
+Standard releases use PDFium for both operations; qpdf continues to handle
+structural operations and content preflight. The default Cargo build includes
+PDFium support, but still dynamically loads its library in the isolated worker.
+Library selection is `--pdfium-lib`, then non-empty `ANPDF_PDFIUM_LIB`, then
+`../lib/anpdf/libpdfium.{so,dylib}` relative to the canonical executable directory,
+then `libpdfium.{so,dylib}` beside that executable. Explicit paths must be absolute
+and override automatic discovery even when missing. Only regular library files
+register the engine; automatic candidates must be in trusted directories.
+Discovery lists `pdfium` when configured (without probing library health).
+Omitting `engine` selects PDFium. PDFOxide is distributed as a separate preview tag.
 
 The shared dispatcher preflights PDFs with qpdf, enforces input and destination
 policy, and gives the selected provider only private staging paths and the
