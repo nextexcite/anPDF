@@ -20,7 +20,7 @@ mod content_operations {
 
     struct Inspect;
     impl Backend for Inspect {
-        fn inspect(&self, path: &Path, _: &Control) -> Result<(Value, Vec<Value>)> {
+        fn inspect(&self, path: &Path, _: &Control, _: bool) -> Result<(Value, Vec<Value>)> {
             let encrypted = fs::read(path)? == b"encrypted";
             Ok((
                 json!({
@@ -231,6 +231,7 @@ impl crate::backend::Backend for PreservationBackend {
         &self,
         path: &std::path::Path,
         _: &crate::backend::Control,
+        _: bool,
     ) -> crate::error::Result<(serde_json::Value, Vec<serde_json::Value>)> {
         let input = path
             .file_name()
@@ -560,6 +561,7 @@ fn backend_output_is_validated() {
             &self,
             _: &std::path::Path,
             _: &crate::backend::Control,
+            _: bool,
         ) -> crate::error::Result<(serde_json::Value, Vec<serde_json::Value>)> {
             Ok((json!({"pageCount":1}), vec![]))
         }
@@ -615,7 +617,7 @@ fn process_timeout_and_output_limits() {
         ..Control::default()
     };
     let start = Instant::now();
-    assert_eq!(q.inspect(&exe, &c).unwrap_err().0, "TIMEOUT");
+    assert_eq!(q.inspect(&exe, &c, true).unwrap_err().0, "TIMEOUT");
     assert!(start.elapsed() < Duration::from_secs(2));
     fs::write(
         &exe,
@@ -623,7 +625,7 @@ fn process_timeout_and_output_limits() {
     )
     .unwrap();
     assert_eq!(
-        q.inspect(&exe, &Control::default()).unwrap_err().0,
+        q.inspect(&exe, &Control::default(), true).unwrap_err().0,
         "LIMIT_EXCEEDED"
     );
     fs::write(
@@ -632,7 +634,7 @@ fn process_timeout_and_output_limits() {
     )
     .unwrap();
     assert_eq!(
-        q.inspect(&exe, &Control::default()).unwrap_err().0,
+        q.inspect(&exe, &Control::default(), true).unwrap_err().0,
         "LIMIT_EXCEEDED"
     );
 }
@@ -680,6 +682,7 @@ fn split_destination_collision_and_rollback() {
             &self,
             path: &std::path::Path,
             _: &crate::backend::Control,
+            _: bool,
         ) -> crate::error::Result<(serde_json::Value, Vec<serde_json::Value>)> {
             let pages = if path.file_name().and_then(|s| s.to_str()) == Some("input-0.pdf") {
                 3

@@ -179,11 +179,7 @@ impl Workspace {
             let current = self
                 .input(&i.path)
                 .map_err(|_| Error("INPUT_CHANGED", None))?;
-            if current.dev != i.dev
-                || current.ino != i.ino
-                || current.hash != i.hash
-                || hash(&mut i.file)? != i.hash
-            {
+            if current.dev != i.dev || current.ino != i.ino || current.hash != i.hash {
                 return Err(Error("INPUT_CHANGED", None));
             }
         }
@@ -195,12 +191,27 @@ impl Input {
         self.file.seek(SeekFrom::Start(0))?;
         let mut out = std::fs::OpenOptions::new()
             .write(true)
-            .read(true)
             .create_new(true)
             .mode(0o600)
             .open(path)?;
-        let n = std::io::copy(&mut (&mut self.file).take(FILE_LIMIT + 1), &mut out)?;
-        if n != self.bytes || hash(&mut self.file)? != self.hash || hash(&mut out)? != self.hash {
+        // Hash while copying: what lands on disk is exactly what was read,
+        // so one pass replaces io::copy plus two separate hash reads.
+        let mut h = Sha256::new();
+        let mut buf = [0; 65536];
+        let mut total = 0u64;
+        loop {
+            let n = self.file.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            total += n as u64;
+            if total > FILE_LIMIT + 1 {
+                return Err(Error("INPUT_CHANGED", None));
+            }
+            h.update(&buf[..n]);
+            out.write_all(&buf[..n])?;
+        }
+        if total != self.bytes || format!("{:x}", h.finalize()) != self.hash {
             return Err(Error("INPUT_CHANGED", None));
         }
         out.sync_all()?;

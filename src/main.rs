@@ -360,9 +360,11 @@ EXIT CODES:\n\
     );
     match topic {
         Some("inspect" | "validate") => {
-            "USAGE: anpdf inspect <doc.pdf> [--root <dir>] [--qpdf <abs-path>] [--dry-run]\n\
+            "USAGE: anpdf inspect <doc.pdf> [--deep-check] [--root <dir>] [--qpdf <abs-path>] [--dry-run]\n\
        anpdf inspect [--request-json <json> | --request-file <file>] ...\n\
 Alias: validate (operationId: inspectPdf)\n\
+Default parses structure and metadata; --deep-check (or \"deepCheck\":true)\n\
+also decodes every stream payload for full qpdf validation (slower on large files).\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"}}\n"
                 .into()
         }
@@ -557,6 +559,7 @@ struct CliArgs {
     engine: Option<String>,
     dpi: Option<u64>,
     pages: Option<String>,
+    deep_check: bool,
 }
 
 impl CliArgs {
@@ -573,6 +576,7 @@ impl CliArgs {
             || self.engine.is_some()
             || self.dpi.is_some()
             || self.pages.is_some()
+            || self.deep_check
     }
 }
 
@@ -936,7 +940,11 @@ fn request_from_positionals(command: &str, positionals: &[String], cli: &CliArgs
             if positionals.len() != 1 {
                 return Err(arity("exactly one <doc.pdf>"));
             }
-            serde_json::json!({"input": {"path": positionals[0]}})
+            let mut request = serde_json::json!({"input": {"path": positionals[0]}});
+            if cli.deep_check {
+                request["deepCheck"] = true.into();
+            }
+            request
         }
         "merge" => {
             let (inputs, output) = if cli.output.is_some() {
@@ -1252,6 +1260,7 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
                 )
             }
             "--pages" => cli.pages = Some(args.next().ok_or(need(canonical))?),
+            "--deep-check" => cli.deep_check = true,
             _ => {
                 return Err(bad(format!(
                     "{canonical} is not a recognized option for '{}' — see 'anpdf help {}'",
@@ -1279,7 +1288,7 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
         "--json",
     ];
     let allowed: &[&str] = match o.command.as_str() {
-        "inspect" | "validate" => base,
+        "inspect" | "validate" => &[base, &["--deep-check"]].concat(),
         "extract-text" => &[base, &["--engine", "--pages"]].concat(),
         "merge" => &[base, &["--output", "--replace", "--preserve"]].concat(),
         "remove-pages" | "extract" => {
