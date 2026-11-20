@@ -2,9 +2,29 @@
 import hashlib,json,os,pathlib,re,subprocess,sys
 run=lambda *a:subprocess.check_output(['git',*a])
 commits=run('rev-list','--all').decode().splitlines();issues=0
+baseline={}
+baseline_path=pathlib.Path('build/privacy-baseline.json')
+def unique_object(pairs):
+    value=dict(pairs)
+    if len(value)!=len(pairs):raise ValueError
+    return value
+if baseline_path.exists():
+    try:
+        document=json.loads(baseline_path.read_text(),object_pairs_hook=unique_object)
+        if not isinstance(document,dict) or set(document)!={'identityExceptions'} or not isinstance(document['identityExceptions'],list):raise ValueError
+        for entry in document['identityExceptions']:
+            if not isinstance(entry,dict) or set(entry)!={'commit','identitySha256','reason'}:raise ValueError
+            commit,digest,reason=entry['commit'],entry['identitySha256'],entry['reason']
+            if not isinstance(commit,str) or not re.fullmatch('[0-9a-f]{40}',commit) or commit in baseline:raise ValueError
+            if not isinstance(digest,str) or not re.fullmatch('[0-9a-f]{64}',digest):raise ValueError
+            if not isinstance(reason,str) or not reason.strip():raise ValueError
+            baseline[commit]=digest
+    except (OSError,ValueError,TypeError,RecursionError):
+        baseline={};issues+=1
 for commit in commits:
-    identity=run('show','-s','--format=%an%n%ae%n%cn%n%ce',commit).decode().splitlines()
-    if identity!=['anPDF Contributors','contributors@anpdf.invalid']*2:issues+=1
+    raw_identity=run('show','-s','--format=%an%n%ae%n%cn%n%ce',commit)
+    identity=raw_identity.decode().splitlines()
+    if identity!=['anPDF Contributors','contributors@anpdf.invalid']*2 and baseline.get(commit)!=hashlib.sha256(raw_identity).hexdigest():issues+=1
 objects=run('rev-list','--objects','--all').splitlines();blobs=set()
 for row in objects:
     oid=row.split(b' ',1)[0].decode()
@@ -12,13 +32,31 @@ for row in objects:
 # Construct path patterns to avoid matching this checker itself.
 patterns=[re.compile(re.escape('/'+'workspace/')),re.compile(re.escape('/'+'home/')+r'(?!runner/|build/)'),re.compile(re.escape('/'+'Users/'))]
 email=re.compile(rb'[A-Za-z0-9_.+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}')
-sanctioned=set()
-manifest=pathlib.Path('license-manifest.json')
-if manifest.exists():sanctioned={n['sha256'] for c in json.loads(manifest.read_text())['components'] for n in c.get('notices',[])}
+email_blobs={};bad_blobs=set()
 for oid in blobs:
     raw=run('cat-file','blob',oid);text=raw.decode('utf8','replace')
-    if any(p.search(text) for p in patterns):issues+=1
-    if hashlib.sha256(raw).hexdigest() not in sanctioned and any(m.group()!=b'contributors@anpdf.invalid' for m in email.finditer(raw)):issues+=1
+    if any(p.search(text) for p in patterns):bad_blobs.add(oid)
+    if any(m.group()!=b'contributors@anpdf.invalid' for m in email.finditer(raw)):email_blobs[oid]=hashlib.sha256(raw).hexdigest()
+refs=run('for-each-ref','--format=%(refname)').decode().splitlines()
+if subprocess.run(['git','rev-parse','--verify','HEAD'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0:refs.append('HEAD')
+for ref in refs:
+    sanctioned=set()
+    manifest=subprocess.run(['git','show',ref+':license-manifest.json'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+    if manifest.returncode==0:
+        try:
+            document=json.loads(manifest.stdout,object_pairs_hook=unique_object)
+            if not isinstance(document,dict) or not isinstance(document.get('components'),list):raise ValueError
+            for component in document['components']:
+                if not isinstance(component,dict) or not isinstance(component.get('notices',[]),list):raise ValueError
+                for notice in component.get('notices',[]):
+                    if not isinstance(notice,dict) or not isinstance(notice.get('sha256'),str) or not re.fullmatch('[0-9a-f]{64}',notice['sha256']):raise ValueError
+                    sanctioned.add(notice['sha256'])
+        except (ValueError,TypeError,RecursionError):
+            sanctioned=set();issues+=1
+    for row in run('rev-list','--objects',ref).splitlines():
+        oid=row.split(b' ',1)[0].decode()
+        if oid in email_blobs and email_blobs[oid] not in sanctioned:bad_blobs.add(oid)
+issues+=len(bad_blobs)
 remotes=run('remote').decode().splitlines()
 if '--ci' in sys.argv and os.environ.get('GITHUB_ACTIONS')=='true':
     expected='https://github.com/'+os.environ.get('GITHUB_REPOSITORY','')
