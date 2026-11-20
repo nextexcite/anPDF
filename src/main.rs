@@ -7,7 +7,7 @@ use anpdf::{
 use serde_json::Value;
 use std::{
     ffi::OsString,
-    io::Read,
+    io::{IsTerminal, Read},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{Arc, atomic::Ordering},
@@ -20,6 +20,7 @@ const STANDARD_QPDF_PATHS: &[&str] = &[
     "/usr/local/bin/qpdf",
 ];
 
+#[derive(Debug)]
 enum Shell {
     Bash,
     Zsh,
@@ -59,15 +60,31 @@ impl Shell {
             COMPREPLY=( $(compgen -d -- "$cur") )
             return 0
             ;;
-        --request-file|--token-file|--qpdf|--pdfium-lib)
+        --request-file|--token-file|--qpdf|--pdfium-lib|--output|-o)
             COMPREPLY=( $(compgen -f -- "$cur") )
+            return 0
+            ;;
+        --mode)
+            COMPREPLY=( $(compgen -W "lossless lossy" -- "$cur") )
+            return 0
+            ;;
+        --on-target-miss)
+            COMPREPLY=( $(compgen -W "bestEffort error" -- "$cur") )
+            return 0
+            ;;
+        --preserve)
+            COMPREPLY=( $(compgen -W "all metadata bookmarks annotations attachments" -- "$cur") )
             return 0
             ;;
     esac
 
     case "$cmd" in
         inspect|validate|merge|extract|split|remove-pages|compress|extract-text|render-page)
-            COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --pdfium-lib --request-json --request-file --dry-run --help -h" -- "$cur") )
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --pdfium-lib --request-json --request-file --dry-run --output -o --replace --preserve --mode --jpeg-quality --level --max-bytes --on-target-miss --allow-larger --engine --dpi --help -h" -- "$cur") )
+            else
+                COMPREPLY=( $(compgen -f -- "$cur") )
+            fi
             ;;
         serve)
             COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --pdfium-lib --port --token-file --help -h" -- "$cur") )
@@ -124,7 +141,19 @@ _anpdf() {
         '--request-json[Inline JSON request payload]:json:'
         '--request-file[Read JSON request payload from file]:file:_files'
         '--dry-run[Validate request and destination policy without processing the PDF]'
+        '(-o --output)'{-o,--output}'[Output path]:file:_files'
+        '--replace[Allow replacing an existing output]'
+        '--preserve[Required preserved aspects]:aspects:'
+        '--mode[Compression mode]:mode:(lossless lossy)'
+        '--jpeg-quality[JPEG quality 0-100]:quality:'
+        '--level[Resample floor 1-3]:level:(1 2 3)'
+        '--max-bytes[Output size ceiling in bytes]:bytes:'
+        '--on-target-miss[Size-target miss behavior]:behavior:(bestEffort error)'
+        '--allow-larger[Keep compressed bytes even when not smaller]'
+        '--engine[Registered engine ID]:engine:'
+        '--dpi[Render DPI 36-300]:dpi:'
         '(-h --help)'{-h,--help}'[Show command help]'
+        '*:path:_files'
     )
     schema_ops=(inspectPdf mergePdf extractPdf splitPdf removePages compressPdf extractText renderPage)
     shells=(bash zsh fish)
@@ -213,6 +242,18 @@ complete -c anpdf -n "__fish_seen_subcommand_from operations" -l pdfium-lib -r -
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-json -r -d 'Inline JSON request payload'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-file -r -F -d 'Read JSON request from file'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l dry-run -d 'Validate request without processing the PDF'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" --force-files
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -s o -l output -r -F -d 'Output path'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l replace -d 'Allow replacing an existing output'
+complete -c anpdf -n "__fish_seen_subcommand_from merge extract split remove-pages" -l preserve -r -d 'Required aspects: metadata,bookmarks,annotations,attachments or all'
+complete -c anpdf -n "__fish_seen_subcommand_from compress" -l mode -r -a 'lossless lossy' -d 'Compression mode'
+complete -c anpdf -n "__fish_seen_subcommand_from compress" -l jpeg-quality -r -d 'JPEG quality 0-100'
+complete -c anpdf -n "__fish_seen_subcommand_from compress" -l level -r -a '1 2 3' -d 'Resample floor'
+complete -c anpdf -n "__fish_seen_subcommand_from compress" -l max-bytes -r -d 'Output size ceiling in bytes'
+complete -c anpdf -n "__fish_seen_subcommand_from compress" -l on-target-miss -r -a 'bestEffort error' -d 'Size-target miss behavior'
+complete -c anpdf -n "__fish_seen_subcommand_from compress" -l allow-larger -d 'Keep compressed bytes even when not smaller'
+complete -c anpdf -n "__fish_seen_subcommand_from extract-text render-page" -l engine -r -d 'Registered engine ID'
+complete -c anpdf -n "__fish_seen_subcommand_from render-page" -l dpi -r -d 'Render DPI 36-300'
 complete -c anpdf -n "__fish_seen_subcommand_from serve" -l port -r -d 'Loopback HTTP port'
 complete -c anpdf -n "__fish_seen_subcommand_from serve" -l token-file -r -F -d 'Bearer token file'
 complete -c anpdf -n "__fish_seen_subcommand_from schema" -a "$anpdf_schema_ops" -d 'Operation ID'
@@ -225,6 +266,7 @@ complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_cmds" -s h -l help -d '
     }
 }
 
+#[derive(Debug)]
 enum Action {
     Help(Option<String>),
     Version,
@@ -232,6 +274,7 @@ enum Action {
     Run(Options),
 }
 
+#[derive(Debug)]
 struct Options {
     command: String,
     root: PathBuf,
@@ -249,7 +292,7 @@ fn usage(topic: Option<&str>) -> String {
     let overview = format!(
         "anpdf {}\n\
 Local, contract-validated PDF toolkit (CLI, loopback HTTP, MCP stdio).\n\n\
-USAGE:\n  anpdf <command> [options]\n\n\
+USAGE:\n  anpdf <command> [options]\n  anpdf <operation> <doc.pdf> [...] [-o <output.pdf>]\n\n\
 COMMANDS:\n\
   inspect | validate   Inspect PDF structure, metadata, and page geometry\n\
   merge                Merge 2..20 PDFs in input order\n\
@@ -266,14 +309,32 @@ COMMANDS:\n\
   completions <shell>  Print shell completion script (bash, zsh, fish)\n\
   help [command]       Show this help text (--help, -h)\n\
   version              Show version (--version, -V)\n\n\
+SHORTHAND (paths are workspace-relative to --root):\n\
+  anpdf inspect <doc.pdf>\n\
+  anpdf merge <a.pdf> <b.pdf> [...] [-o <merged.pdf>]\n\
+  anpdf extract <doc.pdf> <pages> [-o <subset.pdf>]\n\
+  anpdf split <doc.pdf> <part.pdf=pages> [<part.pdf=pages> ...]\n\
+  anpdf remove-pages <doc.pdf> <pages> [-o <trimmed.pdf>]\n\
+  anpdf compress <doc.pdf> [<out.pdf>] [--mode lossy] [--level 1-3] [--max-bytes N]\n\
+  anpdf extract-text <doc.pdf> <pages> [--engine <id>]\n\
+  anpdf render-page <doc.pdf> <page> [-o <page.png>] [--dpi 36-300] [--engine <id>]\n\n\
+<pages> are 1-based numbers or ranges: \"1,3\", \"2-5\". The output is -o/--output,\n\
+a trailing positional path, or <name>-compressed.pdf for compress; --replace\n\
+allows replacing an existing output. Inputs are never overwritten. A full JSON\n\
+request may instead be passed via --request-json, --request-file or piped stdin;\n\
+a bare operation on a terminal prints usage instead of blocking on stdin.\n\n\
 COMMON OPTIONS:\n\
+  -o, --output <path>  Output path (workspace-relative)\n\
+  --replace            Allow replacing an existing output\n\
+  --preserve <list>    Required aspects: metadata,bookmarks,annotations,attachments (or \"all\")\n\
   --root <dir>         Workspace root (default: .)\n\
   --qpdf <abs-path>    Absolute path to qpdf 12.x >=12.4.2 (tested: 12.4.2)\n\
   --qpdf-exact         Require exactly qpdf 12.4.2\n\
   --pdfium-lib <path>  Optional PDFium dynamic library (overrides ANPDF_PDFIUM_LIB)\n\
   --request-json <str> Inline JSON request payload (or pass JSON on stdin)\n\
   --request-file <f>   Read JSON request payload from file\n\
-  --dry-run            Validate request and destination policy without processing the PDF\n\n\
+  --dry-run            Validate request and destination policy without processing the PDF\n\
+  --                   End of flags; following arguments are positional paths\n\n\
 SERVER OPTIONS:\n\
   --port <port>        Loopback HTTP port for serve (default: 8787)\n\
   --token-file <file>  Bearer token file (>=32 ASCII graphic chars) for serve\n\n\
@@ -285,56 +346,78 @@ ENVIRONMENT:\n\
     );
     match topic {
         Some("inspect" | "validate") => {
-            "USAGE: anpdf inspect [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
+            "USAGE: anpdf inspect <doc.pdf> [--root <dir>] [--qpdf <abs-path>] [--dry-run]\n\
+       anpdf inspect [--request-json <json> | --request-file <file>] ...\n\
 Alias: validate (operationId: inspectPdf)\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"}}\n"
                 .into()
         }
         Some("merge") => {
-            "USAGE: anpdf merge [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
-Operation: mergePdf (2..20 inputs)\n\
+            "USAGE: anpdf merge <a.pdf> <b.pdf> [...] [-o <merged.pdf> | <merged.pdf>]\n\
+       anpdf merge [--request-json <json> | --request-file <file>] ...\n\
+       [--preserve <list>] [--replace] [--root <dir>] [--dry-run]\n\
+Operation: mergePdf (2..20 inputs); without -o the last positional is the output.\n\
 Request: {\"inputs\":[{\"path\":\"a.pdf\"},{\"path\":\"b.pdf\"}],\"output\":{\"path\":\"merged.pdf\"}}\n"
                 .into()
         }
         Some("extract") => {
-            "USAGE: anpdf extract [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
-Operation: extractPdf (strictly increasing 1-based pages)\n\
+            "USAGE: anpdf extract <doc.pdf> <pages> [-o <subset.pdf> | <subset.pdf>]\n\
+       anpdf extract [--request-json <json> | --request-file <file>] ...\n\
+       [--preserve <list>] [--replace] [--root <dir>] [--dry-run]\n\
+Operation: extractPdf (strictly increasing 1-based pages; e.g. \"1,3\" or \"2-5\")\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[1,3],\"output\":{\"path\":\"subset.pdf\"}}\n"
                 .into()
         }
         Some("split") => {
-            "USAGE: anpdf split [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
-Operation: splitPdf (2..20 parts)\n\
+            "USAGE: anpdf split <doc.pdf> <part.pdf=pages> [<part.pdf=pages> ...]\n\
+       anpdf split [--request-json <json> | --request-file <file>] ...\n\
+       [--preserve <list>] [--replace] [--root <dir>] [--dry-run]\n\
+Operation: splitPdf (2..20 parts); each part is written as <output>=<pages>.\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"},\"parts\":[{\"pages\":[1],\"output\":{\"path\":\"p1.pdf\"}},{\"pages\":[2,3],\"output\":{\"path\":\"p2.pdf\"}}]}\n"
                 .into()
         }
         Some("remove-pages") => {
-            "USAGE: anpdf remove-pages [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
+            "USAGE: anpdf remove-pages <doc.pdf> <pages> [-o <trimmed.pdf> | <trimmed.pdf>]\n\
+       anpdf remove-pages [--request-json <json> | --request-file <file>] ...\n\
+       [--preserve <list>] [--replace] [--root <dir>] [--dry-run]\n\
 Operation: removePages (strictly increasing 1-based pages to remove; at least 1 page must remain)\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[2],\"output\":{\"path\":\"trimmed.pdf\"}}\n"
                 .into()
         }
         Some("compress") => {
-            "USAGE: anpdf compress [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
-Operation: compressPdf (mode: lossless | lossy, optional jpegQuality 0..100 in lossy mode,\n\
-optional compressionLevel 1..3 — 1 lossless, 2 ≈200dpi/high-quality, 3 ≈120dpi/stronger —\n\
-and maxOutputBytes with onTargetMiss bestEffort|error for a size target)\n\
+            "USAGE: anpdf compress <doc.pdf> [<out.pdf> | -o <out.pdf>]\n\
+       [--mode lossless|lossy] [--jpeg-quality 0-100] [--level 1-3]\n\
+       [--max-bytes N] [--on-target-miss bestEffort|error] [--allow-larger]\n\
+       [--replace] [--root <dir>] [--dry-run]\n\
+       anpdf compress [--request-json <json> | --request-file <file>] ...\n\
+Operation: compressPdf; output defaults to <name>-compressed.pdf.\n\
+mode: lossless (streams) | lossy (adds image optimization); level 1..3 sets the\n\
+resample floor (1 lossless, 2 ≈200dpi, 3 ≈120dpi); --max-bytes descends a\n\
+DPI/quality ladder toward the floor, --on-target-miss picks bestEffort|error.\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"compressed.pdf\"},\"mode\":\"lossless\"}\n"
                 .into()
         }
         Some("extract-text") => {
-            "USAGE: anpdf extract-text [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
+            "USAGE: anpdf extract-text <doc.pdf> <pages> [--engine <id>]\n\
+       anpdf extract-text [--request-json <json> | --request-file <file>] ...\n\
+       [--root <dir>] [--dry-run]\n\
 Operation: extractText (optional text engine required)\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[1,3]}\n"
                 .into()
         }
         Some("render-page") => {
-            "USAGE: anpdf render-page [--root <dir>] [--qpdf <abs-path>] [--dry-run] [--request-json <json> | --request-file <file>]\n\
+            "USAGE: anpdf render-page <doc.pdf> <page> [-o <page.png> | <page.png>]\n\
+       [--dpi 36-300] [--engine <id>] [--replace] [--root <dir>] [--dry-run]\n\
+       anpdf render-page [--request-json <json> | --request-file <file>] ...\n\
 Operation: renderPage (optional rendering engine required)\n\
 Request: {\"input\":{\"path\":\"doc.pdf\"},\"page\":1,\"output\":{\"path\":\"page.png\"}}\n"
                 .into()
         }
-        Some("serve") => "USAGE: anpdf serve --token-file <file> [--root <dir>] [--qpdf <abs-path>] [--port <port>]\n".into(),
+        Some("serve") => {
+            "USAGE: anpdf serve --token-file <file> [--root <dir>] [--qpdf <abs-path>] [--port <port>]\n\
+--token-file is required: a private file holding >=32 ASCII graphic characters.\n"
+                .into()
+        }
         Some("mcp") => "USAGE: anpdf mcp [--root <dir>] [--qpdf <abs-path>]\n".into(),
         Some("operations") => "USAGE: anpdf operations\n".into(),
         Some("schema") => "USAGE: anpdf schema <operationId>\n".into(),
@@ -428,9 +511,253 @@ fn resolve_pdfium(
     Ok(None)
 }
 
-fn parse_action() -> Result<Action> {
-    let mut args = std::env::args().skip(1);
-    let command = args.next().ok_or(Error("INVALID_REQUEST"))?;
+const KNOWN_COMMANDS: &[&str] = &[
+    "inspect",
+    "validate",
+    "merge",
+    "extract",
+    "split",
+    "remove-pages",
+    "compress",
+    "extract-text",
+    "render-page",
+    "serve",
+    "mcp",
+    "operations",
+    "schema",
+    "completions",
+];
+
+/// Request-shaping options collected alongside positional shorthand arguments.
+#[derive(Default)]
+struct CliArgs {
+    output: Option<String>,
+    replace: bool,
+    preserve: Option<Vec<String>>,
+    mode: Option<String>,
+    jpeg_quality: Option<u64>,
+    level: Option<u64>,
+    max_bytes: Option<u64>,
+    on_miss: Option<String>,
+    allow_larger: bool,
+    engine: Option<String>,
+    dpi: Option<u64>,
+}
+
+impl CliArgs {
+    fn shapes_request(&self) -> bool {
+        self.output.is_some()
+            || self.replace
+            || self.preserve.is_some()
+            || self.mode.is_some()
+            || self.jpeg_quality.is_some()
+            || self.level.is_some()
+            || self.max_bytes.is_some()
+            || self.on_miss.is_some()
+            || self.allow_larger
+            || self.engine.is_some()
+            || self.dpi.is_some()
+    }
+}
+
+/// Parse a `<pages>` spec: comma-separated 1-based numbers or `a-b` ranges
+/// ("1,3", "2-5"). Ordering/duplicates are validated by the contract.
+fn parse_page_list(spec: &str) -> Result<Vec<u64>> {
+    let mut pages = Vec::new();
+    for part in spec.split(',') {
+        let part = part.trim();
+        match part.split_once('-') {
+            Some((start, end)) => {
+                let start: u64 = start.trim().parse().map_err(|_| Error("INVALID_REQUEST"))?;
+                let end: u64 = end.trim().parse().map_err(|_| Error("INVALID_REQUEST"))?;
+                if start > end {
+                    return Err(Error("INVALID_REQUEST"));
+                }
+                pages.extend(start..=end);
+            }
+            None => pages.push(part.parse().map_err(|_| Error("INVALID_REQUEST"))?),
+        }
+    }
+    if pages.is_empty() {
+        Err(Error("INVALID_REQUEST"))
+    } else {
+        Ok(pages)
+    }
+}
+
+fn output_value(path: &str, replace: bool) -> Value {
+    if replace {
+        serde_json::json!({"path": path, "replaceExisting": true})
+    } else {
+        serde_json::json!({"path": path})
+    }
+}
+
+fn preserve_value(list: &[String]) -> Result<Value> {
+    const ASPECTS: [&str; 4] = ["metadata", "bookmarks", "annotations", "attachments"];
+    let mut map = serde_json::Map::new();
+    for name in list {
+        if name == "all" {
+            for aspect in ASPECTS {
+                map.insert(aspect.into(), true.into());
+            }
+            continue;
+        }
+        if !ASPECTS.contains(&name.as_str()) {
+            return Err(Error("INVALID_REQUEST"));
+        }
+        map.insert(name.clone(), true.into());
+    }
+    Ok(map.into())
+}
+
+/// Derived compress output: "dir/name.pdf" -> "dir/name-compressed.pdf".
+fn derived_compress_output(input: &str) -> String {
+    let basename_start = input.rfind('/').map_or(0, |i| i + 1);
+    match input.rfind('.') {
+        Some(dot) if dot > basename_start => {
+            format!("{}-compressed{}", &input[..dot], &input[dot..])
+        }
+        _ => format!("{input}-compressed"),
+    }
+}
+
+/// Build the operation request from positional shorthand arguments.
+fn request_from_positionals(command: &str, positionals: &[String], cli: &CliArgs) -> Result<Value> {
+    let output_for = |tail: Option<&String>| -> Result<Value> {
+        match (&cli.output, tail) {
+            (Some(_), Some(_)) => Err(Error("INVALID_REQUEST")),
+            (Some(output), None) => Ok(output_value(output, cli.replace)),
+            (None, Some(path)) => Ok(output_value(path, cli.replace)),
+            (None, None) => Err(Error("INVALID_REQUEST")),
+        }
+    };
+    let preserve = cli.preserve.as_deref().map(preserve_value).transpose()?;
+    let mut request = match command {
+        "inspect" | "validate" => {
+            if positionals.len() != 1 {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            serde_json::json!({"input": {"path": positionals[0]}})
+        }
+        "merge" => {
+            let (inputs, output) = if cli.output.is_some() {
+                (positionals, output_for(None)?)
+            } else {
+                if positionals.len() < 3 {
+                    return Err(Error("INVALID_REQUEST"));
+                }
+                let (inputs, tail) = positionals.split_at(positionals.len() - 1);
+                (inputs, output_for(Some(&tail[0]))?)
+            };
+            if !(2..=20).contains(&inputs.len()) {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            serde_json::json!({
+                "inputs": inputs.iter().map(|p| serde_json::json!({"path": p})).collect::<Vec<_>>(),
+                "output": output,
+            })
+        }
+        "extract" | "remove-pages" => {
+            if !(2..=3).contains(&positionals.len()) {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            serde_json::json!({
+                "input": {"path": positionals[0]},
+                "pages": parse_page_list(&positionals[1])?,
+                "output": output_for(positionals.get(2))?,
+            })
+        }
+        "split" => {
+            if positionals.len() < 3 {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            let mut parts = Vec::new();
+            for part in &positionals[1..] {
+                let (path, pages) = part.split_once('=').ok_or(Error("INVALID_REQUEST"))?;
+                parts.push(serde_json::json!({
+                    "pages": parse_page_list(pages)?,
+                    "output": output_value(path, cli.replace),
+                }));
+            }
+            serde_json::json!({"input": {"path": positionals[0]}, "parts": parts})
+        }
+        "compress" => {
+            if !(1..=2).contains(&positionals.len()) {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            let output = match (&cli.output, positionals.get(1)) {
+                (Some(_), Some(_)) => return Err(Error("INVALID_REQUEST")),
+                (Some(output), None) => output_value(output, cli.replace),
+                (None, Some(path)) => output_value(path, cli.replace),
+                (None, None) => {
+                    output_value(&derived_compress_output(&positionals[0]), cli.replace)
+                }
+            };
+            let mut request =
+                serde_json::json!({"input": {"path": positionals[0]}, "output": output});
+            if let Some(mode) = &cli.mode {
+                request["mode"] = mode.as_str().into();
+            }
+            if let Some(quality) = cli.jpeg_quality {
+                request["jpegQuality"] = quality.into();
+            }
+            if let Some(level) = cli.level {
+                request["compressionLevel"] = level.into();
+            }
+            if let Some(bytes) = cli.max_bytes {
+                request["maxOutputBytes"] = bytes.into();
+            }
+            if let Some(miss) = &cli.on_miss {
+                request["onTargetMiss"] = miss.as_str().into();
+            }
+            if cli.allow_larger {
+                request["allowLargerOutput"] = true.into();
+            }
+            request
+        }
+        "extract-text" => {
+            if positionals.len() != 2 {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            let mut request = serde_json::json!({
+                "input": {"path": positionals[0]},
+                "pages": parse_page_list(&positionals[1])?,
+            });
+            if let Some(engine) = &cli.engine {
+                request["engine"] = engine.as_str().into();
+            }
+            request
+        }
+        "render-page" => {
+            if !(2..=3).contains(&positionals.len()) {
+                return Err(Error("INVALID_REQUEST"));
+            }
+            let mut request = serde_json::json!({
+                "input": {"path": positionals[0]},
+                "page": positionals[1].parse::<u64>().map_err(|_| Error("INVALID_REQUEST"))?,
+                "output": output_for(positionals.get(2))?,
+            });
+            if let Some(dpi) = cli.dpi {
+                request["dpi"] = dpi.into();
+            }
+            if let Some(engine) = &cli.engine {
+                request["engine"] = engine.as_str().into();
+            }
+            request
+        }
+        _ => return Err(Error("INVALID_REQUEST")),
+    };
+    if let Some(preserve) = preserve {
+        request["preserve"] = preserve;
+    }
+    Ok(request)
+}
+
+fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
+    let Some(command) = args.next() else {
+        return Ok(Action::Help(None));
+    };
     match command.as_str() {
         "--help" | "-h" => {
             if args.next().is_some() {
@@ -465,29 +792,10 @@ fn parse_action() -> Result<Action> {
     }
     let rest: Vec<String> = args.collect();
     if rest.iter().any(|a| a == "--help" || a == "-h") {
-        let valid_cmd = matches!(
-            command.as_str(),
-            "inspect"
-                | "validate"
-                | "merge"
-                | "extract"
-                | "split"
-                | "remove-pages"
-                | "compress"
-                | "extract-text"
-                | "render-page"
-                | "serve"
-                | "mcp"
-                | "operations"
-                | "schema"
-                | "completions"
-        );
-        return if valid_cmd && rest.len() == 1 {
+        return if KNOWN_COMMANDS.contains(&command.as_str()) {
             Ok(Action::Help(Some(command)))
-        } else if !valid_cmd {
-            Err(Error("UNSUPPORTED_OPERATION"))
         } else {
-            Err(Error("INVALID_REQUEST"))
+            Err(Error("UNSUPPORTED_OPERATION"))
         };
     }
 
@@ -504,16 +812,31 @@ fn parse_action() -> Result<Action> {
         token_file: None,
         schema: None,
     };
+    let mut cli = CliArgs::default();
+    let mut positionals: Vec<String> = Vec::new();
     let mut qpdf_flag = None;
     if o.command == "schema" {
         o.schema = Some(args.next().ok_or(Error("INVALID_REQUEST"))?)
     }
     let mut seen = std::collections::HashSet::new();
     while let Some(flag) = args.next() {
-        if !seen.insert(flag.clone()) {
+        if flag == "--" {
+            positionals.extend(args);
+            break;
+        }
+        if !flag.starts_with('-') {
+            positionals.push(flag);
+            continue;
+        }
+        let canonical = if flag == "-o" {
+            "--output"
+        } else {
+            flag.as_str()
+        };
+        if !seen.insert(canonical.to_string()) {
             return Err(Error("INVALID_REQUEST"));
         }
-        match flag.as_str() {
+        match canonical {
             "--pdfium-lib" => {
                 o.pdfium_lib = Some(PathBuf::from(args.next().ok_or(Error("INVALID_REQUEST"))?))
             }
@@ -539,23 +862,91 @@ fn parse_action() -> Result<Action> {
             "--token-file" => {
                 o.token_file = Some(PathBuf::from(args.next().ok_or(Error("INVALID_REQUEST"))?))
             }
+            "--output" => cli.output = Some(args.next().ok_or(Error("INVALID_REQUEST"))?),
+            "--replace" => cli.replace = true,
+            "--preserve" => {
+                cli.preserve = Some(
+                    args.next()
+                        .ok_or(Error("INVALID_REQUEST"))?
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect(),
+                )
+            }
+            "--mode" => cli.mode = Some(args.next().ok_or(Error("INVALID_REQUEST"))?),
+            "--jpeg-quality" => {
+                cli.jpeg_quality = Some(
+                    args.next()
+                        .ok_or(Error("INVALID_REQUEST"))?
+                        .parse()
+                        .map_err(|_| Error("INVALID_REQUEST"))?,
+                )
+            }
+            "--level" => {
+                cli.level = Some(
+                    args.next()
+                        .ok_or(Error("INVALID_REQUEST"))?
+                        .parse()
+                        .map_err(|_| Error("INVALID_REQUEST"))?,
+                )
+            }
+            "--max-bytes" => {
+                cli.max_bytes = Some(
+                    args.next()
+                        .ok_or(Error("INVALID_REQUEST"))?
+                        .parse()
+                        .map_err(|_| Error("INVALID_REQUEST"))?,
+                )
+            }
+            "--on-target-miss" => cli.on_miss = Some(args.next().ok_or(Error("INVALID_REQUEST"))?),
+            "--allow-larger" => cli.allow_larger = true,
+            "--engine" => cli.engine = Some(args.next().ok_or(Error("INVALID_REQUEST"))?),
+            "--dpi" => {
+                cli.dpi = Some(
+                    args.next()
+                        .ok_or(Error("INVALID_REQUEST"))?
+                        .parse()
+                        .map_err(|_| Error("INVALID_REQUEST"))?,
+                )
+            }
             _ => return Err(Error("INVALID_REQUEST")),
         }
     }
     if seen.contains("--request-json") && seen.contains("--request-file") {
         return Err(Error("INVALID_REQUEST"));
     }
+    let base: &[&str] = &[
+        "--root",
+        "--qpdf",
+        "--qpdf-exact",
+        "--pdfium-lib",
+        "--request-json",
+        "--request-file",
+        "--dry-run",
+    ];
     let allowed: &[&str] = match o.command.as_str() {
-        "inspect" | "validate" | "merge" | "extract" | "split" | "remove-pages" | "compress"
-        | "extract-text" | "render-page" => &[
-            "--root",
-            "--qpdf",
-            "--qpdf-exact",
-            "--pdfium-lib",
-            "--request-json",
-            "--request-file",
-            "--dry-run",
-        ],
+        "inspect" | "validate" => base,
+        "extract-text" => &[base, &["--engine"]].concat(),
+        "merge" | "remove-pages" | "extract" => {
+            &[base, &["--output", "--replace", "--preserve"]].concat()
+        }
+        "render-page" => &[base, &["--output", "--replace", "--engine", "--dpi"]].concat(),
+        "split" => &[base, &["--preserve", "--replace"]].concat(),
+        "compress" => &[
+            base,
+            &[
+                "--output",
+                "--replace",
+                "--mode",
+                "--jpeg-quality",
+                "--level",
+                "--max-bytes",
+                "--on-target-miss",
+                "--allow-larger",
+            ],
+        ]
+        .concat(),
         "serve" => &[
             "--root",
             "--qpdf",
@@ -570,6 +961,38 @@ fn parse_action() -> Result<Action> {
         _ => return Err(Error("UNSUPPORTED_OPERATION")),
     };
     if seen.iter().any(|s| !allowed.contains(&s.as_str())) {
+        return Err(Error("INVALID_REQUEST"));
+    }
+    // Positional shorthand and request flags are exclusive request sources;
+    // shaping flags only combine with shorthand, and a bare operation never
+    // blocks on an interactive stdin — it reports INVALID_REQUEST instead.
+    if !positionals.is_empty() && o.request.is_some() {
+        return Err(Error("INVALID_REQUEST"));
+    }
+    if cli.shapes_request() && (positionals.is_empty() || o.request.is_some()) {
+        return Err(Error("INVALID_REQUEST"));
+    }
+    if !positionals.is_empty() {
+        o.request = Some(request_from_positionals(&o.command, &positionals, &cli)?.to_string());
+    }
+    if o.command == "serve" && o.token_file.is_none() {
+        return Err(Error("INVALID_REQUEST"));
+    }
+    if o.request.is_none()
+        && matches!(
+            o.command.as_str(),
+            "inspect"
+                | "validate"
+                | "merge"
+                | "extract"
+                | "split"
+                | "remove-pages"
+                | "compress"
+                | "extract-text"
+                | "render-page"
+        )
+        && std::io::stdin().is_terminal()
+    {
         return Err(Error("INVALID_REQUEST"));
     }
     o.pdfium_lib = resolve_pdfium(
@@ -670,8 +1093,24 @@ fn main() {
 async fn async_main() {
     let command = std::env::args().nth(1).unwrap_or_default();
     let op = id(&command);
+    let action = match parse_action(std::env::args().skip(1)) {
+        Ok(action) => action,
+        Err(e) => {
+            // Interactive misuse gets usage text; machine surfaces keep the
+            // canonical JSON envelope byte-identical.
+            if std::io::stderr().is_terminal() {
+                let topic = KNOWN_COMMANDS
+                    .contains(&command.as_str())
+                    .then_some(command.as_str());
+                eprint!("{}", usage(topic));
+            } else {
+                eprintln!("{}", e.envelope(op));
+            }
+            std::process::exit(e.exit());
+        }
+    };
     let result = async {
-        match parse_action()? {
+        match action {
             Action::Help(topic) => {
                 print!("{}", usage(topic.as_deref()));
                 Ok(None)
@@ -769,8 +1208,246 @@ async fn async_main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{Shell, resolve_pdfium, resolve_qpdf};
+    use super::{
+        Action, Shell, derived_compress_output, parse_action, parse_page_list,
+        request_from_positionals, resolve_pdfium, resolve_qpdf,
+    };
+    use serde_json::Value;
     use std::{ffi::OsString, fs, os::unix::fs::PermissionsExt, path::PathBuf};
+
+    fn run_request(args: &[&str]) -> Value {
+        match parse_action(args.iter().copied().map(String::from)) {
+            Ok(Action::Run(o)) => serde_json::from_str(&o.request.unwrap()).unwrap(),
+            other => panic!("expected Run for {args:?}, got {other:?}"),
+        }
+    }
+
+    fn parse_err(args: &[&str]) -> &'static str {
+        match parse_action(args.iter().copied().map(String::from)) {
+            Err(super::Error(code)) => code,
+            other => panic!("expected error for {args:?}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_invocation_shows_help() {
+        assert!(matches!(
+            parse_action(std::iter::empty()),
+            Ok(Action::Help(None))
+        ));
+        assert!(matches!(
+            parse_action(["--help"].iter().copied().map(String::from)),
+            Ok(Action::Help(None))
+        ));
+        assert!(matches!(
+            parse_action(["inspect", "--help"].iter().copied().map(String::from)),
+            Ok(Action::Help(Some(topic))) if topic == "inspect"
+        ));
+        // help also works alongside positional shorthand
+        assert!(matches!(
+            parse_action(["compress", "doc.pdf", "-h"].iter().copied().map(String::from)),
+            Ok(Action::Help(Some(topic))) if topic == "compress"
+        ));
+        assert_eq!(parse_err(&["bogus", "--help"]), "UNSUPPORTED_OPERATION");
+        // A bare operation with piped stdin still reads a JSON request from it.
+        assert!(matches!(
+            parse_action(["inspect"].iter().copied().map(String::from)),
+            Ok(Action::Run(o)) if o.request.is_none()
+        ));
+    }
+
+    #[test]
+    fn positional_shorthand_builds_requests() {
+        assert_eq!(
+            run_request(&["inspect", "doc.pdf"]),
+            serde_json::json!({"input": {"path": "doc.pdf"}})
+        );
+        assert_eq!(
+            run_request(&["validate", "doc.pdf"]),
+            serde_json::json!({"input": {"path": "doc.pdf"}})
+        );
+        assert_eq!(
+            run_request(&["compress", "doc.pdf"]),
+            serde_json::json!({"input": {"path": "doc.pdf"}, "output": {"path": "doc-compressed.pdf"}})
+        );
+        assert_eq!(
+            run_request(&["compress", "docs/doc.pdf", "out.pdf"]),
+            serde_json::json!({"input": {"path": "docs/doc.pdf"}, "output": {"path": "out.pdf"}})
+        );
+        assert_eq!(
+            run_request(&["compress", "doc.pdf", "-o", "out.pdf", "--replace"]),
+            serde_json::json!({
+                "input": {"path": "doc.pdf"},
+                "output": {"path": "out.pdf", "replaceExisting": true}
+            })
+        );
+        assert_eq!(
+            run_request(&[
+                "compress",
+                "doc.pdf",
+                "--mode",
+                "lossy",
+                "--jpeg-quality",
+                "70",
+                "--level",
+                "3",
+                "--max-bytes",
+                "20000",
+                "--on-target-miss",
+                "error",
+                "--allow-larger",
+            ]),
+            serde_json::json!({
+                "input": {"path": "doc.pdf"},
+                "output": {"path": "doc-compressed.pdf"},
+                "mode": "lossy",
+                "jpegQuality": 70,
+                "compressionLevel": 3,
+                "maxOutputBytes": 20000,
+                "onTargetMiss": "error",
+                "allowLargerOutput": true
+            })
+        );
+        assert_eq!(
+            run_request(&["merge", "a.pdf", "b.pdf", "merged.pdf"]),
+            serde_json::json!({
+                "inputs": [{"path": "a.pdf"}, {"path": "b.pdf"}],
+                "output": {"path": "merged.pdf"}
+            })
+        );
+        assert_eq!(
+            run_request(&[
+                "merge",
+                "a.pdf",
+                "b.pdf",
+                "-o",
+                "merged.pdf",
+                "--preserve",
+                "metadata,bookmarks"
+            ]),
+            serde_json::json!({
+                "inputs": [{"path": "a.pdf"}, {"path": "b.pdf"}],
+                "output": {"path": "merged.pdf"},
+                "preserve": {"metadata": true, "bookmarks": true}
+            })
+        );
+        assert_eq!(
+            run_request(&["extract", "doc.pdf", "1-3", "-o", "subset.pdf"]),
+            serde_json::json!({
+                "input": {"path": "doc.pdf"},
+                "pages": [1, 2, 3],
+                "output": {"path": "subset.pdf"}
+            })
+        );
+        assert_eq!(
+            run_request(&[
+                "remove-pages",
+                "doc.pdf",
+                "2,5",
+                "trimmed.pdf",
+                "--preserve",
+                "all"
+            ]),
+            serde_json::json!({
+                "input": {"path": "doc.pdf"},
+                "pages": [2, 5],
+                "output": {"path": "trimmed.pdf"},
+                "preserve": {"metadata": true, "bookmarks": true, "annotations": true, "attachments": true}
+            })
+        );
+        assert_eq!(
+            run_request(&["split", "doc.pdf", "p1.pdf=1-2", "p2.pdf=3"]),
+            serde_json::json!({
+                "input": {"path": "doc.pdf"},
+                "parts": [
+                    {"pages": [1, 2], "output": {"path": "p1.pdf"}},
+                    {"pages": [3], "output": {"path": "p2.pdf"}}
+                ]
+            })
+        );
+        assert_eq!(
+            run_request(&["extract-text", "doc.pdf", "1,3", "--engine", "pdfium"]),
+            serde_json::json!({"input": {"path": "doc.pdf"}, "pages": [1, 3], "engine": "pdfium"})
+        );
+        assert_eq!(
+            run_request(&[
+                "render-page",
+                "doc.pdf",
+                "2",
+                "-o",
+                "page.png",
+                "--dpi",
+                "72"
+            ]),
+            serde_json::json!({
+                "input": {"path": "doc.pdf"},
+                "page": 2,
+                "output": {"path": "page.png"},
+                "dpi": 72
+            })
+        );
+        // `--` terminates flag parsing for dash-leading filenames.
+        assert_eq!(
+            run_request(&["inspect", "--", "-flag.pdf"]),
+            serde_json::json!({"input": {"path": "-flag.pdf"}})
+        );
+    }
+
+    #[test]
+    fn positional_shorthand_rejects_bad_shapes() {
+        for args in [
+            &["inspect", "a.pdf", "b.pdf"][..],
+            &["inspect", "a.pdf", "--request-json", "{}"][..],
+            &["compress", "a.pdf", "b.pdf", "-o", "c.pdf"][..],
+            &["compress", "--mode", "lossy"][..],
+            &["compress", "a.pdf", "--request-file", "r.json"][..],
+            &["merge", "a.pdf", "b.pdf"][..],
+            &["extract", "doc.pdf", "1", "out.pdf", "-o", "other.pdf"][..],
+            &["extract", "doc.pdf", "3-1", "-o", "x.pdf"][..],
+            &["extract", "doc.pdf", "abc", "-o", "x.pdf"][..],
+            &["split", "doc.pdf", "p1.pdf"][..],
+            &["split", "doc.pdf", "no-equals-sign", "p2.pdf=3"][..],
+            &["render-page", "doc.pdf", "two", "-o", "p.png"][..],
+            &["inspect", "a.pdf", "--output", "x.pdf"][..],
+            &["inspect", "a.pdf", "--preserve", "bogus"][..],
+            &["serve", "extra.pdf"][..],
+            &["serve"][..],
+            &["operations", "x.pdf"][..],
+            &["fill-forms"][..],
+            &["-V", "extra"][..],
+        ] {
+            parse_err(args);
+        }
+        assert_eq!(parse_err(&["fill-forms"]), "UNSUPPORTED_OPERATION");
+        assert_eq!(parse_err(&["serve"]), "INVALID_REQUEST");
+    }
+
+    #[test]
+    fn page_list_and_derived_output() {
+        assert_eq!(parse_page_list("1").unwrap(), vec![1]);
+        assert_eq!(parse_page_list("1,3").unwrap(), vec![1, 3]);
+        assert_eq!(parse_page_list("1-3,7").unwrap(), vec![1, 2, 3, 7]);
+        assert_eq!(parse_page_list(" 2 - 4 ").unwrap(), vec![2, 3, 4]);
+        for spec in ["", "a", "3-1", "1-", "-2", "1,,2"] {
+            assert!(parse_page_list(spec).is_err(), "{spec}");
+        }
+        assert_eq!(derived_compress_output("a.pdf"), "a-compressed.pdf");
+        assert_eq!(derived_compress_output("dir/a.pdf"), "dir/a-compressed.pdf");
+        assert_eq!(derived_compress_output("a"), "a-compressed");
+        assert_eq!(derived_compress_output(".hidden"), ".hidden-compressed");
+        assert_eq!(
+            derived_compress_output("dir/.hidden"),
+            "dir/.hidden-compressed"
+        );
+    }
+
+    #[test]
+    fn request_from_positionals_rejects_non_pdf_commands() {
+        let cli = super::CliArgs::default();
+        for command in ["serve", "mcp", "operations", "schema"] {
+            assert!(request_from_positionals(command, &["a.pdf".into()], &cli).is_err());
+        }
+    }
 
     #[test]
     fn pdfium_discovery_precedence_and_bundled_layouts() {

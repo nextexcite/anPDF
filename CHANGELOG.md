@@ -4,6 +4,36 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
+## [0.3.2] - 2026-11-20
+
+### Added
+- Positional CLI shorthand for every PDF operation: `anpdf inspect <doc.pdf>`,
+  `anpdf merge <a.pdf> <b.pdf> [...] <out.pdf>`, `anpdf extract <doc.pdf> <pages>
+  [-o <out.pdf>]`, `anpdf split <doc.pdf> <out=pages>...`, `anpdf remove-pages
+  <doc.pdf> <pages>`, `anpdf compress <doc.pdf> [<out.pdf>]` (output defaults to
+  `<name>-compressed.pdf`), `anpdf extract-text <doc.pdf> <pages>` and
+  `anpdf render-page <doc.pdf> <page> [-o <image>]`. Shorthand flags cover
+  `--output`/`-o`, `--replace`, `--preserve`, `--mode`, `--jpeg-quality`,
+  `--level`, `--max-bytes`, `--on-target-miss`, `--allow-larger`, `--engine` and
+  `--dpi`; `--` terminates flag parsing for dash-leading filenames. Shorthand
+  produces the same contract request and identical result envelopes as
+  `--request-json`/`--request-file`.
+- `<pages>` shorthand accepts comma lists and ranges (`1,3`, `2-5`).
+
+### Changed
+- A bare `anpdf` or `anpdf <operation>` on a terminal prints command usage and
+  exits instead of blocking on stdin; piped stdin still supplies the JSON
+  request.
+- Parse-stage `INVALID_REQUEST`/`UNSUPPORTED_OPERATION` print usage on a
+  terminal; non-terminal stderr keeps the canonical JSON error envelope
+  byte-identical.
+- `anpdf serve` now fails fast with `INVALID_REQUEST` when `--token-file` is
+  missing, at parse time.
+- `--help`/`-h` works in any position for known commands (e.g.
+  `anpdf compress doc.pdf --help`).
+- Shell completions (bash/zsh/fish) cover the new shorthand flags and complete
+  filenames for positional arguments.
+
 ## [0.3.1] - 2026-11-20
 
 ### Added
