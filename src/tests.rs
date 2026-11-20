@@ -6,25 +6,35 @@ use std::{
 };
 
 #[test]
-fn rung_estimate_tracks_byte_ratio() {
-    const LADDER: &[(u32, u8)] = &[
-        (300, 80),
-        (200, 75),
-        (150, 65),
-        (120, 55),
-        (96, 50),
-        (72, 45),
-    ];
-    // A near-input-sized target seeds a gentle rung (300·√0.89 ≈ 283dpi →
-    // 200dpi rung); ~15% seeds 118dpi → the 96dpi rung; an extreme target
-    // takes the floor.
-    assert_eq!(crate::estimate_rung(LADDER, 9_000_000, 8_000_000), 1);
-    assert_eq!(crate::estimate_rung(LADDER, 9_000_000, 1_400_000), 4);
-    assert_eq!(crate::estimate_rung(LADDER, 9_000_000, 1_000), 5);
-    // Estimates between rungs pick the first cap at-or-below the estimate,
-    // and a sliced floor (e.g. level 2) still bounds the fallback index.
-    assert_eq!(crate::estimate_rung(LADDER, 9_000_000, 2_500_000), 2);
-    assert_eq!(crate::estimate_rung(&LADDER[..2], 9_000_000, 1_000), 1);
+fn rung_choice_prefers_gentlest_fit() {
+    use crate::resample::choose_rung;
+    // Measured per-rung document bytes, gentlest → hardest; all usable.
+    let usable = [true; 4];
+    // Gentle-most rung under target wins over smaller harder rungs.
+    assert_eq!(
+        choose_rung(
+            &[9_000_000, 2_900_000, 1_800_000, 900_000],
+            &usable,
+            3_000_000
+        ),
+        1
+    );
+    // No rung fits: smallest measured rung is the best-effort pick.
+    assert_eq!(
+        choose_rung(&[9_000_000, 2_900_000, 1_800_000], &usable, 1_000),
+        2
+    );
+    // Rungs left unmeasured by a budget stop are not eligible.
+    assert_eq!(
+        choose_rung(
+            &[9_000_000, 1_800_000, 900_000],
+            &[true, true, false],
+            3_000_000
+        ),
+        1
+    );
+    // Exact-fit boundary counts as meeting the target.
+    assert_eq!(choose_rung(&[3_000_000, 2_000_000], &usable, 3_000_000), 0);
 }
 
 mod content_operations {

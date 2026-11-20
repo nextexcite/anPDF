@@ -452,36 +452,26 @@ impl Dispatcher {
                             "message": "Compressed output could not meet the requested maximum size; no image-resampling backend is configured."
                         })),
                         Some(resampler) => {
-                            // Bisect the ordered ladder (gentlest → hardest),
-                            // seeded by the byte ratio, instead of re-resampling
-                            // the whole document once per rung. `met` keeps the
-                            // gentlest rung that satisfies the target — the
-                            // highest-quality meeting candidate; `candidate`
-                            // keeps the smallest achieved bytes for the miss
-                            // case. A deadline hit mid-descent stops the search
-                            // and publishes the best-so-far instead of failing.
-                            let mut lo = 0usize;
-                            let mut hi = rungs.len() - 1;
-                            let mut seed = spec
-                                .max_output_bytes
-                                .map(|t| estimate_rung(rungs, candidate_bytes, t));
+                            // One worker pass covers the whole descent: every
+                            // image is decoded once, encoded at each remaining
+                            // rung for an exact byte total, and the gentlest
+                            // rung fitting the target is applied. Resampling
+                            // the staged input keeps original pixels — the
+                            // structural compress afterward adds no second
+                            // JPEG generation. When the estimate overshoots
+                            // the target, only the still-unmeasured deeper
+                            // rungs are retried. A deadline hit mid-descent
+                            // stops the search and publishes the best-so-far.
                             let mut met: Option<(PathBuf, u64)> = None;
-                            while lo <= hi {
-                                let rung = seed
-                                    .take()
-                                    .unwrap_or((lo + hi) / 2)
-                                    .clamp(lo, hi);
-                                if control.check().is_err() {
+                            let mut depth = 0usize; // first untried rung index
+                            loop {
+                                if control.check().is_err() || depth >= rungs.len() {
                                     break;
                                 }
-                                let (dpi, quality) = rungs[rung];
-                                let raw = staging.path().join(format!("rung{rung}.raw.pdf"));
-                                // Each probe resamples the initial qpdf pass
-                                // output — already repaired — rather than the
-                                // previous probe's pixels, so JPEG artifacts
-                                // never accumulate.
+                                let remaining = &rungs[depth..];
+                                let raw = staging.path().join(format!("rung{depth}.raw.pdf"));
                                 let summary = match resampler.resample_images(
-                                    &out, &raw, dpi, quality, control,
+                                    &paths[0], &raw, remaining, spec.max_output_bytes, control,
                                 ) {
                                     Ok(s) => s,
                                     Err(e) if e.0 == "TIMEOUT" => break,
@@ -495,21 +485,14 @@ impl Dispatcher {
                                         "message": format!("{} images could not be safely resampled and were left unchanged.", skipped.len())
                                     }));
                                 }
-                                let processed = summary["imagesProcessed"].as_u64().unwrap_or(0);
-                                if processed == 0 {
-                                    // No image exceeded this rung's DPI cap;
-                                    // deeper rungs can still qualify
-                                    // lower-resolution images.
-                                    if rung == hi {
-                                        break;
-                                    }
-                                    lo = rung + 1;
-                                    continue;
-                                }
-                                let finished = staging.path().join(format!("rung{rung}.pdf"));
+                                let finished = staging.path().join(format!("rung{depth}.pdf"));
+                                // Lossless structural finish only: the worker
+                                // already encoded the images at the rung's
+                                // quality — re-encoding again would add JPEG
+                                // generations without shrinking bytes.
                                 match plan.structural.compress(
                                     &raw,
-                                    CompressMode::Lossy { jpeg_quality: quality },
+                                    CompressMode::Lossless,
                                     &finished,
                                     control,
                                 ) {
@@ -525,21 +508,14 @@ impl Dispatcher {
                                     candidate = finished.clone();
                                     candidate_bytes = finished_bytes;
                                 }
+                                let chosen = summary["chosenRung"].as_u64().unwrap_or(0) as usize;
+                                depth += chosen + 1;
                                 match spec.max_output_bytes {
                                     Some(t) if finished_bytes <= t => {
                                         met = Some((finished, finished_bytes));
-                                        if rung == lo {
-                                            break;
-                                        }
-                                        hi = rung - 1;
+                                        break;
                                     }
-                                    Some(_) => {
-                                        if rung == hi {
-                                            break;
-                                        }
-                                        lo = rung + 1;
-                                    }
-                                    None => break,
+                                    _ => continue, // overshot: retry deeper rungs
                                 }
                             }
                             // The gentlest rung meeting the target wins over a
@@ -684,19 +660,6 @@ impl Dispatcher {
         }
         Ok(value)
     }
-}
-
-/// First ladder index gentle enough to plausibly meet `target`,
-/// estimated from the byte ratio: image bytes shrink roughly with
-/// dpi², so the needed dpi ≈ 300·√(target/bytes). Falls back to the
-/// hardest rung when the estimate sits below the floor.
-fn estimate_rung(rungs: &[(u32, u8)], candidate_bytes: u64, target: u64) -> usize {
-    let ratio = target as f64 / candidate_bytes.max(1) as f64;
-    let dpi = 300.0 * ratio.sqrt();
-    rungs
-        .iter()
-        .position(|(cap, _)| (*cap as f64) <= dpi)
-        .unwrap_or(rungs.len() - 1)
 }
 
 fn request_integer(value: &Value) -> Result<u64> {

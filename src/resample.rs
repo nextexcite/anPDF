@@ -5,6 +5,14 @@
 //! place: lopdf rewrites the object model, `image` decodes/re-encodes and the
 //! caller's qpdf pass applies the structural finish. Masked, multi-filter or
 //! otherwise risky images are skipped, never rewritten.
+//!
+//! One invocation covers the whole search: each image is decoded once, then
+//! re-encoded at every requested rung so the caller gets exact per-rung byte
+//! totals — the gentlest rung whose estimated output fits `targetBytes` is
+//! applied and saved in a single pass, instead of re-running the document per
+//! step. Per-image work fans out over bounded threads; decoded pixels in
+//! flight and retained JPEG bytes are capped so large documents stay inside
+//! the worker's address limit.
 
 use crate::{
     backend::{Control, ImageResampler, Qpdf},
@@ -17,6 +25,11 @@ use std::{
     ffi::OsString,
     io::Read,
     path::{Path, PathBuf},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 pub const WORKER_ARG: &str = "--internal-compress-worker";
@@ -24,7 +37,18 @@ const MAX_IMAGE_PIXELS: u64 = 64_000_000;
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PALETTE_RAW_BYTES: usize = 4 * 1024 * 1024;
+const MAX_RUNGS: usize = 8;
 const RESAMPLE_MARGIN: f64 = 1.10; // images within 10% of the cap are left alone
+/// Decoded pixels held at once across worker threads (~256 MiB).
+/// Decoded pixels in flight stay under this bound so the worker's address
+/// space fits its sandbox (RLIMIT_AS) with room for retained JPEGs.
+const PIXEL_BUDGET: u64 = 96 * 1024 * 1024;
+/// Encoded JPEG bytes retained for the apply pass (~192 MiB); images past the
+/// cap are re-decoded once for the chosen rung instead.
+/// Retained per-rung JPEG bytes; beyond it the chosen rung is re-encoded at
+/// apply time rather than held in memory.
+const JPEG_BUDGET: u64 = 96 * 1024 * 1024;
+const MAX_WORKERS: usize = 8;
 const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
 #[derive(Default)]
@@ -510,26 +534,240 @@ fn resampled(image: &image::DynamicImage, w: u32, h: u32) -> image::DynamicImage
     }
 }
 
-fn resample_document(input: &Path, output: &Path, dpi_cap: u32, jpeg_quality: u8) -> Result<Value> {
-    let mut doc = Document::load(input).map_err(|_| Error("INVALID_PDF", None))?;
-    let placements = collect_placements(&doc);
-    let (fallback_w, fallback_h) = placements.fallback;
-    let mut processed = 0u64;
-    let mut skipped: Vec<String> = Vec::new();
-    let mut image_bytes_in = 0u64;
-    let mut image_bytes_out = 0u64;
-    struct Edit {
-        id: ObjectId,
-        jpeg: Vec<u8>,
+/// An RGB image whose channels never diverge is achromatic: re-encode it as
+/// grayscale so the JPEG drops its chroma planes and the rewritten ColorSpace
+/// stays honest. Scanned pages are often stored RGB despite holding
+/// monochrome content.
+fn achromatic_to_gray(resized: image::DynamicImage) -> image::DynamicImage {
+    if let image::DynamicImage::ImageRgb8(rgb) = &resized {
+        let achromatic = rgb.pixels().all(|p| {
+            let [r, g, b] = p.0;
+            r.abs_diff(g) <= 8 && g.abs_diff(b) <= 8 && r.abs_diff(b) <= 8
+        });
+        if achromatic {
+            return image::DynamicImage::ImageLuma8(resized.to_luma8());
+        }
+    }
+    resized
+}
+
+fn encode_jpeg(resized: &image::DynamicImage, jpeg_quality: u8) -> Option<Vec<u8>> {
+    let mut jpeg = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, jpeg_quality);
+    // Encode the concrete buffer, not the DynamicImage: a DynamicImage
+    // reports RGBA pixels to the encoder, which would emit a 3-component
+    // JPEG under a DeviceGray label.
+    let encoded = match resized {
+        image::DynamicImage::ImageLuma8(l) => encoder.encode(
+            l.as_raw(),
+            l.width(),
+            l.height(),
+            image::ExtendedColorType::L8,
+        ),
+        _ => {
+            let rgb = resized.to_rgb8();
+            encoder.encode(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+        }
+    };
+    encoded.ok().map(|_| jpeg)
+}
+
+/// Outcome for one image at one rung: below cap (keep the original stream),
+/// encoded (exact JPEG bytes and rewritten dimensions), or unmeasured because
+/// the worker's time budget ran out first.
+enum RungOut {
+    BelowCap,
+    Encoded {
+        jpeg: Option<Vec<u8>>,
+        len: u64,
         width: u32,
         height: u32,
         gray: bool,
+    },
+    Unmeasured,
+}
+
+/// Resize `image` to `placed` points at `dpi_cap` and encode it. Returns
+/// `BelowCap` when the image already sits at or below the rung's cap.
+fn resample_at(
+    image: &image::DynamicImage,
+    placed: (f64, f64),
+    dpi_cap: u32,
+    jpeg_quality: u8,
+) -> RungOut {
+    let (req_w, req_h) = required_pixels(placed, dpi_cap);
+    if (image.width() as f64) <= req_w as f64 * RESAMPLE_MARGIN
+        && (image.height() as f64) <= req_h as f64 * RESAMPLE_MARGIN
+    {
+        return RungOut::BelowCap;
     }
-    let mut edits: Vec<Edit> = Vec::new();
-    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
-    for id in ids {
-        let stream = match doc.get_object(id) {
-            Ok(Object::Stream(s)) => s,
+    let scale = ((req_w as f64) / (image.width() as f64))
+        .min((req_h as f64) / (image.height() as f64))
+        .min(1.0);
+    let new_w = ((image.width() as f64) * scale).floor().max(1.0) as u32;
+    let new_h = ((image.height() as f64) * scale).floor().max(1.0) as u32;
+    let resized = achromatic_to_gray(resampled(image, new_w, new_h));
+    let gray = matches!(
+        resized,
+        image::DynamicImage::ImageLuma8(_) | image::DynamicImage::ImageLumaA8(_)
+    );
+    match encode_jpeg(&resized, jpeg_quality) {
+        Some(jpeg) => RungOut::Encoded {
+            len: jpeg.len() as u64,
+            jpeg: Some(jpeg),
+            width: new_w,
+            height: new_h,
+            gray,
+        },
+        None => RungOut::Unmeasured,
+    }
+}
+
+/// Gentle-most rung whose estimated document bytes fit `target`; falls back
+/// to the smallest measured rung so a miss still yields the tightest
+/// achievable output. `rung_bytes` are exact image-stream totals plus
+/// measured non-image bytes — no monotonicity assumption, so a rung whose
+/// images stayed below cap cannot hide a gentler fit. Rungs not fully
+/// measured (budget stop) are excluded via `usable`.
+pub(crate) fn choose_rung(rung_bytes: &[u64], usable: &[bool], target: u64) -> usize {
+    let mut best: Option<usize> = None;
+    for (r, (&bytes, &ok)) in rung_bytes.iter().zip(usable).enumerate() {
+        if ok && bytes <= target {
+            return r;
+        }
+        if ok {
+            match best {
+                Some(b) if bytes >= rung_bytes[b] => {}
+                _ => best = Some(r),
+            }
+        }
+    }
+    best.unwrap_or(rung_bytes.len() - 1)
+}
+
+/// Decode one image stream to pixels, or a skip reason. The same unsafe
+/// sources that used to stay untouched are skipped identically here and count
+/// their original bytes toward every rung's total.
+fn decode_image(
+    doc: &Document,
+    stream: &lopdf::Stream,
+) -> std::result::Result<image::DynamicImage, String> {
+    let width = num(stream.dict.get(b"Width").unwrap_or(&Object::Null));
+    let height = num(stream.dict.get(b"Height").unwrap_or(&Object::Null));
+    if stream.dict.get(b"ImageMask").ok() == Some(&Object::Boolean(true))
+        || stream.dict.get(b"Mask").is_ok()
+        || stream.dict.get(b"SMask").is_ok()
+        || stream.dict.get(b"Alternates").is_ok()
+        || stream.dict.get(b"Decode").is_ok()
+        || stream.dict.get(b"DecodeParms").is_ok()
+        || stream.dict.get(b"DP").is_ok()
+    {
+        return Err("masked-or-decoded".to_string());
+    }
+    // Reject dimensions that would decode past the pixel budget before
+    // touching stream bytes, so a hostile Flate stream cannot inflate.
+    if width <= 0.0 || height <= 0.0 || (width as u64) * (height as u64) > MAX_IMAGE_PIXELS {
+        return Err("bounds".to_string());
+    }
+    let decode_bound = (width as u64) * (height as u64) * 4 + 1024;
+    match filters(&stream.dict).as_slice() {
+        [f] if f == b"DCTDecode" => {
+            // Re-encoding rewrites the color space: only plain Device
+            // spaces can be relabeled without losing calibration.
+            match stream.dict.get(b"ColorSpace") {
+                Ok(Object::Name(n)) if matches!(n.as_slice(), b"DeviceGray" | b"DeviceRGB") => {}
+                Err(_) => {}
+                _ => return Err("colorspace".to_string()),
+            }
+            image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg)
+                .map_err(|_| "jpeg-decode".to_string())
+        }
+        [f] if f == b"FlateDecode" || f == b"Fl" => {
+            let mut flat = Vec::new();
+            flate2::read::ZlibDecoder::new(stream.content.as_slice())
+                .take(decode_bound)
+                .read_to_end(&mut flat)
+                .map_err(|_| "flate-decode".to_string())?;
+            let palette = indexed_palette(doc, &stream.dict)?;
+            samples_image(&stream.dict, &flat, palette.as_ref())
+        }
+        [] => {
+            let palette = indexed_palette(doc, &stream.dict)?;
+            samples_image(&stream.dict, &stream.content, palette.as_ref())
+        }
+        _ => Err("filters".to_string()),
+    }
+}
+
+/// Claim work while in-flight decoded pixels stay under `PIXEL_BUDGET`; an
+/// item larger than the budget runs alone.
+struct Claim {
+    next: AtomicUsize,
+    inflight: AtomicU64,
+}
+impl Claim {
+    fn take(&self, pixel_sizes: &[u64]) -> Option<usize> {
+        loop {
+            let idx = self.next.load(Ordering::Relaxed);
+            if idx >= pixel_sizes.len() {
+                return None;
+            }
+            if self.inflight.load(Ordering::Relaxed) > 0
+                && self.inflight.load(Ordering::Relaxed) + pixel_sizes[idx] > PIXEL_BUDGET
+            {
+                std::thread::sleep(Duration::from_millis(1));
+                continue;
+            }
+            if self
+                .next
+                .compare_exchange(idx, idx + 1, Ordering::SeqCst, Ordering::Relaxed)
+                .is_ok()
+            {
+                self.inflight.fetch_add(pixel_sizes[idx], Ordering::Relaxed);
+                return Some(idx);
+            }
+        }
+    }
+    fn done(&self, bytes: u64) {
+        self.inflight.fetch_sub(bytes, Ordering::Relaxed);
+    }
+}
+
+/// One resample worker invocation: classify streams, decode each measurable
+/// image once, encode it at every rung (bounded parallel), pick the gentlest
+/// rung fitting `target` from exact byte totals, apply it, and save once.
+fn resample_document(
+    input: &Path,
+    output: &Path,
+    rungs: &[(u32, u8)],
+    target: Option<u64>,
+    budget: Option<Duration>,
+) -> Result<Value> {
+    let started = Instant::now();
+    let spent = || budget.is_some_and(|b| started.elapsed() > b);
+    let mut doc = Document::load(input).map_err(|_| Error("INVALID_PDF", None))?;
+    let placements = collect_placements(&doc);
+    let (fallback_w, fallback_h) = placements.fallback;
+    let mut skipped: Vec<String> = Vec::new();
+    let mut image_bytes_in = 0u64;
+
+    struct Pending {
+        id: ObjectId,
+        stream_len: u64,
+        pixel_bytes: u64,
+        placed: (f64, f64),
+        stream: lopdf::Stream,
+    }
+    let mut pending: Vec<Pending> = Vec::new();
+    let mut fixed: Vec<u64> = Vec::new(); // original stream lens held at every rung
+    for (&id, object) in doc.objects.iter() {
+        let stream = match object {
+            Object::Stream(s) => s,
             _ => continue,
         };
         if stream.dict.get(b"Subtype").ok().and_then(name) != Some(b"Image") {
@@ -543,199 +781,223 @@ fn resample_document(input: &Path, output: &Path, dpi_cap: u32, jpeg_quality: u8
             .get(&id)
             .copied()
             .unwrap_or((fallback_w, fallback_h));
-        let (req_w, req_h) = required_pixels(placed, dpi_cap);
-        if width <= req_w as f64 * RESAMPLE_MARGIN && height <= req_h as f64 * RESAMPLE_MARGIN {
+        // Below every rung's cap: the original stream stays untouched.
+        let below_all = rungs.iter().all(|(cap, _)| {
+            let (req_w, req_h) = required_pixels(placed, *cap);
+            width <= req_w as f64 * RESAMPLE_MARGIN && height <= req_h as f64 * RESAMPLE_MARGIN
+        });
+        if below_all {
             skipped.push(format!("{}:{}:below-cap", id.0, id.1));
+            fixed.push(stream.content.len() as u64);
             continue;
         }
-        if stream.dict.get(b"ImageMask").ok() == Some(&Object::Boolean(true))
-            || stream.dict.get(b"Mask").is_ok()
-            || stream.dict.get(b"SMask").is_ok()
-            || stream.dict.get(b"Alternates").is_ok()
-            || stream.dict.get(b"Decode").is_ok()
-            || stream.dict.get(b"DecodeParms").is_ok()
-            || stream.dict.get(b"DP").is_ok()
-        {
-            skipped.push(format!("{}:{}:masked-or-decoded", id.0, id.1));
-            continue;
-        }
-        // Reject dimensions that would decode past the pixel budget before
-        // touching stream bytes, so a hostile Flate stream cannot inflate.
-        if width <= 0.0 || height <= 0.0 || (width as u64) * (height as u64) > MAX_IMAGE_PIXELS {
-            skipped.push(format!("{}:{}:bounds", id.0, id.1));
-            continue;
-        }
-        let decode_bound = (width as u64) * (height as u64) * 4 + 1024;
-        let filter_list = filters(&stream.dict);
-        let decoded = match filter_list.as_slice() {
-            [f] if f == b"DCTDecode" => {
-                // Re-encoding rewrites the color space: only plain Device
-                // spaces can be relabeled without losing calibration.
-                match stream.dict.get(b"ColorSpace") {
-                    Ok(Object::Name(n)) if matches!(n.as_slice(), b"DeviceGray" | b"DeviceRGB") => {
-                    }
-                    Err(_) => {}
-                    _ => {
-                        skipped.push(format!("{}:{}:colorspace", id.0, id.1));
-                        continue;
-                    }
-                }
-                match image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg)
-                {
-                    Ok(img) => Some(img),
-                    Err(_) => {
-                        skipped.push(format!("{}:{}:jpeg-decode", id.0, id.1));
-                        continue;
-                    }
-                }
-            }
-            [f] if f == b"FlateDecode" || f == b"Fl" => {
-                let mut flat = Vec::new();
-                match flate2::read::ZlibDecoder::new(stream.content.as_slice())
-                    .take(decode_bound)
-                    .read_to_end(&mut flat)
-                {
-                    Ok(_) => {}
-                    Err(_) => {
-                        skipped.push(format!("{}:{}:flate-decode", id.0, id.1));
-                        continue;
-                    }
-                }
-                let palette = match indexed_palette(&doc, &stream.dict) {
-                    Ok(p) => p,
-                    Err(reason) => {
-                        skipped.push(format!("{}:{}:{reason}", id.0, id.1));
-                        continue;
-                    }
-                };
-                match samples_image(&stream.dict, &flat, palette.as_ref()) {
-                    Ok(img) => Some(img),
-                    Err(reason) => {
-                        skipped.push(format!("{}:{}:{reason}", id.0, id.1));
-                        continue;
-                    }
-                }
-            }
-            [] => {
-                let palette = match indexed_palette(&doc, &stream.dict) {
-                    Ok(p) => p,
-                    Err(reason) => {
-                        skipped.push(format!("{}:{}:{reason}", id.0, id.1));
-                        continue;
-                    }
-                };
-                match samples_image(&stream.dict, &stream.content, palette.as_ref()) {
-                    Ok(img) => Some(img),
-                    Err(reason) => {
-                        skipped.push(format!("{}:{}:{reason}", id.0, id.1));
-                        continue;
-                    }
-                }
-            }
-            _ => {
-                skipped.push(format!("{}:{}:filters", id.0, id.1));
-                continue;
-            }
-        };
-        let Some(image) = decoded else {
-            continue;
-        };
-        let (px_w, px_h) = (image.width(), image.height());
-        let scale = ((req_w as f64) / (px_w as f64))
-            .min((req_h as f64) / (px_h as f64))
-            .min(1.0);
-        let new_w = ((px_w as f64) * scale).floor().max(1.0) as u32;
-        let new_h = ((px_h as f64) * scale).floor().max(1.0) as u32;
-        let mut resized = resampled(&image, new_w, new_h);
-        // An RGB image whose channels never diverge is achromatic: re-encode
-        // it as grayscale so the JPEG drops its chroma planes and the
-        // rewritten ColorSpace stays honest. Scanned pages are often stored
-        // RGB despite holding monochrome content.
-        if let image::DynamicImage::ImageRgb8(rgb) = &resized {
-            let achromatic = rgb.pixels().all(|p| {
-                let [r, g, b] = p.0;
-                r.abs_diff(g) <= 8 && g.abs_diff(b) <= 8 && r.abs_diff(b) <= 8
-            });
-            if achromatic {
-                resized = image::DynamicImage::ImageLuma8(resized.to_luma8());
-            }
-        }
-        let mut jpeg = Vec::new();
-        let mut encoder =
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, jpeg_quality);
-        // Encode the concrete buffer, not the DynamicImage: a DynamicImage
-        // reports RGBA pixels to the encoder, which would emit a
-        // 3-component JPEG under a DeviceGray label.
-        let encoded = match &resized {
-            image::DynamicImage::ImageLuma8(l) => {
-                encoder.encode(l.as_raw(), l.width(), l.height(), image::ExtendedColorType::L8)
-            }
-            _ => {
-                let rgb = resized.to_rgb8();
-                encoder.encode(
-                    rgb.as_raw(),
-                    rgb.width(),
-                    rgb.height(),
-                    image::ExtendedColorType::Rgb8,
-                )
-            }
-        };
-        if encoded.is_err() {
-            skipped.push(format!("{}:{}:jpeg-encode", id.0, id.1));
-            continue;
-        }
-        let gray = matches!(
-            resized,
-            image::DynamicImage::ImageLuma8(_) | image::DynamicImage::ImageLumaA8(_)
-        );
-        edits.push(Edit {
+        pending.push(Pending {
             id,
-            jpeg,
-            width: new_w,
-            height: new_h,
-            gray,
+            stream_len: stream.content.len() as u64,
+            pixel_bytes: ((width.max(1.0) as u64) * (height.max(1.0) as u64) * 4).min(PIXEL_BUDGET),
+            placed,
+            stream: stream.clone(),
         });
     }
-    for edit in edits {
-        let stream = match doc.get_object_mut(edit.id) {
+
+    /// Per-image measured state.
+    struct Measured {
+        id: ObjectId,
+        stream_len: u64,
+        placed: (f64, f64),
+        stream: lopdf::Stream,
+        rungs: Vec<RungOut>,
+    }
+    let pixel_sizes: Vec<u64> = pending.iter().map(|p| p.pixel_bytes).collect();
+    let claim = Claim {
+        next: AtomicUsize::new(0),
+        inflight: AtomicU64::new(0),
+    };
+    let jpeg_retained = AtomicU64::new(0);
+    type Outcome = (usize, std::result::Result<(), String>, Measured);
+    let results: Mutex<Vec<Outcome>> = Mutex::new(Vec::new());
+    let workers = pending
+        .len()
+        .min(MAX_WORKERS)
+        .min(std::thread::available_parallelism().map_or(4, |n| n.get()));
+    if !pending.is_empty() {
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    while let Some(idx) = claim.take(&pixel_sizes) {
+                        let p = &pending[idx];
+                        let mut entry = Measured {
+                            id: p.id,
+                            stream_len: p.stream_len,
+                            placed: p.placed,
+                            stream: p.stream.clone(),
+                            rungs: Vec::with_capacity(rungs.len()),
+                        };
+                        match decode_image(&doc, &p.stream) {
+                            Err(reason) => {
+                                results.lock().unwrap().push((idx, Err(reason), entry));
+                                claim.done(p.pixel_bytes);
+                                continue;
+                            }
+                            Ok(image) => {
+                                entry.stream = p.stream.clone();
+                                for &(cap, quality) in rungs {
+                                    if spent() {
+                                        entry.rungs.push(RungOut::Unmeasured);
+                                        continue;
+                                    }
+                                    match resample_at(&image, p.placed, cap, quality) {
+                                        RungOut::Encoded {
+                                            jpeg,
+                                            len,
+                                            width,
+                                            height,
+                                            gray,
+                                        } => {
+                                            let keep = jpeg.is_some()
+                                                && jpeg_retained.fetch_add(len, Ordering::Relaxed)
+                                                    + len
+                                                    <= JPEG_BUDGET;
+                                            entry.rungs.push(RungOut::Encoded {
+                                                jpeg: if keep { jpeg } else { None },
+                                                len,
+                                                width,
+                                                height,
+                                                gray,
+                                            });
+                                        }
+                                        other => entry.rungs.push(other),
+                                    }
+                                }
+                                results.lock().unwrap().push((idx, Ok(()), entry));
+                            }
+                        }
+                        claim.done(p.pixel_bytes);
+                    }
+                });
+            }
+        });
+    }
+    let mut measured: Vec<Measured> = Vec::with_capacity(pending.len());
+    {
+        let mut results = results.into_inner().unwrap();
+        results.sort_by_key(|(idx, _, _)| *idx);
+        for (_idx, outcome, entry) in results {
+            match outcome {
+                Err(reason) => {
+                    skipped.push(format!("{}:{}:{reason}", entry.id.0, entry.id.1));
+                    fixed.push(entry.stream_len);
+                }
+                Ok(()) => measured.push(entry),
+            }
+        }
+    }
+
+    let input_bytes = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
+    let non_image_bytes = input_bytes.saturating_sub(image_bytes_in);
+    let mut rung_bytes: Vec<u64> = vec![non_image_bytes + fixed.iter().sum::<u64>(); rungs.len()];
+    let mut usable = vec![true; rungs.len()];
+    for m in &measured {
+        for (r, slot) in m.rungs.iter().enumerate() {
+            match slot {
+                RungOut::BelowCap => rung_bytes[r] += m.stream_len,
+                RungOut::Encoded { len, .. } => rung_bytes[r] += len,
+                RungOut::Unmeasured => usable[r] = false,
+            }
+        }
+    }
+    let chosen = target
+        .map(|t| choose_rung(&rung_bytes, &usable, t))
+        .unwrap_or_else(|| {
+            // No target: the last rung is the request (level-pinned ladder).
+            let mut r = rungs.len() - 1;
+            while r > 0 && !usable[r] {
+                r -= 1;
+            }
+            r
+        });
+    if !usable[chosen] {
+        return Err(Error("TIMEOUT", None));
+    }
+
+    // Apply the chosen rung. JPEGs dropped under the retention cap are
+    // re-encoded from a fresh decode of the source stream.
+    let mut edits: Vec<(ObjectId, Vec<u8>, u32, u32, bool)> = Vec::new();
+    let mut processed = 0u64;
+    let mut image_bytes_out = 0u64;
+    for m in &measured {
+        let (cap, quality) = rungs[chosen];
+        let out = match &m.rungs[chosen] {
+            RungOut::BelowCap => None,
+            RungOut::Encoded {
+                jpeg,
+                width,
+                height,
+                gray,
+                ..
+            } => match jpeg {
+                Some(j) => Some((j.clone(), *width, *height, *gray)),
+                None => decode_image(&doc, &m.stream).ok().and_then(|i| {
+                    match resample_at(&i, m.placed, cap, quality) {
+                        RungOut::Encoded {
+                            jpeg: Some(j),
+                            width,
+                            height,
+                            gray,
+                            ..
+                        } => Some((j, width, height, gray)),
+                        _ => None,
+                    }
+                }),
+            },
+            RungOut::Unmeasured => None,
+        };
+        let Some((jpeg, width, height, gray)) = out else {
+            continue;
+        };
+        edits.push((m.id, jpeg, width, height, gray));
+    }
+    for (id, jpeg, width, height, gray) in edits {
+        let stream = match doc.get_object_mut(id) {
             Ok(Object::Stream(s)) => s,
             _ => continue,
         };
-        stream.set_plain_content(edit.jpeg.clone());
+        stream.set_plain_content(jpeg);
         stream
             .dict
             .set(b"Filter".to_vec(), Object::Name(b"DCTDecode".to_vec()));
         stream
             .dict
-            .set(b"Width".to_vec(), Object::Integer(edit.width as i64));
+            .set(b"Width".to_vec(), Object::Integer(width as i64));
         stream
             .dict
-            .set(b"Height".to_vec(), Object::Integer(edit.height as i64));
+            .set(b"Height".to_vec(), Object::Integer(height as i64));
         stream
             .dict
             .set(b"BitsPerComponent".to_vec(), Object::Integer(8));
         stream.dict.set(
             b"ColorSpace".to_vec(),
-            Object::Name(if edit.gray {
+            Object::Name(if gray {
                 b"DeviceGray".to_vec()
             } else {
                 b"DeviceRGB".to_vec()
             }),
         );
         stream.dict.remove(b"DecodeParms");
-        image_bytes_out += edit.jpeg.len() as u64;
+        image_bytes_out += stream.content.len() as u64;
         processed += 1;
     }
     doc.save_to(&mut std::fs::File::create(output).map_err(|_| Error("INTERNAL_ERROR", None))?)
         .map_err(|_| Error("INTERNAL_ERROR", None))?;
-    let input_bytes = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
     Ok(json!({
         "imagesProcessed": processed,
         "imagesSkipped": skipped,
         "inlineImages": placements.inline_images,
         "imageBytesIn": image_bytes_in,
         "imageBytesOut": image_bytes_out,
-        "nonImageBytes": input_bytes.saturating_sub(image_bytes_in),
+        "nonImageBytes": non_image_bytes,
+        "rungBytes": rung_bytes,
+        "chosenRung": chosen,
     }))
 }
 
@@ -748,15 +1010,16 @@ impl ImageResampler for ResampleProvider {
         &self,
         input: &Path,
         output: &Path,
-        dpi_cap: u32,
-        jpeg_quality: u8,
+        rungs: &[(u32, u8)],
+        target: Option<u64>,
         control: &Control,
     ) -> Result<Value> {
         let request = json!({
             "input": input.to_string_lossy(),
             "output": output.to_string_lossy(),
-            "dpiCap": dpi_cap,
-            "jpegQuality": jpeg_quality,
+            "rungs": rungs.iter().map(|(d, q)| json!({"dpiCap": d, "jpegQuality": q})).collect::<Vec<_>>(),
+            "targetBytes": target,
+            "budgetMillis": control.remaining().as_millis() as u64,
         });
         let (_code, stdout) = Qpdf {
             executable: self.worker_executable.clone(),
@@ -793,17 +1056,29 @@ fn process(arguments: &[OsString]) -> Result<Value> {
         .get("output")
         .and_then(Value::as_str)
         .ok_or(Error("INVALID_REQUEST", None))?;
-    let dpi = request
-        .get("dpiCap")
+    let rungs: Vec<(u32, u8)> = request
+        .get("rungs")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|r| {
+                    let dpi = r.get("dpiCap").and_then(Value::as_u64)?;
+                    let q = r.get("jpegQuality").and_then(Value::as_u64).unwrap_or(70);
+                    if !(36..=600).contains(&dpi) || q > 100 {
+                        return None;
+                    }
+                    Some((dpi as u32, q as u8))
+                })
+                .collect()
+        })
+        .filter(|r: &Vec<(u32, u8)>| !r.is_empty() && r.len() <= MAX_RUNGS)
+        .ok_or(Error("INVALID_REQUEST", None))?;
+    let target = request.get("targetBytes").and_then(Value::as_u64);
+    let budget = request
+        .get("budgetMillis")
         .and_then(Value::as_u64)
-        .filter(|d| (36..=600).contains(d))
-        .ok_or(Error("INVALID_REQUEST", None))? as u32;
-    let quality = request
-        .get("jpegQuality")
-        .and_then(Value::as_u64)
-        .filter(|q| *q <= 100)
-        .unwrap_or(70) as u8;
-    resample_document(Path::new(input), Path::new(output), dpi, quality)
+        .map(Duration::from_millis);
+    resample_document(Path::new(input), Path::new(output), &rungs, target, budget)
 }
 
 pub fn worker(args: impl Iterator<Item = OsString>) -> i32 {

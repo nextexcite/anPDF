@@ -105,16 +105,19 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<Value>>;
 }
 
-/// Raster pass used by the compression size ladder: resamples oversized image
-/// XObjects to `dpi_cap` and re-encodes them as JPEG, leaving the structural
-/// finish to the `Backend::compress` pass that follows.
+/// Raster pass used by the compression size ladder. One call covers the
+/// whole search: the worker resamples oversized image XObjects at every
+/// `rungs` (dpi cap, JPEG quality) pair, measures exact per-rung byte totals,
+/// picks the gentlest rung fitting `target` (the hardest when none fits), and
+/// saves once — the `Backend::compress` pass that follows only applies the
+/// structural finish.
 pub trait ImageResampler: Send + Sync {
     fn resample_images(
         &self,
         input: &Path,
         output: &Path,
-        dpi_cap: u32,
-        jpeg_quality: u8,
+        rungs: &[(u32, u8)],
+        target: Option<u64>,
         control: &Control,
     ) -> Result<Value>;
 }
@@ -173,7 +176,6 @@ pub(crate) fn limit_worker(cmd: &mut Command, file_limit: libc::rlim_t, cpu_secs
                 return Err(std::io::Error::last_os_error());
             }
             for (res, max) in [
-                (libc::RLIMIT_CPU, cpu_secs as libc::rlim_t),
                 (libc::RLIMIT_FSIZE, file_limit),
                 (libc::RLIMIT_NOFILE, 64),
                 #[cfg(not(target_os = "macos"))]
@@ -187,6 +189,21 @@ pub(crate) fn limit_worker(cmd: &mut Command, file_limit: libc::rlim_t, cpu_secs
                     return Err(std::io::Error::last_os_error());
                 }
             }
+            // A hard CPU cap inherited from the parent cannot be raised;
+            // clamp to it (and tolerate failure) rather than fail the spawn —
+            // the parent's deadline poll still bounds the worker.
+            let mut cur: libc::rlimit = std::mem::zeroed();
+            let mut cpu_cap = cpu_secs as libc::rlim_t;
+            if libc::getrlimit(libc::RLIMIT_CPU, &mut cur) == 0
+                && cur.rlim_max != libc::RLIM_INFINITY
+            {
+                cpu_cap = cpu_cap.min(cur.rlim_max);
+            }
+            let r = libc::rlimit {
+                rlim_cur: cpu_cap,
+                rlim_max: cpu_cap,
+            };
+            let _ = libc::setrlimit(libc::RLIMIT_CPU, &r);
             Ok(())
         });
     }
