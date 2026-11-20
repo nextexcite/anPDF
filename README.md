@@ -58,10 +58,12 @@ Install via Homebrew directly from this repository (installs `qpdf` and shell co
 
 ```sh
 brew tap nextexcite/anpdf
-brew trust --formula nextexcite/anpdf/anpdf   # current Homebrew requires trusting non-official tap formulae
+brew trust --formula nextexcite/anpdf/anpdf
 brew install anpdf
 anpdf --version
 ```
+
+Current Homebrew requires `brew trust --formula` for non-official tap formulae before install.
 
 > [!NOTE]
 > If you previously tapped this repository directly (`brew tap nextexcite/anpdf https://github.com/nextexcite/anPDF`), migrate once: `brew untap nextexcite/anpdf && brew tap nextexcite/anpdf` — installed `anpdf` stays installed.
