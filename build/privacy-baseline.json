@@ -5,5 +5,8 @@
       "identitySha256": "d1facf4635e13ffafdef9fa903d8c0052c68779e5d5b79a192b02c72126aa5f4",
       "reason": "Reviewed historical web merge of the capability registry."
     }
+  ],
+  "webMergeIdentitySha256": [
+    "d1facf4635e13ffafdef9fa903d8c0052c68779e5d5b79a192b02c72126aa5f4"
   ]
 }

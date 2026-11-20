@@ -2,7 +2,7 @@
 import hashlib,json,os,pathlib,re,subprocess,sys
 run=lambda *a:subprocess.check_output(['git',*a])
 commits=run('rev-list','--all').decode().splitlines();issues=0
-baseline={}
+baseline={};web_merge_identities=set()
 baseline_path=pathlib.Path('build/privacy-baseline.json')
 def unique_object(pairs):
     value=dict(pairs)
@@ -11,7 +11,11 @@ def unique_object(pairs):
 if baseline_path.exists():
     try:
         document=json.loads(baseline_path.read_text(),object_pairs_hook=unique_object)
-        if not isinstance(document,dict) or set(document)!={'identityExceptions'} or not isinstance(document['identityExceptions'],list):raise ValueError
+        if not isinstance(document,dict) or set(document)!={'identityExceptions','webMergeIdentitySha256'} or not isinstance(document['identityExceptions'],list):raise ValueError
+        if not isinstance(document['webMergeIdentitySha256'],list):raise ValueError
+        for digest in document['webMergeIdentitySha256']:
+            if not isinstance(digest,str) or not re.fullmatch('[0-9a-f]{64}',digest) or digest in web_merge_identities:raise ValueError
+            web_merge_identities.add(digest)
         for entry in document['identityExceptions']:
             if not isinstance(entry,dict) or set(entry)!={'commit','identitySha256','reason'}:raise ValueError
             commit,digest,reason=entry['commit'],entry['identitySha256'],entry['reason']
@@ -20,11 +24,13 @@ if baseline_path.exists():
             if not isinstance(reason,str) or not reason.strip():raise ValueError
             baseline[commit]=digest
     except (OSError,ValueError,TypeError,RecursionError):
-        baseline={};issues+=1
+        baseline={};web_merge_identities=set();issues+=1
 for commit in commits:
     raw_identity=run('show','-s','--format=%an%n%ae%n%cn%n%ce',commit)
     identity=raw_identity.decode().splitlines()
-    if identity!=['anPDF Contributors','contributors@anpdf.invalid']*2 and baseline.get(commit)!=hashlib.sha256(raw_identity).hexdigest():issues+=1
+    digest=hashlib.sha256(raw_identity).hexdigest()
+    if identity!=['anPDF Contributors','contributors@anpdf.invalid']*2 and baseline.get(commit)!=digest:
+        if digest not in web_merge_identities or len(run('show','-s','--format=%P',commit).split())<2:issues+=1
 objects=run('rev-list','--objects','--all').splitlines();blobs=set()
 for row in objects:
     oid=row.split(b' ',1)[0].decode()
