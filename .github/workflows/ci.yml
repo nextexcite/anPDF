@@ -70,9 +70,10 @@ jobs:
           fi
           mkdir -p build/work
           if [ '${{ steps.qpdf-cache.outputs.cache-hit }}' != true ]; then
-            python3 build/get-qpdf.py build/work/qpdf
+            python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
+          else
+            python3 build/get-qpdf.py build/work/qpdf --path-only > build/work/qpdf-path
           fi
-          printf '%s\n' "$PWD/build/work/qpdf/bin/qpdf" > build/work/qpdf-path
       - name: Cross-surface corpus
         shell: bash
         run: |
@@ -161,15 +162,15 @@ jobs:
           python3 -m venv build/work/venv
           build/work/venv/bin/pip install -r build/test-requirements.txt
           if [ '${{ steps.qpdf-cache.outputs.cache-hit }}' != true ]; then
-            python3 build/get-qpdf.py build/work/qpdf
+            python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
+          else
+            python3 build/get-qpdf.py build/work/qpdf --path-only > build/work/qpdf-path
           fi
-          printf '%s\n' "$PWD/build/work/qpdf/bin/qpdf" > build/work/qpdf-path
           if [ '${{ steps.pdfium-cache.outputs.cache-hit }}' != true ]; then
-            python3 build/get-pdfium.py build/work/pdfium
+            python3 build/get-pdfium.py build/work/pdfium > build/work/pdfium-path
+          else
+            python3 build/get-pdfium.py build/work/pdfium --path-only > build/work/pdfium-path
           fi
-          library=libpdfium.so
-          if [ "$RUNNER_OS" = macOS ]; then library=libpdfium.dylib; fi
-          printf '%s\n' "$PWD/build/work/pdfium/lib/$library" > build/work/pdfium-path
           if [ '${{ steps.font-cache.outputs.cache-hit }}' != true ]; then
             python3 build/get-test-font.py build/work/font
           fi
@@ -181,6 +182,8 @@ jobs:
           cargo test --locked
           cargo build --locked
           cp "$(cat build/work/pdfium-path)" target/debug/
+          python3 -c 'import json,os,pathlib,stat; q=pathlib.Path(pathlib.Path("build/work/qpdf-path").read_text().strip()); p=pathlib.Path(pathlib.Path("build/work/pdfium-path").read_text().strip()); b=pathlib.Path("target/debug")/p.name; assert q.is_file() and os.access(q,os.X_OK) and p.read_bytes()==b.read_bytes(); print(json.dumps({"qpdf":str(q.resolve()),"qpdfMode":oct(stat.S_IMODE(q.stat().st_mode)),"pdfium":str(p.resolve()),"bundledPdfium":str(b.resolve())}))'
+          python3 -m unittest discover -s build -p test_downloaders.py -v
           unset ANPDF_PDFIUM_LIB
           ANPDF_QPDF="$(cat build/work/qpdf-path)" ANPDF_TEST_FONT="$PWD/build/work/font/NotoSansSC.ttf" build/work/venv/bin/python tests/integration.py
   oci-smoke:

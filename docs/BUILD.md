@@ -100,7 +100,10 @@ Pinned qpdf, PDFium, test-font, Gitleaks and Syft/Grype downloads use exact keys
 containing the downloader script hash (including its version/checksum pins), plus
 OS/architecture for binaries. There are no broad fallback keys for these tools.
 On a miss the existing checksum-verifying downloader runs; on a hit its extracted
-files are reused, not freshly downloaded/reverified. Forge's cached archive is
+files are reused, not freshly downloaded/reverified. qpdf and PDFium path files
+are always regenerated from the downloader's canonical
+path output (`--path-only` on cache hits, validating executable/library presence),
+not reconstructed from the shell's working directory. Forge's cached archive is
 rechecked against `forge-pin.json` by `generate.py` every time. Native release
 jobs also cache only the `cargo-auditable` executable, keyed by its explicit
 version and toolchain; Node qualification uses setup-node's locked npm cache.
