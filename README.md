@@ -36,7 +36,7 @@ Versioning convention:
 | Extract embedded text with PDF-space spans | `extract-text` | `POST /v1/extract-text` | `extractText` |
 | Render a page as PNG | `render-page` | `POST /v1/render-page` | `renderPage` |
 
-All three surfaces use the same validated operation contract. The Rust runtime accepts **qpdf 12.x >=12.4.2**, with **12.4.2** the tested version; other accepted versions emit `BACKEND_VERSION_UNTESTED` once per response. `ANPDF_QPDF_EXACT=1` or `--qpdf-exact` requires exactly 12.4.2 (enabled in CI and OCI). Pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Release builds publish multi-arch **`linux/amd64` + `linux/arm64` OCI images** (GHCR) and **`macos/arm64` native binaries** (GitHub Releases + Homebrew tap from this repository).
+All three surfaces use the same validated operation contract. The Rust runtime accepts **qpdf 12.x >=12.4.2**, with **12.4.2** the tested version; other accepted versions emit `BACKEND_VERSION_UNTESTED` once per response. `ANPDF_QPDF_EXACT=1` or `--qpdf-exact` requires exactly 12.4.2 (enabled in CI and OCI). Pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Release builds publish multi-arch **`linux/amd64` + `linux/arm64` OCI images** (GHCR) and **`macos/arm64` native binaries** (GitHub Releases + the [nextexcite/homebrew-anpdf](https://github.com/nextexcite/homebrew-anpdf) tap).
 
 The development contract also exposes [embedded text extraction and PNG rendering](docs/PROTOCOLS.md#text-and-rendering-engine). Standard releases use bundled PDFium for these operations; qpdf remains the structural engine. A `--no-default-features` build reports content operations as unavailable.
 
@@ -57,7 +57,7 @@ Compression keeps the validated original bytes if compressed output is not small
 Install via Homebrew directly from this repository (installs `qpdf` and shell completions for `bash`, `zsh`, and `fish` automatically):
 
 ```sh
-brew tap nextexcite/anpdf https://github.com/nextexcite/anPDF
+brew tap nextexcite/anpdf
 brew trust --formula nextexcite/anpdf/anpdf   # current Homebrew requires trusting non-official tap formulae
 brew install anpdf
 anpdf --version
