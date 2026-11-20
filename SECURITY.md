@@ -61,3 +61,10 @@ and binds a full commit SHA to the SHA-256 of its exact
 names and addresses must not appear in the baseline. Invalid baselines fail the
 gate. Exceptions do not exempt blobs, remotes, or any other privacy checks, and
 do not generally permit web merges or particular address formats.
+
+Blob checks still scan the history reachable from every ref, including `HEAD`.
+Email-bearing license notice blobs must be sanctioned by the committed
+`license-manifest.json` of every ref that reaches them, not just the checked-out
+manifest. Missing manifests sanction nothing; malformed manifests are findings.
+Each offending blob counts once, and path checks apply to all blobs regardless
+of license sanctions.
