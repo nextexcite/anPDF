@@ -167,9 +167,20 @@ pub trait RenderPageBackend: Send + Sync {
 pub struct Qpdf {
     pub executable: PathBuf,
     pub exact: bool,
+    /// Address-space bound for spawned workers; the resample worker needs
+    /// more than qpdf since it holds decoded pixels and encoded rungs.
+    pub as_limit: libc::rlim_t,
+    /// CPU budget multiplier: parallel workers burn CPU across threads, so
+    /// the resample worker gets remaining × its thread count.
+    pub cpu_scale: u64,
 }
 
-pub(crate) fn limit_worker(cmd: &mut Command, file_limit: libc::rlim_t, cpu_secs: u64) {
+pub(crate) fn limit_worker_as(
+    cmd: &mut Command,
+    file_limit: libc::rlim_t,
+    cpu_secs: u64,
+    as_limit: libc::rlim_t,
+) {
     unsafe {
         cmd.pre_exec(move || {
             if libc::setsid() < 0 {
@@ -179,7 +190,7 @@ pub(crate) fn limit_worker(cmd: &mut Command, file_limit: libc::rlim_t, cpu_secs
                 (libc::RLIMIT_FSIZE, file_limit),
                 (libc::RLIMIT_NOFILE, 64),
                 #[cfg(not(target_os = "macos"))]
-                (libc::RLIMIT_AS, 768 * 1024 * 1024),
+                (libc::RLIMIT_AS, as_limit),
             ] {
                 let r = libc::rlimit {
                     rlim_cur: max,
@@ -243,9 +254,10 @@ impl Qpdf {
         let cpu_secs = control
             .remaining()
             .as_secs()
+            .saturating_mul(self.cpu_scale.max(1))
             .saturating_add(30)
             .clamp(30, 600);
-        limit_worker(&mut cmd, 250 * 1024 * 1024, cpu_secs);
+        limit_worker_as(&mut cmd, 250 * 1024 * 1024, cpu_secs, self.as_limit);
         let mut child = cmd
             .spawn()
             .map_err(|_| Error("BACKEND_UNAVAILABLE", None))?;
@@ -799,6 +811,8 @@ mod tests {
         let qpdf = Qpdf {
             executable: executable.clone(),
             exact: false,
+            as_limit: 768 * 1024 * 1024,
+            cpu_scale: 1,
         };
         let report = json!({"outlines":[], "pages":[], "attachments":{"sample.txt":{"streams":{"/F":"1 0 R"}}}, "qpdf":[{},{}]});
         let (_, evidence) = qpdf

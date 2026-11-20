@@ -643,6 +643,8 @@ fn process_timeout_and_output_limits() {
     let q = Qpdf {
         executable: exe.clone(),
         exact: false,
+        as_limit: 768 * 1024 * 1024,
+        cpu_scale: 1,
     };
     let c = Control {
         deadline: Instant::now() + Duration::from_millis(40),

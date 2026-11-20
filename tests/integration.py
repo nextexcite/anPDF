@@ -333,7 +333,7 @@ def run():
             cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps(request)],capture_output=True,text=True)
             assert bool(cli.returncode)==bool(error),(n,command,cli.returncode,cli.stderr,cli.stdout);a=json.loads(cli.stderr if error else cli.stdout)
             assert not (cli.stdout if error else cli.stderr),(n,'framing')
-            try:status,b=http(port,token,'/v1/'+command,request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else 15)
+            try:status,b=http(port,token,'/v1/'+command,request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else (30 if command=='compress' else 15))
             except TimeoutError as e:raise AssertionError((n,command,request.get('input'),'HTTP timeout')) from e
             mcp_send(mcp,{'jsonrpc':'2.0','id':n,'method':'tools/call','params':{'name':op,'arguments':request}})
             result=mcp_read(mcp)['result'];c=json.loads(result['content'][0]['text'])

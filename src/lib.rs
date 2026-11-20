@@ -433,7 +433,7 @@ impl Dispatcher {
                 // Rungs the ladder may touch: a bare target descends to the
                 // level floor (default 120dpi); a level without a target pins
                 // exactly its rung; level 1 never resamples.
-                let rungs: &[(u32, u8)] = match (spec.max_output_bytes.is_some(), spec.level) {
+                let rungs_base: &[(u32, u8)] = match (spec.max_output_bytes.is_some(), spec.level) {
                     (_, Some(1)) => &[],
                     (true, Some(2)) => &LADDER[..2],
                     (true, Some(3)) => &LADDER[..4],
@@ -441,6 +441,22 @@ impl Dispatcher {
                     (false, Some(2)) => &LADDER[1..2],
                     (false, Some(3)) => &LADDER[3..4],
                     (false, _) => &[],
+                };
+                // A size target measures interpolated midpoints between
+                // adjacent rungs as well, so the gentlest fit lands near the
+                // target instead of dropping a whole rung of quality.
+                let dense: Vec<(u32, u8)> = rungs_base
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, &(dpi, q))| match rungs_base.get(i + 1) {
+                        Some(&(nd, nq)) => vec![(dpi, q), ((dpi + nd) / 2, (q + nq) / 2)],
+                        None => vec![(dpi, q)],
+                    })
+                    .collect();
+                let rungs: &[(u32, u8)] = if spec.max_output_bytes.is_some() {
+                    &dense
+                } else {
+                    rungs_base
                 };
                 if !rungs.is_empty() && spec.max_output_bytes.is_none_or(|t| candidate_bytes > t) {
                     match plan.resampler {
@@ -470,10 +486,23 @@ impl Dispatcher {
                                 }
                                 let remaining = &rungs[depth..];
                                 let raw = staging.path().join(format!("rung{depth}.raw.pdf"));
+                                // Resample the original input for first-
+                                // generation pixels; a damaged document qpdf
+                                // already repaired may not parse there, so
+                                // fall back to the repaired candidate.
                                 let summary = match resampler.resample_images(
                                     &paths[0], &raw, remaining, spec.max_output_bytes, control,
                                 ) {
                                     Ok(s) => s,
+                                    Err(e) if e.0 == "INVALID_PDF" => {
+                                        match resampler.resample_images(
+                                            &out, &raw, remaining, spec.max_output_bytes, control,
+                                        ) {
+                                            Ok(s) => s,
+                                            Err(e) if e.0 == "TIMEOUT" => break,
+                                            Err(e) => return Err(e),
+                                        }
+                                    }
                                     Err(e) if e.0 == "TIMEOUT" => break,
                                     Err(e) => return Err(e),
                                 };

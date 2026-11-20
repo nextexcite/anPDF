@@ -22,7 +22,12 @@ impl BackendRegistry {
     }
 
     pub fn with_qpdf_exact(executable: PathBuf, exact: bool) -> Self {
-        Self::with_structural(Arc::new(Qpdf { executable, exact }))
+        Self::with_structural(Arc::new(Qpdf {
+            executable,
+            exact,
+            as_limit: 768 * 1024 * 1024,
+            cpu_scale: 1,
+        }))
     }
 
     pub(crate) fn with_structural(structural: Arc<dyn Backend>) -> Self {

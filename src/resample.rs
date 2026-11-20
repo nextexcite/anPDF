@@ -37,7 +37,7 @@ const MAX_IMAGE_PIXELS: u64 = 64_000_000;
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PALETTE_RAW_BYTES: usize = 4 * 1024 * 1024;
-const MAX_RUNGS: usize = 8;
+const MAX_RUNGS: usize = 16;
 const RESAMPLE_MARGIN: f64 = 1.10; // images within 10% of the cap are left alone
 /// Decoded pixels held at once across worker threads (~256 MiB).
 /// Decoded pixels in flight stay under this bound so the worker's address
@@ -749,7 +749,10 @@ fn resample_document(
     budget: Option<Duration>,
 ) -> Result<Value> {
     let started = Instant::now();
-    let spent = || budget.is_some_and(|b| started.elapsed() > b);
+    // Measurement stops at 80% of the budget so applying and saving a fully
+    // measured rung still fits the worker's deadline.
+    let spent =
+        || budget.is_some_and(|b| started.elapsed() > b.mul_f64(0.8).max(Duration::from_secs(0)));
     let mut doc = Document::load(input).map_err(|_| Error("INVALID_PDF", None))?;
     let placements = collect_placements(&doc);
     let (fallback_w, fallback_h) = placements.fallback;
@@ -1024,6 +1027,8 @@ impl ImageResampler for ResampleProvider {
         let (_code, stdout) = Qpdf {
             executable: self.worker_executable.clone(),
             exact: false,
+            as_limit: 1536 * 1024 * 1024,
+            cpu_scale: MAX_WORKERS as u64,
         }
         .run(&[WORKER_ARG.to_string(), request.to_string()], control)?;
         let summary: Value =
