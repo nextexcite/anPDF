@@ -78,6 +78,7 @@ impl PdfOxide {
                         Some(0) => Ok(()),
                         Some(2) => Err(Error("INVALID_REQUEST")),
                         Some(5) => Err(Error("INVALID_PDF")),
+                        Some(6) => Err(Error("UNSUPPORTED_OPERATION")),
                         Some(7) | None => Err(Error("LIMIT_EXCEEDED")),
                         Some(9) => Err(Error("ENCRYPTED_UNSUPPORTED")),
                         _ => Err(Error("INTERNAL")),
@@ -222,6 +223,22 @@ fn render_dimensions(
 }
 
 fn rasterize(doc: &PdfDocument, page: usize, dpi: u32, mut output: impl Write) -> Result<()> {
+    let page_dict = doc.get_page(page - 1).map_err(|_| Error("INVALID_PDF"))?;
+    if let Some(unit) = page_dict
+        .as_dict()
+        .ok_or(Error("INVALID_PDF"))?
+        .get("UserUnit")
+    {
+        let unit = doc.resolve_object(unit).map_err(|_| Error("INVALID_PDF"))?;
+        let unit = unit
+            .as_real()
+            .or_else(|| unit.as_integer().map(|n| n as f64))
+            .filter(|n| n.is_finite() && *n > 0.0)
+            .ok_or(Error("INVALID_PDF"))?;
+        if unit != 1.0 {
+            return Err(Error("UNSUPPORTED_OPERATION"));
+        }
+    }
     let info = doc
         .get_page_info(page - 1)
         .map_err(|_| Error("INVALID_PDF"))?;

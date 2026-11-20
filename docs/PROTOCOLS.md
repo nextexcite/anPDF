@@ -86,7 +86,9 @@ target/debug/anpdf render-page --root ./docs --request-json '{"input":{"path":"s
 The adapter uses `pdf_oxide` 0.3.78's embedded text and native PNG renderer in
 a short-lived subprocess. It does not enable OCR. Missing embedded fonts may
 use system fonts, so control the font environment when comparing pixels across
-machines. The feature build is for evaluation, not the default distribution.
+machines. Rendering pages with a non-default PDF `/UserUnit` returns
+`UNSUPPORTED_OPERATION` rather than an image at the wrong DPI.
+The feature build is for evaluation, not the default distribution.
 Run the existing cross-surface fixture suite with `ANPDF_EXPECT_PDFOXIDE=1`
 and `ANPDF_QPDF` pointing at the pinned qpdf.
 

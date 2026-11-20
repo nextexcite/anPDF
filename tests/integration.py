@@ -25,14 +25,14 @@ def build_pdf(objs):
     for o in offs[1:]:res.extend(f'{o:010d} 00000 n \n'.encode())
     res.extend(f'trailer\n<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode());return bytes(res)
 
-def render_fixture(annotations=False, oversized=False, paint=True):
+def render_fixture(annotations=False, oversized=False, paint=True, page_entries=b''):
     box=b'/MediaBox [0 0 9000 100]' if oversized else b'/MediaBox [0 0 300 200] /CropBox [20 30 170 110] /Rotate 90'
     annots=b' /Annots [5 0 R]' if annotations else b''
     content=b'1 0 0 rg 40 40 50 30 re f' if paint else b''
     objs=[
         b'<< /Type /Catalog /Pages 2 0 R >>',
         b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
-        b'<< /Type /Page /Parent 2 0 R '+box+annots+b' /Resources << >> /Contents 4 0 R >>',
+        b'<< /Type /Page /Parent 2 0 R '+box+annots+page_entries+b' /Resources << >> /Contents 4 0 R >>',
         b'<< /Length '+str(len(content)).encode()+b' >>\nstream\n'+content+b'\nendstream',
     ]
     if annotations:
@@ -72,6 +72,8 @@ def run():
             (root/'annotation.pdf').write_bytes(render_fixture(annotations=True))
             (root/'blank.pdf').write_bytes(render_fixture(paint=False))
             (root/'oversized.pdf').write_bytes(render_fixture(oversized=True))
+            (root/'custom-unit.pdf').write_bytes(render_fixture(page_entries=b' /UserUnit 2.5'))
+            (root/'default-unit.pdf').write_bytes(render_fixture(page_entries=b' /UserUnit 1'))
         subprocess.run([str(QPDF),'--encrypt','','synthetic-only','256','--',str(root/'one.pdf'),str(root/'encrypted.pdf')],check=True,capture_output=True)
         (root/'truncated.pdf').write_bytes(b'%PDF-1.7\n1 0 obj\n<< /Type /Catalog')
         (root/'bad-header.pdf').write_bytes(b'NOT-A-PDF-HEADER\x00\xff')
@@ -179,6 +181,8 @@ def run():
                 ('extract-text',{'input':{'path':'missing.pdf'},'pages':[1],'engine':'not-installed'},'BACKEND_UNAVAILABLE'),
                 ('render-page',{'input':{'path':'oversized.pdf'},'page':1,'dpi':72,'output':{'path':'oversized.png'}},'LIMIT_EXCEEDED'),
                 ('render-page',{'input':{'path':'crop.pdf'},'page':1,'dpi':72,'engine':'pdfoxide','output':{'path':'crop.png'}},None),
+                ('render-page',{'input':{'path':'custom-unit.pdf'},'page':1,'dpi':72,'output':{'path':'custom-unit.png'}},'UNSUPPORTED_OPERATION'),
+                ('render-page',{'input':{'path':'default-unit.pdf'},'page':1,'dpi':72,'output':{'path':'default-unit.png'}},None),
                 ('render-page',{'input':{'path':'annotation.pdf'},'page':1,'dpi':72,'output':{'path':'annotation.png'}},None),
                 ('render-page',{'input':{'path':'blank.pdf'},'page':1,'dpi':72,'output':{'path':'blank.png'}},None),
                 ('render-page',{'input':{'path':'crop.pdf'},'page':1,'dpi':72,'output':{'path':'crop.png'}},'OUTPUT_EXISTS'),
@@ -232,6 +236,8 @@ def run():
             assert (root/'page.png').exists()==PDFOXIDE
             if PDFOXIDE:
                 assert not (root/'oversized.png').exists()
+                assert not (root/'custom-unit.png').exists()
+                assert digest(root/'default-unit.png')==digest(root/'crop.png')
                 assert digest(root/'crop.png')==digest(root/'annotation.png')!=digest(root/'blank.png')
         # Independent semantic page order, not just matching hashes.
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'merged.pdf'),'-']).decode()
