@@ -163,7 +163,11 @@ impl Dispatcher {
                 Some(1..=3) | None => {}
                 Some(_) => return Err(Error("INVALID_REQUEST")),
             }
-            let lossy = lossy_requested || level.is_some_and(|l| l >= 2) || max_output.is_some();
+            // A bare target still implies lossy descent — except at level 1,
+            // which stays strictly lossless and simply reports the miss.
+            let lossy = lossy_requested
+                || level.is_some_and(|l| l >= 2)
+                || (max_output.is_some() && level != Some(1));
             if jpeg_quality.is_some() && !lossy_requested {
                 return Err(Error("INVALID_REQUEST"));
             }
@@ -392,7 +396,7 @@ impl Dispatcher {
                     (false, Some(3)) => &LADDER[3..4],
                     (false, _) => &[],
                 };
-                if !rungs.is_empty() {
+                if !rungs.is_empty() && spec.max_output_bytes.is_none_or(|t| candidate_bytes > t) {
                     match plan.resampler {
                         None if spec.max_output_bytes.is_none() => {
                             return Err(Error("BACKEND_UNAVAILABLE"))
@@ -405,8 +409,15 @@ impl Dispatcher {
                             'ladder: for (rung, (dpi, quality)) in rungs.iter().enumerate() {
                         control.check()?;
                         let raw = staging.path().join(format!("rung{rung}.raw.pdf"));
-                        let summary =
-                            resampler.resample_images(&paths[0], &raw, *dpi, *quality, control)?;
+                        // Each rung descends from the current candidate so the
+                        // qpdf structural pass's repairs are already applied.
+                        let summary = resampler.resample_images(
+                            &candidate,
+                            &raw,
+                            *dpi,
+                            *quality,
+                            control,
+                        )?;
                         let skipped = summary["imagesSkipped"].as_array().cloned().unwrap_or_default();
                         if !skipped.is_empty() {
                             warnings.push(json!({
@@ -416,7 +427,9 @@ impl Dispatcher {
                         }
                         let processed = summary["imagesProcessed"].as_u64().unwrap_or(0);
                         if processed == 0 {
-                            break 'ladder;
+                            // No image exceeded this rung's DPI cap; deeper
+                            // rungs can still qualify lower-resolution images.
+                            continue 'ladder;
                         }
                         let finished = staging.path().join(format!("rung{rung}.pdf"));
                         warnings.extend(plan.structural.compress(
@@ -433,15 +446,9 @@ impl Dispatcher {
                             candidate = finished;
                             candidate_bytes = finished_bytes;
                         }
-                        // Resampling cannot close a gap made only of non-image bytes.
-                        let floor = summary["nonImageBytes"].as_u64().unwrap_or(0);
-                        if spec
-                            .max_output_bytes
-                            .is_some_and(|t| floor >= t || candidate_bytes <= t)
-                        {
-                            break 'ladder;
-                        }
-                        if spec.max_output_bytes.is_none() {
+                        // Stop only when the target is met; non-image bytes
+                        // still shrink under the qpdf finish, so no floor check.
+                        if spec.max_output_bytes.is_none_or(|t| candidate_bytes <= t) {
                             break 'ladder;
                         }
                             }
