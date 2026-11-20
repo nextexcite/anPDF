@@ -116,6 +116,33 @@ sh containers/smoke.sh anpdf:0.2.0-local
 
 When modifying `contracts/v1/openapi.json`, regenerate `generated/` and run the Forge schema/TS checks documented in [docs/FORGE.md](docs/FORGE.md).
 
+## Optional experimental PDFium provider
+
+`cargo build --locked --features pdfium` enables an optional `pdfium-render 0.9.5`
+adapter for `extract-text` and `render-page`; the default build is unchanged.
+Fetch a checksum-pinned PDFium `chromium/8165` dynamic library with
+`python3 build/get-pdfium.py build/work/pdfium`, then set `ANPDF_PDFIUM_LIB` to
+the absolute library path printed by that command (or pass `--pdfium-lib`).
+qpdf 12.4.2 remains required for structural inspection and preservation gates.
+
+```sh
+anpdf extract-text --root ./docs --request-json '{"input":{"path":"sample.pdf"},"pages":[1],"engine":"pdfium"}'
+anpdf render-page --root ./docs --request-json '{"input":{"path":"sample.pdf"},"page":1,"dpi":144,"output":{"path":"page.png"},"engine":"pdfium"}'
+```
+
+Native decoding runs only in a hidden subprocess with the qpdf process resource,
+capture, cancellation and deadline controls. This is not an OS network sandbox.
+Use only trusted library paths; the library itself is executable code.
+Text runs use PDF-space bounds and PDFium reading order; this is not OCR.
+Pixel dimensions round up from points × dpi / 72 and are checked before rendering.
+The fetcher supports Linux x64/arm64 and macOS arm64. Upstream notices are retained;
+this experimental adapter is not bundled in release images or native packages.
+Page reordering, forms, signatures, OCR and existing-text replacement remain unimplemented.
+
+For the optional CJK integration case, fetch `build/get-test-font.py build/work/font`,
+install `build/test-requirements.txt`, and set `ANPDF_TEST_FONT` to the absolute
+`build/work/font/NotoSansSC.ttf` path alongside `ANPDF_PDFIUM_LIB`.
+
 ## Release & quality gates
 
 Every commit and tagged release (`v*`) passes automated checks in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and [`.github/workflows/oci.yml`](.github/workflows/oci.yml):
