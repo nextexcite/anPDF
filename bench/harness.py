@@ -37,16 +37,26 @@ def text_score(expected, actual):
     return 1 - row[-1] / max(len(a), len(b))
 
 
-def atoms(value, prefix=''):
+def canonical(value):
     if isinstance(value, dict):
-        return [atom for key, item in sorted(value.items()) for atom in atoms(item, prefix + '/' + key)]
+        return {key: canonical(item) for key, item in value.items()}
     if isinstance(value, list):
+        return sorted((canonical(item) for item in value), key=lambda item: json.dumps(item, sort_keys=True))
+    return value
+
+
+def atoms(value, prefix='', unordered=False):
+    if isinstance(value, dict):
+        return [atom for key, item in sorted(value.items()) for atom in atoms(item, prefix + '/' + key, unordered)]
+    if isinstance(value, list):
+        if unordered:
+            return [(prefix, json.dumps(canonical(item), sort_keys=True)) for item in value]
         return [atom for i, item in enumerate(value) for atom in atoms(item, prefix + '/' + str(i))]
     return [(prefix, json.dumps(value, sort_keys=True))]
 
 
-def compare(expected, actual):
-    a, b = Counter(atoms(expected)), Counter(atoms(actual))
+def compare(expected, actual, unordered=False):
+    a, b = Counter(atoms(expected, unordered=unordered)), Counter(atoms(actual, unordered=unordered))
     common = sum((a & b).values())
     precision = common / sum(b.values()) if b else float(not a)
     recall = common / sum(a.values()) if a else float(not b)
@@ -90,7 +100,7 @@ def invoke(command, mode, request, timeout):
 
 def preservation(source, output):
     before, after = inspect_pdf(source), inspect_pdf(output)
-    scores = {field: compare(before[field], after.get(field))['recall'] for field in FEATURES
+    scores = {field: compare(before[field], after.get(field), unordered=field != 'annotations')['recall'] for field in FEATURES
               if before[field] and (field != 'annotations' or any(before[field]))}
     scores['pages'] = float(before['pages'] == after['pages'])
     scores['text'] = text_score('\n'.join(before['text']), '\n'.join(after['text']))

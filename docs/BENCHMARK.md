@@ -175,7 +175,10 @@ It deliberately does not store raw stderr or absolute artifact/input paths.
   are not correctness-scored or independently certified as valid PDFs.
 * Preservation: roundtrip output is reopened with **pypdf, not the provider**.
   Score averages retention recall for features present in the input, plus exact
-  page count and normalized text. Signed cases additionally require identical
+  page count and normalized text. Feature lists match multisets of canonical
+  items, so inserting or reordering entries does not erase unchanged items;
+  duplicate multiplicity is retained. Annotation page indices remain significant.
+  Signed cases additionally require identical
   CMS signature bytes and successful pyHanko integrity verification, using only
   their embedded synthetic root and with network fetching disabled. A rewrite
   that invalidates a signature loses that component even if its field survives.

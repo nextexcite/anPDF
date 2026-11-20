@@ -112,6 +112,19 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(0.5, result['precision'])
         self.assertEqual(1, result['recall'])
 
+    def test_preservation_outline_insertion(self):
+        before = {'outlines': [{'title': 'Chapter', 'page': 1, 'children': []},
+                               {'title': 'Appendix', 'page': 2, 'children': []}],
+                  'links': [], 'annotations': [[]], 'formFields': [], 'signatureFields': [],
+                  'metadata': {}, 'imageCount': 0, 'pages': 2, 'text': ['', '']}
+        after = dict(before, outlines=[{'title': 'Added', 'page': 1, 'children': []}] + before['outlines'])
+        with patch('bench.harness.inspect_pdf', side_effect=[before, after]):
+            self.assertEqual(1, preservation('before.pdf', 'after.pdf')['fields']['outlines'])
+        self.assertEqual(0.5, compare(['a', 'a'], ['a'], unordered=True)['recall'])
+        self.assertEqual(1, compare([], [], unordered=True)['recall'])
+        self.assertEqual(0, compare(['a'], [], unordered=True)['recall'])
+        self.assertLess(compare(before['outlines'], after['outlines'])['recall'], 1)
+
     def test_malformed_roundtrip_crash_in_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
