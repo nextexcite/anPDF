@@ -9,7 +9,7 @@ use std::{
     ffi::OsString,
     io::{IsTerminal, Read},
     os::unix::fs::MetadataExt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{Arc, atomic::Ordering},
 };
 
@@ -688,6 +688,28 @@ fn canonical_dir(path: &Path) -> Result<PathBuf> {
         .map_err(|e| Error::io(&e, format!("directory for '{}'", path.display())))
 }
 
+/// Collapse `.`/`..` without touching the filesystem, so a typed path can
+/// be compared with its canonical form to expose symlinked directories.
+fn normalize_components(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Does `s` look like a <pages> spec rather than a file path?
+fn looks_like_pages(s: &str) -> bool {
+    s.chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, ',' | '-' | ' '))
+}
+
 /// Longest common directory prefix of two canonical paths.
 fn common_ancestor(a: PathBuf, b: &Path) -> PathBuf {
     a.components()
@@ -719,10 +741,30 @@ fn normalize_shorthand(
             raw.into()
         }
     };
+    // Positional slots that carry a file path, per command. Page specs
+    // (`extract f.pdf 1-3`) and page numbers (`render-page f.pdf 2`) are
+    // not paths and must never be rewritten as workspace files.
+    let path_slot = |i: usize, raw: &str| -> bool {
+        match command {
+            "extract" | "remove-pages" | "extract-text" if i == 1 => {
+                // [1] is the pages spec — except under --pages, where a
+                // non-pages-shaped value there is the output.
+                cli.pages.is_some() && !looks_like_pages(raw)
+            }
+            "render-page" if i == 1 => false,
+            _ => true,
+        }
+    };
     let expanded: Vec<String> = positionals
         .iter()
         .enumerate()
-        .map(|(i, p)| expand_home(&path_part(i, p)))
+        .map(|(i, p)| {
+            if path_slot(i, p) {
+                expand_home(&path_part(i, p))
+            } else {
+                Ok(p.clone())
+            }
+        })
         .collect::<Result<_>>()?;
     let expanded_output = cli.output.as_deref().map(expand_home).transpose()?;
     if expanded.iter().all(|p| !p.starts_with('/'))
@@ -743,8 +785,36 @@ fn normalize_shorthand(
         return Ok(());
     }
     let canon = |p: &String| -> Result<PathBuf> {
-        let dir = canonical_dir(Path::new(p))?;
-        let name = Path::new(p)
+        if p.ends_with('/') {
+            return Err(bad(format!(
+                "path '{p}' ends with '/' — directories are not valid file arguments"
+            )));
+        }
+        // The workspace opens every path component with O_NOFOLLOW;
+        // canonicalizing a symlinked parent here would erase it before
+        // that check runs. Require the typed path to match its canonical
+        // form so no component is a symlink.
+        let raw = Path::new(p);
+        let abs = if raw.is_absolute() {
+            raw.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map_err(|e| Error::io(&e, "current directory"))?
+                .join(raw)
+        };
+        let lexical = normalize_components(&abs);
+        let lexical_parent = lexical
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("/"));
+        let dir = std::fs::canonicalize(&lexical_parent)
+            .map_err(|e| Error::io(&e, format!("directory for '{p}'")))?;
+        if dir != lexical_parent {
+            return Err(Error("ACCESS_DENIED", None).with(format!(
+                "path '{p}' traverses a symlink — path components must be real directories"
+            )));
+        }
+        let name = lexical
             .file_name()
             .ok_or(bad(format!("path '{p}' has no file name")))?;
         Ok(dir.join(name))
@@ -777,7 +847,13 @@ fn normalize_shorthand(
         // The effective root is the common ancestor of every referenced
         // file's directory (relative paths resolve against the cwd).
         let mut eff: Option<PathBuf> = None;
-        for p in expanded.iter().chain(expanded_output.iter()) {
+        let path_values = expanded
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| path_slot(*i, &positionals[*i]))
+            .map(|(_, p)| p)
+            .chain(expanded_output.iter());
+        for p in path_values {
             let dir = canonical_dir(Path::new(p))?;
             eff = Some(match eff {
                 Some(e) => common_ancestor(e, &dir),
@@ -789,6 +865,9 @@ fn normalize_shorthand(
         eff
     };
     for (i, p) in positionals.iter_mut().enumerate() {
+        if !path_slot(i, p) {
+            continue;
+        }
         let rel = relativize(&canon_root, root_explicit, &expanded[i])?;
         if command == "split" && i > 0 {
             if let Some((_, pages)) = p.split_once('=') {
@@ -836,13 +915,9 @@ fn request_from_positionals(command: &str, positionals: &[String], cli: &CliArgs
     };
     let preserve = cli.preserve.as_deref().map(preserve_value).transpose()?;
     // Pages may come from --pages or a positional spec; both is ambiguous.
-    let looks_like_pages = |s: &String| {
-        s.chars()
-            .all(|c| c.is_ascii_digit() || matches!(c, ',' | '-' | ' '))
-    };
     let pages_for = |positional: Option<&String>| -> Result<Value> {
         match (&cli.pages, positional) {
-            (Some(_), Some(pos)) if looks_like_pages(pos) => {
+            (Some(_), Some(pos)) if looks_like_pages(pos.as_str()) => {
                 Err(bad("pages given both positionally and via --pages"))
             }
             (Some(spec), _) => parse_page_list(spec).map(|p| p.into()),
@@ -1405,10 +1480,23 @@ fn main() {
 fn report_error(e: &Error, command: &str, op: &str) -> ! {
     if std::io::stderr().is_terminal() {
         let topic = KNOWN_COMMANDS.contains(&command).then_some(command);
+        // Filenames in error details can carry terminal control
+        // characters; print them escaped rather than raw on a tty.
+        let tty_message: String = e
+            .message()
+            .chars()
+            .flat_map(|c| {
+                if c.is_control() {
+                    c.escape_default().collect::<Vec<_>>()
+                } else {
+                    vec![c]
+                }
+            })
+            .collect();
         eprintln!(
             "anpdf{}: {}",
             topic.map(|t| format!(" {t}")).unwrap_or_default(),
-            e.message()
+            tty_message
         );
         if matches!(e.0, "INVALID_REQUEST" | "UNSUPPORTED_OPERATION") {
             eprint!("\n{}", usage(topic));
@@ -1893,8 +1981,17 @@ mod tests {
     #[test]
     fn shorthand_absolute_and_tilde_paths_adapt_root() {
         let home = PathBuf::from(std::env::var("HOME").expect("HOME set"));
-        let dir = home.join("anpdf-abs-paths-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        // Unique per run so remove_dir_all only ever touches files this
+        // test created.
+        let dir = home.join(format!(
+            "anpdf-abs-paths-test-{}-{:x}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
         let file = dir.join("doc.pdf");
         std::fs::write(&file, b"%PDF-1.4 test").unwrap();
         let abs = file.to_string_lossy().to_string();
@@ -1978,11 +2075,66 @@ mod tests {
                 let request: Value = serde_json::from_str(&o.request.unwrap()).unwrap();
                 assert_eq!(
                     request["input"]["path"],
-                    serde_json::json!("anpdf-abs-paths-test/doc.pdf")
+                    serde_json::json!(format!(
+                        "{}/doc.pdf",
+                        dir.file_name().unwrap().to_string_lossy()
+                    ))
                 );
             }
             other => panic!("expected Run, got {other:?}"),
         }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn shorthand_guards_symlinks_dirs_and_pages_slots() {
+        let home = PathBuf::from(std::env::var("HOME").expect("HOME set"));
+        let dir = home.join(format!(
+            "anpdf-guards-test-{}-{:x}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("doc.pdf");
+        std::fs::write(&file, b"%PDF-1.4 test").unwrap();
+        let abs = file.to_string_lossy().to_string();
+
+        // A pages spec stays a spec when another argument is absolute.
+        let abs_out = dir.join("out.pdf").to_string_lossy().to_string();
+        match parse_action(
+            ["extract", &abs, "1-3", &abs_out]
+                .iter()
+                .copied()
+                .map(String::from),
+        ) {
+            Ok(Action::Run(o)) => {
+                let request: Value = serde_json::from_str(&o.request.unwrap()).unwrap();
+                assert_eq!(request["pages"], serde_json::json!([1, 2, 3]));
+                assert_eq!(request["output"], serde_json::json!({"path": "out.pdf"}));
+            }
+            other => panic!("expected Run, got {other:?}"),
+        }
+        // Trailing-slash destinations are directories, not files.
+        let dir_out = format!("{abs}/");
+        assert_eq!(
+            parse_err(&["compress", &abs, "-o", &dir_out]),
+            "INVALID_REQUEST"
+        );
+        let d = parse_detail(&["compress", &abs, "-o", &dir_out]);
+        assert!(d.contains("ends with '/'"), "{d}");
+        // Symlinked parent directories are refused rather than silently
+        // canonicalized around the workspace's O_NOFOLLOW checks.
+        let real = dir.join("real");
+        let link = dir.join("link");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let via_link = link.join("x.pdf").to_string_lossy().to_string();
+        assert_eq!(parse_err(&["inspect", &via_link]), "ACCESS_DENIED");
+        let d = parse_detail(&["inspect", &via_link]);
+        assert!(d.contains("symlink"), "{d}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
