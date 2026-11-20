@@ -84,6 +84,16 @@ def run():
         with (root/'large-attachment.pdf').open('wb') as f:large.write(f)
         (root/'text-geometry.pdf').write_bytes(build_pdf(geometry_objects))
         (root/'blank.pdf').write_bytes(gen.pdf(['']))
+        (root/'annotated.pdf').write_bytes(build_pdf([
+            b'<< /Type /Catalog /Pages 2 0 R /AcroForm 7 0 R >>',
+            b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+            b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << >> /Contents 4 0 R /Annots [5 0 R 6 0 R] >>',
+            b'<< /Length 0 >>\nstream\n\nendstream',
+            b'<< /Type /Annot /Subtype /Square /Rect [0 0 300 200] /F 4 /AP << /N 8 0 R >> >>',
+            b'<< /Type /Annot /Subtype /Widget /FT /Tx /T (synthetic) /Rect [0 0 300 200] /F 4 /AP << /N 8 0 R >> >>',
+            b'<< /Fields [6 0 R] >>',
+            b'<< /Type /XObject /Subtype /Form /BBox [0 0 300 200] /Resources << >> /Length 26 >>\nstream\n1 0 0 rg 0 0 300 200 re f\n\nendstream',
+        ]))
         (root/'huge.pdf').write_bytes(gen.pdf(['HUGE']).replace(b'300 200',b'9000 9000'))
         if os.environ.get('ANPDF_PDFIUM_LIB') and os.environ.get('ANPDF_TEST_FONT'):
             from fontTools.ttLib import TTFont
@@ -225,6 +235,8 @@ def run():
               ('render-page',{'input':{'path':'three.pdf'},'page':4,'output':{'path':'missing.png'}},'INVALID_REQUEST'),
               ('render-page',{'input':{'path':'huge.pdf'},'page':1,'dpi':300,'output':{'path':'huge.png'}},'LIMIT_EXCEEDED'),
               ('render-page',{'input':{'path':'three.pdf'},'page':1,'dpi':72,'engine':'pdfium','output':{'path':'small.png'}},None),
+              ('render-page',{'input':{'path':'blank.pdf'},'page':1,'dpi':72,'output':{'path':'blank-render.png'}},None),
+              ('render-page',{'input':{'path':'annotated.pdf'},'page':1,'dpi':72,'output':{'path':'annotation.png'}},None),
               ('extract-text',{'input':{'path':'three.pdf'},'pages':[1],'engine':'absent'},'BACKEND_UNAVAILABLE'),
             ])
             if os.environ.get('ANPDF_TEST_FONT'):
@@ -268,6 +280,7 @@ def run():
         assert all((root/'page.png').exists()==pdfium for root in roots.values())
         assert all(not (root/name).exists() for root in roots.values() for name in ['missing.png','huge.png'])
         if pdfium:
+            for root in roots.values():assert (root/'annotation.png').read_bytes()==(root/'blank-render.png').read_bytes()
             req=json.dumps({'input':{'path':'three.pdf'},'pages':[1]})
             r=subprocess.run([str(BIN),'extract-text','--root',str(roots['cli']),'--pdfium-lib',str(base/'missing-library'),'--request-json',req],capture_output=True,text=True)
             assert r.returncode==8 and json.loads(r.stderr)['error']['code']=='BACKEND_UNAVAILABLE' and not r.stdout

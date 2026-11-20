@@ -164,6 +164,8 @@ fn process(library: &Path, request: &Value) -> Result<Value> {
             .ok_or(Error("INVALID_REQUEST"))? as u32;
         let (width, height) = dimensions(page.width().value, page.height().value, dpi)?;
         let config = PdfRenderConfig::new()
+            .render_annotations(false)
+            .render_form_data(false)
             .set_fixed_width(width as i32)
             .set_fixed_height(height as i32)
             .clear_before_rendering(true)
