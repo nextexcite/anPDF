@@ -165,7 +165,8 @@ It deliberately does not store raw stderr or absolute artifact/input paths.
 
 * Correctness: exact page count; text uses Unicode-codepoint Levenshtein distance
   after removing whitespace (no ASCII tokenization), averaged per page. OCR-only
-  extraction is recorded but excluded. Inspect compares flattened field leaves
+  extraction is recorded but excluded, including clean errors and protocol errors;
+  crashes and timeouts still score zero as safety failures. Inspect compares flattened field leaves
   with precision/recall/F1, preserving list order and multiplicity. Render checks
   every page for exact ceiling-rounded pixel dimensions and nonblank RGB variance.
   This is a structural smoke check, **not** pixel/appearance fidelity.

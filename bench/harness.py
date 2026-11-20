@@ -114,6 +114,8 @@ def score(task, case, result, output, source, dpi=72, page=1):
     expected = case['expected']
     if result['status'] == 'unsupported':
         return None
+    if task == 'extractText' and case.get('ocrOnly'):
+        return 0.0 if result['status'] in ('crash', 'timeout') else None
     if expected.get('expectError'):
         if result['status'] == 'error':
             return 1.0
@@ -138,8 +140,6 @@ def score(task, case, result, output, source, dpi=72, page=1):
     if task == 'pageCount':
         return float(value.get('pages') == expected['pages'])
     if task == 'extractText':
-        if case.get('ocrOnly'):
-            return None
         text = value.get('text', [])
         return statistics.mean(text_score(e, text[i] if i < len(text) else '') for i, e in enumerate(expected['text'])) if len(text) <= expected['pages'] else 0.0
     if task == 'inspect':

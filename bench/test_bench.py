@@ -146,6 +146,15 @@ class ScoringTests(unittest.TestCase):
         del result['result']['metadata']
         self.assertEqual(0, score('inspect', {'expected': {'expectError': True}}, result, None, None))
 
+    def test_ocr_extraction_statuses(self):
+        case = {'ocrOnly': True, 'expected': {'pages': 1, 'text': ['OCR ground truth']}}
+        for status in ['ok', 'error', 'protocolError', 'unsupported']:
+            with self.subTest(status=status):
+                self.assertIsNone(score('extractText', case, {'status': status, 'result': {'text': ['']}}, None, None))
+        for status in ['crash', 'timeout']:
+            with self.subTest(status=status):
+                self.assertEqual(0, score('extractText', case, {'status': status}, None, None))
+
     def test_render(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory) / 'render.png'
