@@ -522,7 +522,14 @@ fn parse_action() -> Result<Action> {
             "--request-file",
             "--dry-run",
         ],
-        "serve" => &["--root", "--qpdf", "--qpdf-exact", "--pdfium-lib", "--port", "--token-file"],
+        "serve" => &[
+            "--root",
+            "--qpdf",
+            "--qpdf-exact",
+            "--pdfium-lib",
+            "--port",
+            "--token-file",
+        ],
         "mcp" => &["--root", "--qpdf", "--qpdf-exact", "--pdfium-lib"],
         "operations" | "schema" => &[],
         _ => return Err(Error("UNSUPPORTED_OPERATION")),
@@ -566,7 +573,11 @@ fn id(command: &str) -> &'static str {
     }
 }
 
-fn configured_registry(executable: PathBuf, exact: bool, library: Option<PathBuf>) -> Result<BackendRegistry> {
+fn configured_registry(
+    executable: PathBuf,
+    exact: bool,
+    library: Option<PathBuf>,
+) -> Result<BackendRegistry> {
     let registry = BackendRegistry::with_qpdf_exact(executable, exact);
     #[cfg(feature = "pdfium")]
     {
