@@ -1835,7 +1835,8 @@
                   "BACKEND_UNAVAILABLE",
                   "INTERNAL",
                   "UNAUTHENTICATED",
-                  "PRESERVATION_UNMET"
+                  "PRESERVATION_UNMET",
+                  "SIZE_TARGET_UNMET"
                 ]
               },
               "message": {
