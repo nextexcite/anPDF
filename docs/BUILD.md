@@ -119,6 +119,53 @@ The smoke test uses numeric non-root UID `65532`, read-only rootfs, `--network=n
 `no-new-privileges`, dropped capabilities, bounded tmpfs and resource limits, with separate
 read-only input and writable temporary output mounts.
 
+## Build caches and release provenance
+
+`ci.yml` and `oci.yml` use SHA-pinned `actions/cache` for Cargo's public registry
+index, archives and sources, and separate Rust `target` caches for native CI,
+PDFium CI, structural-only CI and native release builds. Registry keys include
+OS, architecture, `Cargo.lock` and `rust-toolchain.toml`; target keys additionally
+include source inputs, with fallback restricted to the same dependency/toolchain
+and feature lane. Cargo still runs with `--locked`; build, test and smoke steps
+are not skipped on cache hits. Rustup toolchain installation still runs normally.
+
+Pinned qpdf, PDFium, test-font, Gitleaks and Syft/Grype downloads use exact keys
+containing the downloader script hash (including its version/checksum pins), plus
+OS/architecture for binaries. There are no broad fallback keys for these tools.
+On a miss the existing checksum-verifying downloader runs; on a hit its extracted
+files are reused, not freshly downloaded/reverified. qpdf and PDFium path files
+are always regenerated from the downloader's canonical
+path output (`--path-only` on cache hits, validating executable/library presence),
+not reconstructed from the shell's working directory. Forge's cached archive is
+rechecked against `forge-pin.json` by `generate.py` every time. Native release
+jobs also cache only the `cargo-auditable` executable, keyed by its explicit
+version and toolchain; Node qualification uses setup-node's locked npm cache.
+The Grype vulnerability database and scan/SBOM results are **not** cached.
+
+OCI builds may **read and write GitHub Actions BuildKit layer caches**, including
+intermediate build stages (`mode=max`), scoped separately as `oci-amd64` and
+`oci-arm64`. The CI amd64 smoke build seeds `oci-amd64` on the default branch;
+release local builds read/write the corresponding architecture scope, and the
+subsequent OCI export and digest push read it. GitHub's ref-based cache access
+rules still apply: PR caches cannot overwrite default-branch caches; tag-scoped
+caches generally help reruns of that tag, not later tags. In particular, arm64
+and native-release-only caches may start cold on a new tag. Missing caches cause
+normal builds/downloads; layer-cache export errors do not fail an otherwise
+verified build.
+
+Caches are trusted build inputs and acceleration only, **not evidence of a clean,
+cache-free rebuild** or fresh verification of every upstream download. Pinned
+base images, Debian snapshot and source/download checksums remain unchanged;
+checksum checks still run on fetched inputs. SBOM generation, fresh vulnerability
+scanning, `oci-audit.py`, license gates and restricted runtime smokes still run
+for releases, including the published-digest smoke. Minimal BuildKit provenance
+must be interpreted with this cache-use policy. Cache paths exclude Cargo
+credentials, registry-login configuration, tokens and other secrets; checkouts
+retain `persist-credentials: false`. No secret-bearing build arguments or layers
+may be introduced. To require a cache-free release, separately review disabling
+cache restores/imports and requesting a no-cache build; these workflows do not
+claim that property.
+
 ## Release checklist
 
 For **v0.3.0**, release preparation must not push tags, dispatch publication workflows,
@@ -163,13 +210,15 @@ Poppler and upstream qpdf binary archives are test tools, not runtime image depe
 OpenAPI validation and optional signed/CJK fixtures can use pinned Python packages from
 `build/test-requirements.txt`.
 
-Current action releases were checked through each official upstream latest release
-and tag API on 2026-11-19. Full tag-object commit SHAs are pinned with version comments:
+Existing action releases were checked through each official upstream latest release
+and tag API on 2026-11-19; the added cache action was verified against its upstream
+tag ref with `git ls-remote`. Full commit SHAs are pinned with version comments:
 
 | Action | Verified release |
 |---|---|
 | [actions/checkout](https://github.com/actions/checkout/releases/tag/v7.0.1) | v7.0.1 |
 | [actions/setup-node](https://github.com/actions/setup-node/releases/tag/v7.1.0) | v7.1.0 |
+| [actions/cache](https://github.com/actions/cache/releases/tag/v5.1.0) | v5.1.0 (tag SHA verified with `git ls-remote`) |
 | [actions/upload-artifact](https://github.com/actions/upload-artifact/releases/tag/v7.0.2) | v7.0.2 |
 | [actions/download-artifact](https://github.com/actions/download-artifact/releases/tag/v8.0.2) | v8.0.2 |
 | [docker/setup-buildx-action](https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1) | v4.4.1 |

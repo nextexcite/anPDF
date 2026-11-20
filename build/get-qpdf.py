@@ -4,6 +4,11 @@ system={'Linux':'linux','Darwin':'macos'}[platform.system()]
 arch={'x86_64':'x86_64','arm64':'arm64','aarch64':'aarch64'}[platform.machine()]
 if system=='macos' and arch=='aarch64':arch='arm64'
 root=pathlib.Path(sys.argv[1]).resolve();root.mkdir(parents=True,exist_ok=True)
+binary=root/'bin/qpdf'
+if sys.argv[2:]:
+ assert sys.argv[2:]==['--path-only'],'unsupported downloader arguments'
+ assert binary.is_file() and os.access(binary,os.X_OK),'missing executable qpdf'
+ print(binary);sys.exit(0)
 name=f'qpdf-12.4.2-bin-{system}-{arch}.zip';base='https://github.com/qpdf/qpdf/releases/download/v12.4.2/'
 checks=urllib.request.urlopen(base+'qpdf-12.4.2.sha256',timeout=60).read().decode();data=urllib.request.urlopen(base+name,timeout=120).read();digest=hashlib.sha256(data).hexdigest()
 assert any(len(parts)==2 and parts[1].lstrip('*')==name and parts[0]==digest for parts in (line.split() for line in checks.splitlines())),'qpdf checksum mismatch'
@@ -16,4 +21,4 @@ with zipfile.ZipFile(io.BytesIO(data)) as archive:
   if stat.S_ISLNK(info.external_attr>>16):
    target=content.decode();assert '/' not in target;path.symlink_to(target)
   else:path.write_bytes(content);path.chmod((info.external_attr>>16)&0o777)
-print(root/'bin/qpdf')
+print(binary)

@@ -11,11 +11,15 @@ system={'Linux':'linux','Darwin':'mac'}[platform.system()]
 arch={'x86_64':'x64','aarch64':'arm64','arm64':'arm64'}[platform.machine()]
 target=f'{system}-{arch}'
 root=pathlib.Path(sys.argv[1]).resolve();root.mkdir(parents=True,exist_ok=True)
+library=root/'lib'/('libpdfium.dylib' if system=='mac' else 'libpdfium.so')
+if sys.argv[2:]:
+ assert sys.argv[2:]==['--path-only'],'unsupported downloader arguments'
+ assert library.is_file(),'missing dynamic PDFium library'
+ print(library);sys.exit(0)
 url=f'https://github.com/bblanchon/pdfium-binaries/releases/download/{VERSION.replace("/","%2F")}/pdfium-{target}.tgz'
 data=urllib.request.urlopen(url,timeout=120).read()
 assert hashlib.sha256(data).hexdigest()==PINS[target],'PDFium checksum mismatch'
 with tarfile.open(fileobj=io.BytesIO(data),mode='r:gz') as archive:
  archive.extractall(root,filter='data')
-library=root/'lib'/('libpdfium.dylib' if system=='mac' else 'libpdfium.so')
 assert library.is_file(),'missing dynamic PDFium library'
 print(library)
