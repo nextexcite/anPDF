@@ -3,8 +3,9 @@ require "json"
 class Anpdf < Formula
   desc "Local, contract-validated, agent-native PDF toolkit"
   homepage "https://github.com/nextexcite/anPDF"
-  url "https://github.com/nextexcite/anPDF/releases/download/v0.2.0/anpdf-0.2.0-macos-arm64.tar.gz"
-  sha256 "dea2f2ff3be53902c5d1ad10843b44fdce9ea385a5bc98185fb09b122492a537"
+  url "https://github.com/nextexcite/anPDF/releases/download/v0.3.0/anpdf-0.3.0-macos-arm64.tar.gz"
+  # Updated from SHA256SUMS-macos-arm64.txt once the v0.3.0 release assets are published.
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "Apache-2.0"
 
   depends_on arch: :arm64

@@ -2183,7 +2183,7 @@
       }
     }
   },
-  "x-anpdf-status": "development 0.2.0 contract; qpdf 12.x >=12.4.2 required; only 12.4.2 qualified; strict mode requires exact",
+  "x-anpdf-status": "development 0.3.0 contract; qpdf 12.x >=12.4.2 required; only 12.4.2 qualified; strict mode requires exact; PDFium is the default text/render engine",
   "security": [
     {
       "localBearer": []

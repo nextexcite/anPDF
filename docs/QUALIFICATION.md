@@ -1,5 +1,34 @@
 # Preliminary qualification evidence
 
+## 0.3.0 release preparation
+
+The current baseline adds a capability registry, PDFium as the default embedded-text
+and PNG engine, qpdf per-artifact preservation reporting, and the synthetic benchmark
+corpus/harness. PDFOxide remains a separate preview tag. This is release preparation,
+not evidence that v0.3.0 has been published or production-qualified.
+
+PR #8's final pre-retarget CI at `0d55915` reported nine passing checks: native
+Ubuntu/macOS, Ubuntu without default features, bundled PDFium Ubuntu/macOS,
+restricted linux/amd64 OCI smoke, Forge output, privacy and review. This does not
+establish a v0.3.0 macOS package, linux/arm64 PDFium image, or current vulnerability
+scan result; tag-time artifact audits remain required. The native license inventory
+now contains 155 components. Benchmark results are comparative development evidence,
+not preservation, visual, security or production guarantees.
+
+Local 0.3.0 rehearsal on Linux amd64 passed default and structural-only format,
+Clippy, unit tests (22+3 and 17+3), builds and cross-surface suites (85 and 75
+cases). An auditable release binary and Linux-equivalent flat tarball passed
+discovery, completions, merge, compression and bundled PDFium text/600x400 PNG
+smokes without a library override. The actual amd64 OCI image passed restricted
+merge/text/render smokes and the pinned Syft/Grype audit: 233 packages, 81 Debian
+packages, 150 Rust crates, no uninventoried crates or disallowed licenses, and no
+fixable High/Critical matches under the current policy. Grype still reported 76
+High-severity matches; a passing policy gate is not a vulnerability-free claim.
+No tag, image or release asset was published by this rehearsal. macOS packaging
+and linux/arm64 execution were not repeated locally for 0.3.0.
+
+## Historical 0.2.0 evidence
+
 Observed locally and on hosted GitHub Actions runners (`ubuntu-26.04` amd64,
 `ubuntu-26.04-arm` arm64 for release OCI, and `macos-26` arm64). These checks establish a
 development `0.2.0` vertical slice and multi-arch artifact publication; they do not establish
