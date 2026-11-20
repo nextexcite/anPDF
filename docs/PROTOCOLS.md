@@ -82,6 +82,38 @@ bounded workers and enforce raster/text limits before allocating or emitting
 large results. The gateway validates the result schema and bounds, and checks
 the PNG signature and dimensions before atomically publishing the artifact.
 
+#### Experimental PDFOxide build
+
+`cargo build --locked --features pdfoxide` registers `pdfoxide` for both
+operations on CLI, HTTP, and MCP. qpdf 12.4.2 is still required for structural
+preflight. For comparison runs, set `"engine":"pdfoxide"` explicitly rather
+than relying on provider order:
+
+```sh
+target/debug/anpdf extract-text --root ./docs --request-json '{"input":{"path":"sample.pdf"},"pages":[1],"engine":"pdfoxide"}'
+target/debug/anpdf render-page --root ./docs --request-json '{"input":{"path":"sample.pdf"},"page":1,"dpi":144,"output":{"path":"page.png"},"engine":"pdfoxide"}'
+```
+
+The adapter uses `pdf_oxide` 0.3.78's embedded text and native PNG renderer in
+a short-lived subprocess. It does not enable OCR. Missing embedded fonts may
+use system fonts, so control the font environment when comparing pixels across
+machines. With `extractText`, filled form text-field values can appear in
+`text` but are not included in `spans`, so callers cannot locate those values
+from the extraction result. For pages with a non-default PDF `/UserUnit`,
+`renderPage` returns `UNSUPPORTED_OPERATION` rather than an image at the
+wrong DPI.
+The feature build is for evaluation, not the default distribution.
+Run the existing cross-surface fixture suite with `ANPDF_EXPECT_PDFOXIDE=1`
+and `ANPDF_QPDF` pointing at the pinned qpdf.
+
+A separate experimental artifact can be built with
+`cargo build --locked --release --features pdfoxide`; the standard release
+workflow does not enable this feature. The Rust dependency and bundled font
+notices are indexed in `license-manifest.json`; verify them with
+`python3 build/licenses.py --check --features pdfoxide`. See
+[PDFOxide preview releases](BUILD.md#pdfoxide-preview-releases) for packaging
+and release checks.
+
 MCP is newline-delimited JSON-RPC 2.0 on stdio, negotiating version 2025-11-25.
 Send each line and await its response; initialization notification has no response:
 

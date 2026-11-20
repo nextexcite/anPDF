@@ -41,7 +41,7 @@ const MAX_JSON_OBJECTS: usize = 200_000;
 const MAX_WALK_NODES: usize = 2_000_000;
 
 #[cfg(target_os = "macos")]
-fn child_rss_exceeded(pid: i32) -> bool {
+pub(crate) fn child_rss_exceeded(pid: i32) -> bool {
     let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
     let rc = unsafe {
@@ -57,7 +57,7 @@ fn child_rss_exceeded(pid: i32) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn child_rss_exceeded(_pid: i32) -> bool {
+pub(crate) fn child_rss_exceeded(_pid: i32) -> bool {
     false
 }
 
@@ -131,6 +131,33 @@ pub struct Qpdf {
     pub executable: PathBuf,
     pub exact: bool,
 }
+
+pub(crate) fn limit_worker(cmd: &mut Command, file_limit: libc::rlim_t) {
+    unsafe {
+        cmd.pre_exec(move || {
+            if libc::setsid() < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            for (res, max) in [
+                (libc::RLIMIT_CPU, 60),
+                (libc::RLIMIT_FSIZE, file_limit),
+                (libc::RLIMIT_NOFILE, 64),
+                #[cfg(not(target_os = "macos"))]
+                (libc::RLIMIT_AS, 768 * 1024 * 1024),
+            ] {
+                let r = libc::rlimit {
+                    rlim_cur: max,
+                    rlim_max: max,
+                };
+                if libc::setrlimit(res, &r) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+}
+
 fn bounded(mut r: impl Read, max: usize, overflow: Arc<AtomicBool>) -> Vec<u8> {
     let mut out = Vec::new();
     let mut b = [0; 8192];
@@ -159,29 +186,7 @@ impl Qpdf {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        unsafe {
-            cmd.pre_exec(|| {
-                if libc::setsid() < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                for (res, max) in [
-                    (libc::RLIMIT_CPU, 60),
-                    (libc::RLIMIT_FSIZE, 250 * 1024 * 1024),
-                    (libc::RLIMIT_NOFILE, 64),
-                    #[cfg(not(target_os = "macos"))]
-                    (libc::RLIMIT_AS, 768 * 1024 * 1024),
-                ] {
-                    let r = libc::rlimit {
-                        rlim_cur: max,
-                        rlim_max: max,
-                    };
-                    if libc::setrlimit(res, &r) != 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                }
-                Ok(())
-            });
-        }
+        limit_worker(&mut cmd, 250 * 1024 * 1024);
         let mut child = cmd.spawn().map_err(|_| Error("BACKEND_UNAVAILABLE"))?;
         let pid = child.id() as i32;
         let overflow = Arc::new(AtomicBool::new(false));

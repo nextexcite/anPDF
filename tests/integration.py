@@ -1,11 +1,12 @@
 """Real qpdf cross-surface qualification. Requires built anpdf, qpdf 12.4.2, Poppler."""
-import hashlib,importlib.util,json,os,pathlib,shutil,socket,subprocess,tempfile,time,urllib.request,urllib.error,zlib
+import hashlib,importlib.util,json,os,pathlib,shutil,socket,subprocess,sys,tempfile,time,urllib.request,urllib.error,zlib
 from pypdf import PdfWriter
 from pypdf.annotations import Text, Link
 from pypdf.generic import DecodedStreamObject, NameObject
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BIN=pathlib.Path(os.environ.get('ANPDF_BINARY',ROOT/'target/debug/anpdf')).resolve()
 QPDF=pathlib.Path(os.environ.get('ANPDF_QPDF') or shutil.which('qpdf') or '/usr/bin/qpdf').resolve()
+PDFOXIDE=os.environ.get('ANPDF_EXPECT_PDFOXIDE')=='1'
 spec=importlib.util.spec_from_file_location('fixtures',ROOT/'fixtures/generate.py');gen=importlib.util.module_from_spec(spec);spec.loader.exec_module(gen)
 
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -26,6 +27,42 @@ def build_pdf(objs):
     xref=len(res);res.extend(f'xref\n0 {len(objs)+1}\n0000000000 65535 f \n'.encode())
     for o in offs[1:]:res.extend(f'{o:010d} 00000 n \n'.encode())
     res.extend(f'trailer\n<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode());return bytes(res)
+
+def render_fixture(annotations=False, oversized=False, paint=True, page_entries=b''):
+    box=b'/MediaBox [0 0 9000 100]' if oversized else b'/MediaBox [0 0 300 200] /CropBox [20 30 170 110] /Rotate 90'
+    annots=b' /Annots [5 0 R]' if annotations else b''
+    content=b'1 0 0 rg 40 40 50 30 re f' if paint else b''
+    objs=[
+        b'<< /Type /Catalog /Pages 2 0 R >>',
+        b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+        b'<< /Type /Page /Parent 2 0 R '+box+annots+page_entries+b' /Resources << >> /Contents 4 0 R >>',
+        b'<< /Length '+str(len(content)).encode()+b' >>\nstream\n'+content+b'\nendstream',
+    ]
+    if annotations:
+        appearance=b'0 0 1 rg 0 0 45 45 re f'
+        objs.extend([
+            b'<< /Type /Annot /Subtype /Square /Rect [90 50 135 95] /F 4 /AP << /N 6 0 R >> >>',
+            b'<< /Type /XObject /Subtype /Form /BBox [0 0 45 45] /Resources << >> /Length '
+            +str(len(appearance)).encode()+b' >>\nstream\n'+appearance+b'\nendstream',
+        ])
+    return build_pdf(objs)
+
+def check_license_regeneration(root):
+    root.mkdir()
+    for name in ('build/licenses.py','build/get-pdfium.py','build.rs','Cargo.toml','Cargo.lock','src/main.rs','src/lib.rs'):
+        dest=root/name;dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/name,dest)
+    shutil.copytree(ROOT/'THIRD_PARTY_LICENSES',root/'THIRD_PARTY_LICENSES')
+    pdfium=ROOT/'build/work/pdfium'
+    if pdfium.is_dir():
+        target=root/'build/work/pdfium';shutil.copytree(pdfium/'licenses',target/'licenses')
+        for name in ('LICENSE','VERSION'):shutil.copyfile(pdfium/name,target/name)
+    else:
+        subprocess.run([sys.executable,str(root/'build/get-pdfium.py'),str(root/'build/work/pdfium')],check=True)
+    command=[sys.executable,str(root/'build/licenses.py')]
+    subprocess.run(command,check=True)
+    subprocess.run([*command,'--check'],check=True)
+    subprocess.run([*command,'--check','--features','pdfoxide'],check=True)
+    assert (root/'license-manifest.json').read_bytes()==(ROOT/'license-manifest.json').read_bytes()
 
 def rich_pdf(path,title):
     w=PdfWriter()
@@ -53,6 +90,7 @@ def qpdf_features(path):
 def run():
  with tempfile.TemporaryDirectory(prefix='anpdf-tests-') as t:
     base=pathlib.Path(t);roots={s:base/s for s in ['cli','http','mcp']}
+    if PDFOXIDE:check_license_regeneration(base/'license-inventory')
     geometry_objects=[b'<< /Type /Catalog /Pages 2 0 R >>',b'<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>']
     for box,rotation,x,y in [('[500 600 800 800]',0,540,720),('[0 0 300 200]',90,240,120),('[0 0 300 200]',270,240,120)]:
         stream=f'BT /F1 12 Tf {x} {y} Td (PAGE-A) Tj ET'.encode();number=len(geometry_objects)+1
@@ -78,6 +116,14 @@ def run():
     ])
     for root in roots.values():
         gen.generate(root)
+        if PDFOXIDE:
+            (root/'crop.pdf').write_bytes(render_fixture())
+            (root/'annotation.pdf').write_bytes(render_fixture(annotations=True))
+            (root/'oxide-blank.pdf').write_bytes(render_fixture(paint=False))
+            (root/'oversized.pdf').write_bytes(render_fixture(oversized=True))
+            (root/'custom-unit.pdf').write_bytes(render_fixture(page_entries=b' /UserUnit 2.5'))
+            (root/'default-unit.pdf').write_bytes(render_fixture(page_entries=b' /UserUnit 1'))
+            (root/'null-unit.pdf').write_bytes(render_fixture(page_entries=b' /UserUnit null'))
         rich_pdf(root/'primary.pdf','Primary');rich_pdf(root/'secondary.pdf','Secondary')
         large=PdfWriter();large.add_blank_page(width=300,height=200)
         large.add_attachment('large.txt',b'x'*(33*1024*1024))
@@ -131,9 +177,13 @@ def run():
         assert {t['name'] for t in tools}=={o['operationId'] for o in discovery['operations']}
         for tool in tools:
             op=next(o for o in discovery['operations'] if o['operationId']==tool['name']);assert tool['inputSchema']==op['inputSchema'];assert tool['outputSchema']==op['outputSchema']
-        pdfium=any(o['operationId']=='extractText' and o['engines']==['pdfium'] for o in discovery['operations'])
+        pdfium=any(o['operationId']=='extractText' and 'pdfium' in o['engines'] for o in discovery['operations'])
+        engines=(['pdfium'] if pdfium else [])+(['pdfoxide'] if PDFOXIDE else [])
+        preferred=next(iter(engines),None)
         for name,read_only in [('extractText',True),('renderPage',False)]:
-            op=next(o for o in discovery['operations'] if o['operationId']==name);assert op['engines']==(['pdfium'] if pdfium else [])
+            op=next(o for o in discovery['operations'] if o['operationId']==name)
+            assert op['engines']==engines
+            assert op['status'].startswith('implemented' if engines else 'unavailable')
             tool=next(t for t in tools if t['name']==name);assert tool['annotations']['readOnlyHint']==read_only
         cli=json.loads(subprocess.check_output([str(BIN),'operations']));assert cli==discovery
         assert http(port,'invalid','/v1/operations')[0]==401
@@ -141,10 +191,10 @@ def run():
         assert http(port,token,'/v1/operations',extra={'Host':'example.invalid'})[0]==403
         assert http(port,token,'/v1/openapi.json')[1]==json.loads((ROOT/'contracts/v1/openapi.json').read_text())
         corpus=[
-          ('extract-text',{'input':{'path':'three.pdf'},'pages':[1,3]},None if pdfium else 'BACKEND_UNAVAILABLE'),
+          ('extract-text',{'input':{'path':'three.pdf'},'pages':[1,3]},None if engines else 'BACKEND_UNAVAILABLE'),
           ('extract-text',{'input':{'path':'three.pdf'},'pages':[2,1]},'INVALID_REQUEST'),
           ('extract-text',{'input':{'path':'three.pdf'},'pages':[1],'engine':'../engine'},'INVALID_REQUEST'),
-          ('render-page',{'input':{'path':'three.pdf'},'page':1,'output':{'path':'page.png'}},None if pdfium else 'BACKEND_UNAVAILABLE'),
+          ('render-page',{'input':{'path':'three.pdf'},'page':1,'output':{'path':'page.png'}},None if engines else 'BACKEND_UNAVAILABLE'),
           ('render-page',{'input':{'path':'three.pdf'},'page':0,'output':{'path':'page.png'}},'INVALID_REQUEST'),
           ('render-page',{'input':{'path':'three.pdf'},'page':1,'dpi':301,'output':{'path':'page.png'}},'INVALID_REQUEST'),
           ('inspect',{'input':{'path':'three.pdf'}},None),
@@ -203,6 +253,24 @@ def run():
           ('extract',{'input':{'path':'xfa.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'FORM_UNSUPPORTED'),
           ('extract',{'input':{'path':'signature-marker.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED'),
         ]
+        if PDFOXIDE:
+            oxide_cases=[
+                ('extract-text',{'input':{'path':'mixed.pdf'},'pages':[2],'engine':'pdfoxide'},None),
+                ('extract-text',{'input':{'path':'oxide-blank.pdf'},'pages':[1]},None),
+                ('extract-text',{'input':{'path':'encrypted.pdf'},'pages':[1]},'ENCRYPTED_UNSUPPORTED'),
+                ('extract-text',{'input':{'path':'truncated.pdf'},'pages':[1]},'INVALID_PDF'),
+                ('extract-text',{'input':{'path':'missing.pdf'},'pages':[1],'engine':'not-installed'},'BACKEND_UNAVAILABLE'),
+                ('render-page',{'input':{'path':'oversized.pdf'},'page':1,'dpi':72,'output':{'path':'oversized.png'}},'LIMIT_EXCEEDED'),
+                ('render-page',{'input':{'path':'crop.pdf'},'page':1,'dpi':72,'engine':'pdfoxide','output':{'path':'crop.png'}},None),
+                ('render-page',{'input':{'path':'custom-unit.pdf'},'page':1,'dpi':72,'output':{'path':'custom-unit.png'}},'UNSUPPORTED_OPERATION'),
+                ('render-page',{'input':{'path':'default-unit.pdf'},'page':1,'dpi':72,'output':{'path':'default-unit.png'}},None),
+                ('render-page',{'input':{'path':'null-unit.pdf'},'page':1,'dpi':72,'output':{'path':'null-unit.png'}},None),
+                ('render-page',{'input':{'path':'annotation.pdf'},'page':1,'dpi':72,'output':{'path':'oxide-annotation.png'}},None),
+                ('render-page',{'input':{'path':'oxide-blank.pdf'},'page':1,'dpi':72,'output':{'path':'blank.png'}},None),
+                ('render-page',{'input':{'path':'crop.pdf'},'page':1,'dpi':72,'output':{'path':'crop.png'}},'OUTPUT_EXISTS'),
+            ]
+            for _,request,_ in oxide_cases:request.setdefault('engine','pdfoxide')
+            corpus.extend(oxide_cases)
         if os.environ.get('ANPDF_EDGE_FIXTURES'):
             corpus.extend([
               ('inspect',{'input':{'path':'chinese.pdf'}},None),
@@ -256,9 +324,30 @@ def run():
             assert a==b==c,(n,'surface mismatch',a,b,c)
             if error:assert a['error']['code']==error,(n,a)
             else:assert status==200
+            if not error and command in ('extract-text','render-page'):
+                assert a['result']['engine']==request.get('engine',preferred)
+            if not error and command=='extract-text' and a['result']['engine']=='pdfoxide':
+                expected={'three.pdf':['PAGE-A','PAGE-C'],'mixed.pdf':['ROTATE-B'],'oxide-blank.pdf':['']}[request['input']['path']]
+                pages=a['result']['pages'];assert [p['page'] for p in pages]==request['pages']
+                for page,label in zip(pages,expected):
+                    assert page['text'].strip()==label,(label,page)
+                    if not label:
+                        assert page['spans']==[]
+                    else:
+                        spans=page['spans'];assert ''.join(s['text'] for s in spans)==label,(label,spans)
+                        bounds=spans[0]['bounds'];assert 39 <= bounds['left'] <= 41 and 100 <= bounds['bottom'] <= 125,bounds
+            if not error and command=='render-page' and a['result']['engine']=='pdfoxide':
+                result=a['result'];name=request['output']['path']
+                assert result['engine']=='pdfoxide' and result['mediaType']=='image/png'
+                assert (result['width'],result['height'])==((600,400) if name=='page.png' else (80,150))
+                assert result['dpi']==request.get('dpi',144)
+                for root in roots.values():
+                    png=root/name
+                    assert png.read_bytes()[:8]==b'\x89PNG\r\n\x1a\n'
+                    assert png.stat().st_size==result['bytes'] and digest(png)==result['sha256']
             if error=='BACKEND_UNAVAILABLE':assert status==503 and cli.returncode==8
             if not error and 'output' in request:responses[request['output']['path']]=a
-            if not error and command=='extract-text':
+            if not error and command=='extract-text' and a['result']['engine']=='pdfium':
                 pages=a['result']['pages'];assert [p['page'] for p in pages]==request['pages']
                 if request['input']['path']=='blank.pdf':assert pages[0]['text']=='' and pages[0]['spans']==[]
                 else:
@@ -270,18 +359,25 @@ def run():
                         for span in p['spans']:
                             b=span['bounds'];offset=500 if request['input']['path']=='text-geometry.pdf' and p['page']==1 else 0
                             assert offset<=b['left']<b['right']<=offset+360 and 0<=b['bottom']<b['top']<=(800 if offset else 200)
-            if not error and command=='render-page':
+            if not error and command=='render-page' and a['result']['engine']=='pdfium':
                 expected=(300,200) if request.get('dpi')==72 else (600,400)
                 for root in roots.values():
                     data=(root/request['output']['path']).read_bytes();assert data[:8]==b'\x89PNG\r\n\x1a\n'
                     assert (int.from_bytes(data[16:20],'big'),int.from_bytes(data[20:24],'big'))==expected
             for surface,root in roots.items():
                 for name,h in originals[surface].items():assert digest(root/name)==h,(n,'input changed',name)
-        assert all((root/'page.png').exists()==pdfium for root in roots.values())
+        for root in roots.values():
+            assert (root/'page.png').exists()==bool(engines)
+            if PDFOXIDE:
+                assert not (root/'oversized.png').exists()
+                assert not (root/'custom-unit.png').exists()
+                assert digest(root/'default-unit.png')==digest(root/'crop.png')
+                assert digest(root/'null-unit.png')==digest(root/'crop.png')
+                assert digest(root/'crop.png')==digest(root/'oxide-annotation.png')!=digest(root/'blank.png')
         assert all(not (root/name).exists() for root in roots.values() for name in ['missing.png','huge.png'])
         if pdfium:
             for root in roots.values():assert (root/'annotation.png').read_bytes()==(root/'blank-render.png').read_bytes()
-            req=json.dumps({'input':{'path':'three.pdf'},'pages':[1]})
+            req=json.dumps({'input':{'path':'three.pdf'},'pages':[1],'engine':'pdfium'})
             r=subprocess.run([str(BIN),'extract-text','--root',str(roots['cli']),'--pdfium-lib',str(base/'missing-library'),'--request-json',req],capture_output=True,text=True)
             assert r.returncode==8 and json.loads(r.stderr)['error']['code']=='BACKEND_UNAVAILABLE' and not r.stdout
             for command in ['operations','completions']:

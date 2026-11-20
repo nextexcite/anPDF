@@ -9,6 +9,8 @@ pub mod http;
 pub mod mcp;
 #[cfg(feature = "pdfium")]
 pub mod pdfium;
+#[cfg(feature = "pdfoxide")]
+pub mod pdfoxide;
 mod planner;
 use backend::{Backend, CompressMode, Control};
 use error::{Error, Result};

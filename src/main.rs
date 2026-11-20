@@ -615,7 +615,7 @@ fn configured_registry(
 ) -> Result<BackendRegistry> {
     let registry = BackendRegistry::with_qpdf_exact(executable, exact);
     #[cfg(feature = "pdfium")]
-    {
+    let registry = {
         let mut registry = registry;
         if let Some(library) = library {
             let worker_executable =
@@ -631,19 +631,28 @@ fn configured_registry(
                 .register_renderer("pdfium", provider)
                 .expect("unique engine");
         }
-        Ok(registry)
-    }
+        registry
+    };
     #[cfg(not(feature = "pdfium"))]
-    {
-        let _ = library;
-        Ok(registry)
-    }
+    let _ = library;
+    #[cfg(feature = "pdfoxide")]
+    let registry = {
+        let mut registry = registry;
+        let executable = std::env::current_exe().map_err(|_| Error("BACKEND_UNAVAILABLE"))?;
+        anpdf::pdfoxide::register(&mut registry, executable)?;
+        registry
+    };
+    Ok(registry)
 }
 
 fn main() {
     #[cfg(feature = "pdfium")]
-    if std::env::args().nth(1).as_deref() == Some("pdfium-worker") {
+    if std::env::args_os().nth(1).as_deref() == Some("pdfium-worker".as_ref()) {
         std::process::exit(anpdf::pdfium::worker());
+    }
+    #[cfg(feature = "pdfoxide")]
+    if std::env::args_os().nth(1).as_deref() == Some(anpdf::pdfoxide::WORKER_ARG.as_ref()) {
+        std::process::exit(anpdf::pdfoxide::worker(std::env::args_os().skip(2)));
     }
     async_main();
 }
@@ -668,7 +677,11 @@ async fn async_main() {
             }
             Action::Run(o) => {
                 if o.command == "operations" {
-                    return Ok(Some(contract::discovery_with(&configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib)?)));
+                    return Ok(Some(contract::discovery_with(&configured_registry(
+                        o.qpdf,
+                        o.qpdf_exact,
+                        o.pdfium_lib,
+                    )?)));
                 }
                 if o.command == "schema" {
                     return contract::operation(o.schema.as_deref().unwrap())
@@ -682,7 +695,10 @@ async fn async_main() {
                         })
                         .ok_or(Error("UNSUPPORTED_OPERATION"));
                 }
-                let d = Arc::new(Dispatcher::with_registry(&o.root, configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib)?)?);
+                let d = Arc::new(Dispatcher::with_registry(
+                    &o.root,
+                    configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib)?,
+                )?);
                 match o.command.as_str() {
                     "serve" => {
                         let file = o.token_file.ok_or(Error("INVALID_REQUEST"))?;

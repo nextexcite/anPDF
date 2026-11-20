@@ -3,7 +3,7 @@
 CI workflows run on `ubuntu-26.04` (Linux amd64) and `macos-26` (Apple Silicon arm64).
 Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on `ubuntu-26.04`
 (`linux/amd64`) and `ubuntu-26.04-arm` (`linux/arm64`). `.github/workflows/oci.yml` triggers on `v*`
-tag pushes and `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
+tag pushes except PDFOxide preview tags, and on `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
 tag alignment on tag pushes), so untrusted PRs never receive package or release write permissions.
 
 Current release preparation: **0.3.0**, not yet published. Its baseline includes the
@@ -51,6 +51,20 @@ Each release run of `.github/workflows/oci.yml` builds, scans, smoke-tests, and 
    `anpdf-<version>-macos-arm64.tar.gz` and `SHA256SUMS-macos-arm64.txt`, built with
    pinned Rust `1.100.0` and `cargo-auditable 0.7.7`, smoke-tested against pinned qpdf `12.4.2`,
    and attached to the `v<version>` GitHub release alongside the OCI SBOMs, scan reports, and digests.
+
+## PDFOxide preview releases
+
+After the preview workflow is merged, tag the intended commit on `main` as
+`v<Cargo.toml version>-pdfoxide-preview.<number>` (for example, `v0.2.0-pdfoxide-preview.1`)
+and push that tag. Only `.github/workflows/pdfoxide-preview.yml` publishes for these tags.
+The workflow builds Linux amd64 with `--features pdfoxide`, smoke-tests extraction and rendering
+under the same restricted runtime settings as the main build, and audits the image before publishing.
+
+The preview uses `ghcr.io/<owner>/anpdf-pdfoxide:<tag>` with no `latest` tag and creates
+a separate GitHub prerelease. It includes `anpdf-<tag>-linux-amd64.image.tar.gz`, an SPDX
+SBOM, a Grype report, a license/crate audit, and checksums. The image carries the feature
+dependency inventory and notices. No main image tags, native artifacts, or Homebrew
+formula are updated by the preview workflow.
 
 ## OCI recipe and local reproduction
 
