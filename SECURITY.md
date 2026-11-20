@@ -53,3 +53,11 @@ Do not place sensitive examples, keys, credentials, logs, account identifiers, o
 workstation paths in source, fixtures, commits or artifacts. Security issues should
 be retained locally for maintainers until an approved reporting destination exists;
 no fabricated contact address is provided.
+
+The full-history privacy gate permits only individually reviewed historical
+identity exceptions in `build/privacy-baseline.json`. Each entry requires review
+and binds a full commit SHA to the SHA-256 of its exact
+`git show -s --format='%an%n%ae%n%cn%n%ce'` output, including the final newline;
+names and addresses must not appear in the baseline. Invalid baselines fail the
+gate. Exceptions do not exempt blobs, remotes, or any other privacy checks, and
+do not generally permit web merges or particular address formats.
