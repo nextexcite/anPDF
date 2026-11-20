@@ -489,8 +489,8 @@ def run():
         r=sh(['split','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','sh-a.pdf=1','sh-b.pdf=2-3']);assert r.returncode==0 and len(json.loads(r.stdout)['result']['outputs'])==2,r.stderr
         r=sh(['remove-pages','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','2','-o','sh-trim.pdf']);assert r.returncode==0 and json.loads(r.stdout)['result']['pageCount']==2,r.stderr
         r=sh(['compress','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf']);assert r.returncode==0 and json.loads(r.stdout)['result']['path']=='three-compressed.pdf',r.stderr
-        r=sh(['extract-text','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','1']);assert (r.returncode==0)==bool(pdfium) and (r.returncode or json.loads(r.stderr)['error']['code']=='BACKEND_UNAVAILABLE'),r
-        r=sh(['render-page','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','1','-o','sh-page.png']);assert (r.returncode==0)==bool(pdfium) and (r.returncode or json.loads(r.stderr)['error']['code']=='BACKEND_UNAVAILABLE'),r
+        r=sh(['extract-text','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','1']);assert (r.returncode==0)==bool(pdfium) and (r.returncode==0 or json.loads(r.stderr)['error']['code']=='BACKEND_UNAVAILABLE'),r
+        r=sh(['render-page','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','1','-o','sh-page.png']);assert (r.returncode==0)==bool(pdfium) and (r.returncode==0 or json.loads(r.stderr)['error']['code']=='BACKEND_UNAVAILABLE'),r
         for args in [['inspect','a.pdf','b.pdf'],['inspect','one.pdf','--request-json','{}'],['compress','one.pdf','x.pdf','-o','y.pdf'],['compress','--mode','lossy'],['merge','one.pdf','three.pdf'],['extract','three.pdf','1','x.pdf','-o','y.pdf'],['serve'],['inspect','one.pdf','--engine','qpdf']]:
             r=sh(args);assert r.returncode and not r.stdout and json.loads(r.stderr)['error']['code']=='INVALID_REQUEST',(args,r.returncode,r.stderr)
         r=sh(['fill-forms']);assert r.returncode==6 and json.loads(r.stderr)['error']['code']=='UNSUPPORTED_OPERATION',r
