@@ -53,6 +53,11 @@ def qpdf_features(path):
 def run():
  with tempfile.TemporaryDirectory(prefix='anpdf-tests-') as t:
     base=pathlib.Path(t);roots={s:base/s for s in ['cli','http','mcp']}
+    geometry_objects=[b'<< /Type /Catalog /Pages 2 0 R >>',b'<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>']
+    for box,rotation,x,y in [('[500 600 800 800]',0,540,720),('[0 0 300 200]',90,240,120),('[0 0 300 200]',270,240,120)]:
+        stream=f'BT /F1 12 Tf {x} {y} Td (PAGE-A) Tj ET'.encode();number=len(geometry_objects)+1
+        geometry_objects.append(f'<< /Type /Page /Parent 2 0 R /MediaBox {box} /CropBox {box} /Rotate {rotation} /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Contents {number+1} 0 R >>'.encode())
+        geometry_objects.append(b'<< /Length '+str(len(stream)).encode()+b' >>\nstream\n'+stream+b'\nendstream')
     bomb_data=b' '*(40*1024*1024)
     for _ in range(3):bomb_data=zlib.compress(bomb_data,9)
     bomb_pdf=build_pdf([
@@ -77,6 +82,7 @@ def run():
         large=PdfWriter();large.add_blank_page(width=300,height=200)
         large.add_attachment('large.txt',b'x'*(33*1024*1024))
         with (root/'large-attachment.pdf').open('wb') as f:large.write(f)
+        (root/'text-geometry.pdf').write_bytes(build_pdf(geometry_objects))
         (root/'blank.pdf').write_bytes(gen.pdf(['']))
         (root/'huge.pdf').write_bytes(gen.pdf(['HUGE']).replace(b'300 200',b'9000 9000'))
         if os.environ.get('ANPDF_PDFIUM_LIB') and os.environ.get('ANPDF_TEST_FONT'):
@@ -213,6 +219,7 @@ def run():
         ])
         if pdfium:
             corpus.extend([
+              ('extract-text',{'input':{'path':'text-geometry.pdf'},'pages':[1,2,3]},None),
               ('extract-text',{'input':{'path':'blank.pdf'},'pages':[1],'engine':'pdfium'},None),
               ('extract-text',{'input':{'path':'three.pdf'},'pages':[4]},'INVALID_REQUEST'),
               ('render-page',{'input':{'path':'three.pdf'},'page':4,'output':{'path':'missing.png'}},'INVALID_REQUEST'),
@@ -247,8 +254,10 @@ def run():
                     assert expected in pages[0]['text'],pages
                     assert expected in ''.join(s['text'] for s in pages[0]['spans']),pages
                     for p in pages:
+                        assert all(s['text'] in p['text'] for s in p['spans']),p
                         for span in p['spans']:
-                            b=span['bounds'];assert 0<=b['left']<b['right']<=360 and 0<=b['bottom']<b['top']<=200
+                            b=span['bounds'];offset=500 if request['input']['path']=='text-geometry.pdf' and p['page']==1 else 0
+                            assert offset<=b['left']<b['right']<=offset+360 and 0<=b['bottom']<b['top']<=(800 if offset else 200)
             if not error and command=='render-page':
                 expected=(300,200) if request.get('dpi')==72 else (600,400)
                 for root in roots.values():

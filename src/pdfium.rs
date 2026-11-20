@@ -148,7 +148,7 @@ fn process(library: &Path, request: &Value) -> Result<Value> {
                     spans.push(span);
                 }
             }
-            let text = text.all();
+            let text: String = text.chars().iter().filter_map(|c| c.unicode_char()).collect();
             budget += text.len();
             if budget > MAX_TEXT_RESPONSE_BYTES / 2 {
                 return Err(Error("LIMIT_EXCEEDED"));
