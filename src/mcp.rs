@@ -23,9 +23,13 @@ fn protocol(output: &Mutex<std::io::Stdout>, id: Value, code: i32) {
 }
 pub fn tools() -> Value {
     json!({"tools":contract::operations().into_iter().map(|(_,op)|{
-    let id=op["operationId"].as_str().unwrap();json!({"name":id,"description":op["summary"],"inputSchema":contract::input(id),
+    let id=op["operationId"].as_str().unwrap();
+    let read_only = matches!(id, "inspectPdf" | "extractText");
+    let summary = op["summary"].as_str().unwrap();
+    let description = op["description"].as_str().map_or_else(|| summary.to_owned(), |details| format!("{summary}. {details}"));
+    json!({"name":id,"description":description,"inputSchema":contract::input(id),
     "outputSchema":contract::resolve(&op["responses"]["200"]["content"]["application/json"]["schema"]),
-    "annotations":{"readOnlyHint":id=="inspectPdf","destructiveHint":id!="inspectPdf","idempotentHint":id=="inspectPdf","openWorldHint":false}})
+    "annotations":{"readOnlyHint":read_only,"destructiveHint":!read_only,"idempotentHint":read_only,"openWorldHint":false}})
 }).collect::<Vec<_>>()})
 }
 pub fn serve(dispatcher: Arc<Dispatcher>) -> Result<()> {

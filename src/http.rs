@@ -66,7 +66,7 @@ async fn handle(State(state): State<App>, request: Request) -> Response {
     if request.method() == "GET" {
         return match path {
             "/v1/openapi.json" => response(contract::document().clone(), 200),
-            "/v1/operations" => response(contract::discovery(), 200),
+            "/v1/operations" => response(state.dispatcher.discovery(), 200),
             _ => fail("NOT_FOUND"),
         };
     }

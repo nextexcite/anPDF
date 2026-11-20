@@ -33,6 +33,8 @@ Versioning convention:
 
 All three surfaces use the same validated operation contract. The Rust runtime uses **qpdf 12.4.2** for PDF processing; pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Release builds publish multi-arch **`linux/amd64` + `linux/arm64` OCI images** (GHCR) and **`macos/arm64` native binaries** (GitHub Releases + Homebrew tap from this repository).
 
+The development contract also exposes [embedded text extraction and PNG rendering](docs/PROTOCOLS.md#optional-text-and-rendering-engines). These operations require optional engine providers; the qpdf-only build reports them as unavailable.
+
 Transforms currently **reject** encrypted, signed, form/XFA-bearing, or preservation-unknown PDFs. Inspection is structural—not visual, cryptographic, PDF/A, or malware certification.
 
 ## Basic usage

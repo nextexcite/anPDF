@@ -22,7 +22,7 @@ impl Error {
             "UNSUPPORTED_OPERATION" => "Operation is unsupported.",
             "LIMIT_EXCEEDED" => "A configured processing limit was exceeded.",
             "TIMEOUT" => "Processing was cancelled or exceeded its deadline.",
-            "BACKEND_UNAVAILABLE" => "The qualified qpdf 12.4.2 backend is unavailable.",
+            "BACKEND_UNAVAILABLE" => "No configured backend can complete this operation.",
             "UNAUTHENTICATED" => "Bearer authentication is required.",
             _ => "Processing failed internally.",
         }

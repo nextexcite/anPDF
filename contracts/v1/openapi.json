@@ -776,6 +776,264 @@
           }
         }
       }
+    },
+    "/v1/extract-text": {
+      "post": {
+        "operationId": "extractText",
+        "summary": "Extract embedded page text and bounding boxes",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractTextRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validated domain result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/extractTextSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No configured backend can satisfy the operation or the requested engine is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid HTTP bearer credential; transport-level failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires a configured text engine. Does not perform OCR or modify the PDF. The compact JSON success envelope may not exceed 8 MiB; reduce the page selection if it does."
+      }
+    },
+    "/v1/render-page": {
+      "post": {
+        "operationId": "renderPage",
+        "summary": "Render one PDF page to a PNG file",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenderPageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validated domain result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/renderPageSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No configured backend can satisfy the operation or the requested engine is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid HTTP bearer credential; transport-level failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Requires a configured rendering engine. Render the visible page (effective crop and rotation) on an opaque white background, without annotations. The output is limited to 16,777,216 pixels, 8192 pixels per side, and 64 MiB. The source PDF is not modified."
+      }
     }
   },
   "components": {
@@ -1498,6 +1756,293 @@
           "contractVersion",
           "operationId",
           "error"
+        ]
+      },
+      "ContentEngine": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 32,
+        "pattern": "^[a-z][a-z0-9-]*$",
+        "description": "Registered engine ID. When omitted, use the first configured engine for this capability. No fallback on errors."
+      },
+      "ExtractTextRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "pages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000
+            },
+            "uniqueItems": true,
+            "description": "Strictly increasing 1-based page numbers within source bounds."
+          },
+          "engine": {
+            "$ref": "#/components/schemas/ContentEngine"
+          }
+        },
+        "required": [
+          "input",
+          "pages"
+        ]
+      },
+      "TextBounds": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "left": {
+            "type": "number"
+          },
+          "bottom": {
+            "type": "number"
+          },
+          "right": {
+            "type": "number"
+          },
+          "top": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "left",
+          "bottom",
+          "right",
+          "top"
+        ],
+        "description": "Axis-aligned bounds in unrotated PDF default user space (x right, y up), without rebasing to the crop box. Left <= right and bottom <= top."
+      },
+      "TextSpan": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bounds": {
+            "$ref": "#/components/schemas/TextBounds"
+          }
+        },
+        "required": [
+          "text",
+          "bounds"
+        ]
+      },
+      "ExtractedPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000
+          },
+          "text": {
+            "type": "string",
+            "description": "Plain text in engine reading order. Empty if no embedded text is found."
+          },
+          "spans": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 20000,
+            "items": {
+              "$ref": "#/components/schemas/TextSpan"
+            },
+            "description": "Positioned text runs in engine reading order. The engine determines run segmentation and can insert whitespace into page text."
+          }
+        },
+        "required": [
+          "page",
+          "text",
+          "spans"
+        ]
+      },
+      "ExtractTextResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "engine": {
+            "$ref": "#/components/schemas/ContentEngine"
+          },
+          "pages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/ExtractedPage"
+            },
+            "description": "Exactly one result per requested page, in request order."
+          }
+        },
+        "required": [
+          "engine",
+          "pages"
+        ]
+      },
+      "RenderPageRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000,
+            "description": "1-based page number within source bounds."
+          },
+          "output": {
+            "$ref": "#/components/schemas/Output"
+          },
+          "dpi": {
+            "type": "integer",
+            "minimum": 36,
+            "maximum": 300,
+            "default": 144
+          },
+          "engine": {
+            "$ref": "#/components/schemas/ContentEngine"
+          }
+        },
+        "required": [
+          "input",
+          "page",
+          "output"
+        ]
+      },
+      "RenderPageResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "engine": {
+            "$ref": "#/components/schemas/ContentEngine"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Relative regular-file path inside a configured workspace root; URLs, traversal and symlink escape forbidden."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 67108864
+          },
+          "dpi": {
+            "type": "integer",
+            "minimum": 36,
+            "maximum": 300
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8192
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8192
+          },
+          "mediaType": {
+            "type": "string",
+            "enum": [
+              "image/png"
+            ]
+          }
+        },
+        "required": [
+          "engine",
+          "page",
+          "path",
+          "sha256",
+          "bytes",
+          "dpi",
+          "width",
+          "height",
+          "mediaType"
+        ]
+      },
+      "extractTextSuccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "1.0.0"
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "enum": [
+              "extractText"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/ExtractTextResult"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Warning"
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "operationId",
+          "result",
+          "warnings"
+        ]
+      },
+      "renderPageSuccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "1.0.0"
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "enum": [
+              "renderPage"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/RenderPageResult"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Warning"
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "operationId",
+          "result",
+          "warnings"
         ]
       }
     },

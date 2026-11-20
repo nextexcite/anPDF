@@ -1,14 +1,18 @@
 #[cfg(not(unix))]
 compile_error!("anPDF filesystem/resource policy currently requires Linux or macOS");
 pub mod backend;
+mod content;
 pub mod contract;
 pub mod error;
 pub mod filesystem;
 pub mod http;
 pub mod mcp;
-use backend::{Backend, CompressMode, Control, Qpdf};
+mod planner;
+use backend::{Backend, CompressMode, Control};
 use error::{Error, Result};
 use filesystem::{TOTAL_LIMIT, Workspace};
+pub use planner::BackendRegistry;
+use planner::Job;
 use serde_json::{Value, json};
 use std::{
     path::{Path, PathBuf},
@@ -20,7 +24,7 @@ use std::{
 
 pub struct Dispatcher {
     workspace: Workspace,
-    backend: Arc<dyn Backend>,
+    registry: BackendRegistry,
     active: AtomicUsize,
     shutdown: std::sync::atomic::AtomicBool,
     controls: std::sync::Mutex<Vec<std::sync::Weak<std::sync::atomic::AtomicBool>>>,
@@ -33,16 +37,22 @@ impl Drop for Permit<'_> {
 }
 impl Dispatcher {
     pub fn new(root: &Path, executable: PathBuf) -> Result<Self> {
-        Self::with_backend(root, Arc::new(Qpdf { executable }))
+        Self::with_registry(root, BackendRegistry::with_qpdf(executable))
     }
     pub fn with_backend(root: &Path, backend: Arc<dyn Backend>) -> Result<Self> {
+        Self::with_registry(root, BackendRegistry::with_structural(backend))
+    }
+    pub fn with_registry(root: &Path, registry: BackendRegistry) -> Result<Self> {
         Ok(Self {
             workspace: Workspace::new(root)?,
-            backend,
+            registry,
             active: AtomicUsize::new(0),
             shutdown: std::sync::atomic::AtomicBool::new(false),
             controls: std::sync::Mutex::new(Vec::new()),
         })
+    }
+    pub fn discovery(&self) -> Value {
+        contract::discovery_with(&self.registry)
     }
     pub fn cancel_all(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
@@ -91,6 +101,7 @@ impl Dispatcher {
             control.cancelled.store(true, Ordering::Relaxed);
         }
         control.check()?;
+        let plan = self.registry.plan(id, request)?;
         let specs = if id == "mergePdf" {
             request["inputs"].as_array().unwrap().clone()
         } else {
@@ -109,7 +120,7 @@ impl Dispatcher {
         } else {
             None
         };
-        let compress_opts = if id == "compressPdf" {
+        let compress_opts = if matches!(plan.job, Job::Compress) {
             let mode_str = request["mode"].as_str().unwrap_or("lossless");
             let jpeg_quality = request["jpegQuality"].as_u64();
             let mode = if mode_str == "lossless" {
@@ -142,7 +153,7 @@ impl Dispatcher {
             }
             parts = Some(parsed);
             None
-        } else if id != "inspectPdf" {
+        } else if plan.job.writes_output() {
             Some(
                 self.workspace.destination(
                     request["output"]["path"].as_str().unwrap(),
@@ -172,7 +183,7 @@ impl Dispatcher {
             control.check()?;
             let path = staging.path().join(format!("input-{n}.pdf"));
             input.stage(&path)?;
-            let (mut report, mut w) = self.backend.inspect(&path, control)?;
+            let (mut report, mut w) = plan.structural.inspect(&path, control)?;
             if !report.is_object() {
                 return Err(Error("INTERNAL"));
             }
@@ -189,10 +200,15 @@ impl Dispatcher {
             if total_pages > 2000 {
                 return Err(Error("LIMIT_EXCEEDED"));
             }
-            if id != "inspectPdf" {
+            if !matches!(plan.job, Job::Inspect) {
                 if report["encrypted"] == true {
                     return Err(Error("ENCRYPTED_UNSUPPORTED"));
                 }
+                if report["pageCount"] == 0 {
+                    return Err(Error("INVALID_PDF"));
+                }
+            }
+            if plan.job.writes_pdf() {
                 if report["signatures"] == "present" {
                     return Err(Error("SIGNED_UNSUPPORTED"));
                 }
@@ -202,13 +218,57 @@ impl Dispatcher {
                 if report["forms"] != "absent" || report["signatures"] != "absent" {
                     return Err(Error("PRESERVATION_UNKNOWN"));
                 }
-                if report["pageCount"] == 0 {
-                    return Err(Error("INVALID_PDF"));
-                }
             }
             warnings.append(&mut w);
             reports.push(report);
             paths.push(path);
+        }
+        match plan.job {
+            Job::ExtractText {
+                engine,
+                backend,
+                pages,
+            } => {
+                if pages.last().is_some_and(|&page| page > total_pages) {
+                    return Err(Error("INVALID_REQUEST"));
+                }
+                control.check()?;
+                let (extracted, provider_warnings) =
+                    backend.extract_text(&paths[0], &pages, control)?;
+                warnings.extend(provider_warnings);
+                let value = content::text_envelope(engine, &pages, extracted, warnings)?;
+                self.workspace.unchanged(&mut inputs)?;
+                control.check()?;
+                return Ok(value);
+            }
+            Job::RenderPage {
+                engine,
+                backend,
+                page,
+                dpi,
+            } => {
+                if page > total_pages {
+                    return Err(Error("INVALID_REQUEST"));
+                }
+                control.check()?;
+                let out = staging.path().join("output.png");
+                warnings.extend(backend.render_page(&paths[0], page, dpi, &out, control)?);
+                let (mut png, info) = content::read_png(&out)?;
+                let result = json!({
+                    "engine":engine, "page":page, "dpi":dpi, "mediaType":"image/png",
+                    "path":request["output"]["path"], "sha256":filesystem::hash(&mut png)?,
+                    "bytes":info.bytes, "width":info.width, "height":info.height,
+                });
+                let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
+                content::validate_envelope(id, &envelope)?;
+                self.workspace.unchanged(&mut inputs)?;
+                control.check()?;
+                destination
+                    .unwrap()
+                    .commit_file(&mut png, &inputs, backend::MAX_PNG_BYTES)?;
+                return Ok(envelope);
+            }
+            _ => {}
         }
         if let Some(parts) = parts {
             let mut staged_outputs = Vec::with_capacity(parts.len());
@@ -220,7 +280,7 @@ impl Dispatcher {
                 }
                 let out = staging.path().join(format!("output-{idx}.pdf"));
                 let (artifact, bytes) = transform_artifact(
-                    self.backend.as_ref(),
+                    plan.structural,
                     &paths,
                     Some(part_pages),
                     total_pages,
@@ -255,11 +315,13 @@ impl Dispatcher {
         let result = if let Some(destination) = destination {
             if let Some((mode_str, compress_mode)) = compress_opts {
                 let out = staging.path().join("output.pdf");
-                warnings.extend(
-                    self.backend
-                        .compress(&paths[0], compress_mode, &out, control)?,
-                );
-                let (report, w) = self.backend.inspect(&out, control)?;
+                warnings.extend(plan.structural.compress(
+                    &paths[0],
+                    compress_mode,
+                    &out,
+                    control,
+                )?);
+                let (report, w) = plan.structural.inspect(&out, control)?;
                 warnings.extend(w);
                 if report["pageCount"] != total_pages
                     || report["forms"] != "absent"
@@ -322,7 +384,7 @@ impl Dispatcher {
             };
             let out = staging.path().join("output.pdf");
             let (result, _) = transform_artifact(
-                self.backend.as_ref(),
+                plan.structural,
                 &paths,
                 selected_pages.as_deref(),
                 total_pages,
@@ -352,13 +414,26 @@ impl Dispatcher {
     }
 }
 
+fn request_integer(value: &Value) -> Result<u64> {
+    value
+        .as_u64()
+        .or_else(|| {
+            // JSON Schema permits integral floats, but never round a fractional selection.
+            value
+                .as_f64()
+                .filter(|v| (0.0..=9_007_199_254_740_991.0).contains(v) && v.fract() == 0.0)
+                .map(|v| v as u64)
+        })
+        .ok_or(Error("INVALID_REQUEST"))
+}
+
 fn parse_pages(value: &Value) -> Result<Vec<u64>> {
     let pages = value
         .as_array()
         .unwrap()
         .iter()
-        .map(|v| v.as_u64().unwrap())
-        .collect::<Vec<_>>();
+        .map(request_integer)
+        .collect::<Result<Vec<_>>>()?;
     if pages.windows(2).any(|w| w[0] >= w[1]) {
         return Err(Error("INVALID_REQUEST"));
     }

@@ -83,6 +83,49 @@ pub trait Backend: Send + Sync {
         control: &Control,
     ) -> Result<Vec<Value>>;
 }
+
+pub const MAX_TEXT_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_PNG_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_RENDER_SIDE: u32 = 8192;
+pub const MAX_RENDER_PIXELS: u64 = 16 * 1024 * 1024;
+
+pub fn validate_render_dimensions(width: u32, height: u32) -> Result<()> {
+    if width == 0 || height == 0 {
+        return Err(Error("INTERNAL"));
+    }
+    if width > MAX_RENDER_SIDE
+        || height > MAX_RENDER_SIDE
+        || u64::from(width) * u64::from(height) > MAX_RENDER_PIXELS
+    {
+        return Err(Error("LIMIT_EXCEEDED"));
+    }
+    Ok(())
+}
+
+/// Return the contract's ExtractedPage objects and warnings from private staged input.
+/// Providers must bound worker output and honor the shared job deadline/cancellation.
+pub trait ExtractTextBackend: Send + Sync {
+    fn extract_text(
+        &self,
+        input: &Path,
+        pages: &[u64],
+        control: &Control,
+    ) -> Result<(Vec<Value>, Vec<Value>)>;
+}
+
+/// Write a PNG at the private staging path and return warnings, not a workspace path.
+/// Enforce dimensions before allocating pixels; finish any worker before returning.
+pub trait RenderPageBackend: Send + Sync {
+    fn render_page(
+        &self,
+        input: &Path,
+        page: u64,
+        dpi: u32,
+        output: &Path,
+        control: &Control,
+    ) -> Result<Vec<Value>>;
+}
+
 pub struct Qpdf {
     pub executable: PathBuf,
 }

@@ -72,12 +72,21 @@ def run():
         assert {t['name'] for t in tools}=={o['operationId'] for o in discovery['operations']}
         for tool in tools:
             op=next(o for o in discovery['operations'] if o['operationId']==tool['name']);assert tool['inputSchema']==op['inputSchema'];assert tool['outputSchema']==op['outputSchema']
+        for name,read_only in [('extractText',True),('renderPage',False)]:
+            op=next(o for o in discovery['operations'] if o['operationId']==name);assert op['engines']==[] and op['status'].startswith('unavailable')
+            tool=next(t for t in tools if t['name']==name);assert tool['annotations']['readOnlyHint']==read_only
         cli=json.loads(subprocess.check_output([str(BIN),'operations']));assert cli==discovery
         assert http(port,'invalid','/v1/operations')[0]==401
         assert http(port,token,'/v1/operations',extra={'Origin':'https://example.invalid'})[0]==403
         assert http(port,token,'/v1/operations',extra={'Host':'example.invalid'})[0]==403
         assert http(port,token,'/v1/openapi.json')[1]==json.loads((ROOT/'contracts/v1/openapi.json').read_text())
         corpus=[
+          ('extract-text',{'input':{'path':'three.pdf'},'pages':[1,3]},'BACKEND_UNAVAILABLE'),
+          ('extract-text',{'input':{'path':'three.pdf'},'pages':[2,1]},'INVALID_REQUEST'),
+          ('extract-text',{'input':{'path':'three.pdf'},'pages':[1],'engine':'../engine'},'INVALID_REQUEST'),
+          ('render-page',{'input':{'path':'three.pdf'},'page':1,'output':{'path':'page.png'}},'BACKEND_UNAVAILABLE'),
+          ('render-page',{'input':{'path':'three.pdf'},'page':0,'output':{'path':'page.png'}},'INVALID_REQUEST'),
+          ('render-page',{'input':{'path':'three.pdf'},'page':1,'dpi':301,'output':{'path':'page.png'}},'INVALID_REQUEST'),
           ('inspect',{'input':{'path':'three.pdf'}},None),
           ('inspect',{'input':{'path':'empty.pdf'}},'INVALID_PDF'),
           ('inspect',{'input':{'path':'mixed.pdf'}},None),
@@ -144,7 +153,7 @@ def run():
               ('extract',{'input':{'path':'tampered.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED')])
         originals={surface:{f.name:digest(f) for f in root.glob('*.pdf')} for surface,root in roots.items()}
         for n,(command,request,error) in enumerate(corpus,10):
-            op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf','split':'splitPdf','remove-pages':'removePages','compress':'compressPdf'}[command]
+            op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf','split':'splitPdf','remove-pages':'removePages','compress':'compressPdf','extract-text':'extractText','render-page':'renderPage'}[command]
             cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps(request)],capture_output=True,text=True)
             assert bool(cli.returncode)==bool(error),(n,command,cli.returncode,cli.stderr,cli.stdout);a=json.loads(cli.stderr if error else cli.stdout)
             assert not (cli.stdout if error else cli.stderr),(n,'framing')
@@ -156,8 +165,10 @@ def run():
             assert a==b==c,(n,'surface mismatch',a,b,c)
             if error:assert a['error']['code']==error,(n,a)
             else:assert status==200
+            if error=='BACKEND_UNAVAILABLE':assert status==503 and cli.returncode==8
             for surface,root in roots.items():
                 for name,h in originals[surface].items():assert digest(root/name)==h,(n,'input changed',name)
+        assert all(not (root/'page.png').exists() for root in roots.values())
         # Independent semantic page order, not just matching hashes.
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'merged.pdf'),'-']).decode()
         assert [text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C','PAGE-ONE']]==sorted(text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C','PAGE-ONE'])

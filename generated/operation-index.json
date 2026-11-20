@@ -1,8 +1,10 @@
 [
   "compressPdf",
   "extractPdf",
+  "extractText",
   "inspectPdf",
   "mergePdf",
   "removePages",
+  "renderPage",
   "splitPdf"
 ]

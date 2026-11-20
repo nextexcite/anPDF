@@ -225,6 +225,14 @@ impl Destination {
         }
     }
     pub fn commit(&self, source: &Path, inputs: &[Input]) -> Result<()> {
+        self.commit_file(&mut File::open(source)?, inputs, TOTAL_LIMIT)
+    }
+    pub(crate) fn commit_file(
+        &self,
+        source: &mut File,
+        inputs: &[Input],
+        limit: u64,
+    ) -> Result<()> {
         self.check(inputs)?;
         let name = c(&format!(
             ".anpdf-{}",
@@ -244,9 +252,8 @@ impl Destination {
             0o600,
         )?;
         let result = (|| {
-            let mut source = File::open(source)?;
-            let n = std::io::copy(&mut (&mut source).take(TOTAL_LIMIT + 1), &mut temp)?;
-            if n > TOTAL_LIMIT {
+            let n = std::io::copy(&mut source.take(limit + 1), &mut temp)?;
+            if n > limit {
                 return Err(Error("LIMIT_EXCEEDED"));
             }
             temp.flush()?;
