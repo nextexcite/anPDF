@@ -70,7 +70,7 @@ class CorpusTests(unittest.TestCase):
 
     def test_no_font_skip(self):
         manifest = generate(self.root / 'no-font', font=self.root / 'missing.ttf', real_signed=False)
-        self.assertEqual({'cjk', 'signed'}, {s['id'] for s in manifest['skipped']})
+        self.assertEqual({'cjk', 'cjk-unsubset', 'signed'}, {s['id'] for s in manifest['skipped']})
 
     def test_preservation_loss(self):
         output = self.root / 'empty.pdf'
