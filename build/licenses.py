@@ -4,7 +4,7 @@ This does not replace artifact/license review for a release or include OCI OS pa
 import argparse,hashlib,json,pathlib,re,subprocess,tomllib,urllib.request
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser();p.add_argument('--target',default='x86_64-unknown-linux-gnu');a=p.parse_args()
-m=json.loads(subprocess.check_output(['cargo','metadata','--locked','--format-version','1','--filter-platform',a.target],cwd=ROOT))
+m=json.loads(subprocess.check_output(['cargo','metadata','--locked','--all-features','--format-version','1','--filter-platform',a.target],cwd=ROOT))
 nodes={n['id']:n for n in m['resolve']['nodes']};reachable=set();stack=[m['resolve']['root']]
 while stack:
  i=stack.pop()
@@ -27,5 +27,9 @@ for c in sorted(m['packages'],key=lambda c:(c['name'],c['version'])):
  assert notices,'missing legal text: '+c['name']
  assert 'LGPL' not in selected and 'GPL' not in selected,'review required'
  components.append({'component':c['name'],'version':c['version'],'artifactSha256':checks[(c['name'],c['version'])],'source':f'https://crates.io/crates/{c["name"]}/{c["version"]}','spdxExpression':expression,'selectedAlternative':selected,'scope':'native Rust dependency graph; build and runtime','modifications':'none','notices':notices,'decision':'permissive alternative inventoried; release artifact review pending'})
-(ROOT/'license-manifest.json').write_text(json.dumps({'target':a.target,'scope':'Rust native dependency inventory; OCI OS and external backend artifacts require separate SBOM review','components':components},indent=2)+'\n')
+pdfium=ROOT/'build/work/pdfium'
+assert pdfium.is_dir(),'run build/get-pdfium.py build/work/pdfium before inventorying external notices'
+assert 'BUILD=8165' in (pdfium/'VERSION').read_text(),'unexpected PDFium release'
+notices=[add(f.read_bytes(),str(f.relative_to(pdfium))) for f in sorted([pdfium/'LICENSE',*(pdfium/'licenses').iterdir()]) if f.is_file()]
+(ROOT/'license-manifest.json').write_text(json.dumps({'target':a.target,'scope':'Rust native dependency inventory (all features); OCI OS and external backend artifacts require separate SBOM review','components':components+[{'component':'pdfium-binaries','version':'chromium/8165','source':'https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium/8165','scope':'optional dynamically loaded external backend; not bundled in default artifacts','modifications':'none','decision':'upstream notices retained; release redistribution and target-specific review pending','notices':notices}]},indent=2)+'\n')
 print(json.dumps({'nativeComponents':len(components),'uniqueNoticeFiles':len(list(out.glob('*.txt')))}))

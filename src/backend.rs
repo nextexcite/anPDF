@@ -149,7 +149,7 @@ fn bounded(mut r: impl Read, max: usize, overflow: Arc<AtomicBool>) -> Vec<u8> {
     out
 }
 impl Qpdf {
-    fn run(&self, args: &[String], control: &Control) -> Result<(i32, Vec<u8>)> {
+    pub(crate) fn run(&self, args: &[String], control: &Control) -> Result<(i32, Vec<u8>)> {
         control.check()?;
         let mut cmd = Command::new(&self.executable);
         cmd.args(args)

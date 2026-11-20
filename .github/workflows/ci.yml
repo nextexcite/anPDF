@@ -67,6 +67,39 @@ jobs:
         with:
           name: backend-comparison
           path: build/work/bench-results/report.md
+  pdfium:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-26.04, macos-26]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust and PDF test tooling
+        shell: bash
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends poppler-utils python3-venv
+          else
+            brew install poppler
+          fi
+          python3 -m venv build/work/venv
+          build/work/venv/bin/pip install -r build/test-requirements.txt
+          python3 build/get-qpdf.py build/work/qpdf > build/work/qpdf-path
+          python3 build/get-pdfium.py build/work/pdfium > build/work/pdfium-path
+          python3 build/get-test-font.py build/work/font
+      - name: Qualify optional isolated PDFium provider
+        shell: bash
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets --features pdfium -- -D warnings
+          cargo test --locked --features pdfium
+          cargo build --locked --features pdfium
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" ANPDF_PDFIUM_LIB="$(cat build/work/pdfium-path)" ANPDF_TEST_FONT="$PWD/build/work/font/NotoSansSC.ttf" build/work/venv/bin/python tests/integration.py
   forge-output:
     runs-on: ubuntu-26.04
     steps:

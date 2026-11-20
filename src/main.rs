@@ -59,7 +59,7 @@ impl Shell {
             COMPREPLY=( $(compgen -d -- "$cur") )
             return 0
             ;;
-        --request-file|--token-file|--qpdf)
+        --request-file|--token-file|--qpdf|--pdfium-lib)
             COMPREPLY=( $(compgen -f -- "$cur") )
             return 0
             ;;
@@ -67,13 +67,13 @@ impl Shell {
 
     case "$cmd" in
         inspect|validate|merge|extract|split|remove-pages|compress|extract-text|render-page)
-            COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --request-json --request-file --dry-run --help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --pdfium-lib --request-json --request-file --dry-run --help -h" -- "$cur") )
             ;;
         serve)
-            COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --port --token-file --help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --pdfium-lib --port --token-file --help -h" -- "$cur") )
             ;;
         mcp)
-            COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--root --qpdf --qpdf-exact --pdfium-lib --help -h" -- "$cur") )
             ;;
         operations)
             COMPREPLY=( $(compgen -W "--help -h" -- "$cur") )
@@ -120,6 +120,7 @@ _anpdf() {
         '--root[Workspace root]:dir:_files -/'
         '--qpdf[Absolute path to qpdf binary]:qpdf:_files'
         '--qpdf-exact[Require tested qpdf 12.4.2]'
+        '--pdfium-lib[Absolute path to optional PDFium library]:library:_files'
         '--request-json[Inline JSON request payload]:json:'
         '--request-file[Read JSON request payload from file]:file:_files'
         '--dry-run[Validate request and destination policy without processing the PDF]'
@@ -142,6 +143,7 @@ _anpdf() {
                 '--root[Workspace root]:dir:_files -/' \
                 '--qpdf[Absolute path to qpdf binary]:qpdf:_files' \
                 '--qpdf-exact[Require tested qpdf 12.4.2]' \
+                '--pdfium-lib[Absolute path to optional PDFium library]:library:_files' \
                 '--port[Loopback HTTP port]:port:' \
                 '--token-file[Bearer token file]:file:_files' \
                 '(-h --help)'{-h,--help}'[Show command help]'
@@ -151,6 +153,7 @@ _anpdf() {
                 '--root[Workspace root]:dir:_files -/' \
                 '--qpdf[Absolute path to qpdf binary]:qpdf:_files' \
                 '--qpdf-exact[Require tested qpdf 12.4.2]' \
+                '--pdfium-lib[Absolute path to optional PDFium library]:library:_files' \
                 '(-h --help)'{-h,--help}'[Show command help]'
             ;;
         operations)
@@ -205,6 +208,7 @@ complete -c anpdf -n "not __fish_seen_subcommand_from $anpdf_cmds" -a version -d
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l root -r -F -d 'Workspace root directory'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l qpdf -r -F -d 'Absolute path to qpdf'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l qpdf-exact -d 'Require tested qpdf 12.4.2'
+complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds serve mcp" -l pdfium-lib -r -F -d 'Absolute path to optional PDFium library'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-json -r -d 'Inline JSON request payload'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l request-file -r -F -d 'Read JSON request from file'
 complete -c anpdf -n "__fish_seen_subcommand_from $anpdf_pdf_cmds" -l dry-run -d 'Validate request without processing the PDF'
@@ -232,6 +236,7 @@ struct Options {
     root: PathBuf,
     qpdf: PathBuf,
     qpdf_exact: bool,
+    pdfium_lib: Option<PathBuf>,
     request: Option<String>,
     dry: bool,
     port: u16,
@@ -264,6 +269,7 @@ COMMON OPTIONS:\n\
   --root <dir>         Workspace root (default: .)\n\
   --qpdf <abs-path>    Absolute path to qpdf 12.x >=12.4.2 (tested: 12.4.2)\n\
   --qpdf-exact         Require exactly qpdf 12.4.2\n\
+  --pdfium-lib <path>  Optional PDFium dynamic library (overrides ANPDF_PDFIUM_LIB)\n\
   --request-json <str> Inline JSON request payload (or pass JSON on stdin)\n\
   --request-file <f>   Read JSON request payload from file\n\
   --dry-run            Validate request and destination policy without processing the PDF\n\n\
@@ -272,7 +278,8 @@ SERVER OPTIONS:\n\
   --token-file <file>  Bearer token file (>=32 ASCII graphic chars) for serve\n\n\
 ENVIRONMENT:\n\
   ANPDF_QPDF           Absolute path to qpdf 12.x >=12.4.2 (auto-discovers trusted paths)\n\
-  ANPDF_QPDF_EXACT     Set to 1 to require tested qpdf 12.4.2\n",
+  ANPDF_QPDF_EXACT     Set to 1 to require tested qpdf 12.4.2\n\
+  ANPDF_PDFIUM_LIB     Optional absolute PDFium library path (requires pdfium feature)\n",
         env!("CARGO_PKG_VERSION")
     );
     match topic {
@@ -454,6 +461,9 @@ fn parse_action() -> Result<Action> {
         root: PathBuf::from("."),
         qpdf: PathBuf::new(),
         qpdf_exact: false,
+        pdfium_lib: std::env::var_os("ANPDF_PDFIUM_LIB")
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from),
         request: None,
         dry: false,
         port: 8787,
@@ -470,6 +480,9 @@ fn parse_action() -> Result<Action> {
             return Err(Error("INVALID_REQUEST"));
         }
         match flag.as_str() {
+            "--pdfium-lib" => {
+                o.pdfium_lib = Some(PathBuf::from(args.next().ok_or(Error("INVALID_REQUEST"))?))
+            }
             "--root" => o.root = PathBuf::from(args.next().ok_or(Error("INVALID_REQUEST"))?),
             "--qpdf" => {
                 qpdf_flag = Some(PathBuf::from(args.next().ok_or(Error("INVALID_REQUEST"))?))
@@ -504,16 +517,27 @@ fn parse_action() -> Result<Action> {
             "--root",
             "--qpdf",
             "--qpdf-exact",
+            "--pdfium-lib",
             "--request-json",
             "--request-file",
             "--dry-run",
         ],
-        "serve" => &["--root", "--qpdf", "--qpdf-exact", "--port", "--token-file"],
-        "mcp" => &["--root", "--qpdf", "--qpdf-exact"],
+        "serve" => &[
+            "--root",
+            "--qpdf",
+            "--qpdf-exact",
+            "--pdfium-lib",
+            "--port",
+            "--token-file",
+        ],
+        "mcp" => &["--root", "--qpdf", "--qpdf-exact", "--pdfium-lib"],
         "operations" | "schema" => &[],
         _ => return Err(Error("UNSUPPORTED_OPERATION")),
     };
     if seen.iter().any(|s| !allowed.contains(&s.as_str())) {
+        return Err(Error("INVALID_REQUEST"));
+    }
+    if o.pdfium_lib.as_ref().is_some_and(|p| !p.is_absolute()) {
         return Err(Error("INVALID_REQUEST"));
     }
     if !matches!(o.command.as_str(), "operations" | "schema") {
@@ -549,12 +573,48 @@ fn id(command: &str) -> &'static str {
     }
 }
 
-fn configured_registry(executable: PathBuf, exact: bool) -> BackendRegistry {
-    BackendRegistry::with_qpdf_exact(executable, exact)
+fn configured_registry(
+    executable: PathBuf,
+    exact: bool,
+    library: Option<PathBuf>,
+) -> Result<BackendRegistry> {
+    let registry = BackendRegistry::with_qpdf_exact(executable, exact);
+    #[cfg(feature = "pdfium")]
+    {
+        let mut registry = registry;
+        if let Some(library) = library {
+            let worker_executable =
+                std::env::current_exe().map_err(|_| Error("BACKEND_UNAVAILABLE"))?;
+            let provider = Arc::new(anpdf::pdfium::PdfiumProvider {
+                library,
+                worker_executable,
+            });
+            registry
+                .register_text("pdfium", provider.clone())
+                .expect("unique engine");
+            registry
+                .register_renderer("pdfium", provider)
+                .expect("unique engine");
+        }
+        Ok(registry)
+    }
+    #[cfg(not(feature = "pdfium"))]
+    {
+        let _ = library;
+        Ok(registry)
+    }
+}
+
+fn main() {
+    #[cfg(feature = "pdfium")]
+    if std::env::args().nth(1).as_deref() == Some("pdfium-worker") {
+        std::process::exit(anpdf::pdfium::worker());
+    }
+    async_main();
 }
 
 #[tokio::main]
-async fn main() {
+async fn async_main() {
     let command = std::env::args().nth(1).unwrap_or_default();
     let op = id(&command);
     let result = async {
@@ -573,7 +633,7 @@ async fn main() {
             }
             Action::Run(o) => {
                 if o.command == "operations" {
-                    return Ok(Some(contract::discovery_with(&configured_registry(o.qpdf, o.qpdf_exact))));
+                    return Ok(Some(contract::discovery_with(&configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib)?)));
                 }
                 if o.command == "schema" {
                     return contract::operation(o.schema.as_deref().unwrap())
@@ -587,7 +647,7 @@ async fn main() {
                         })
                         .ok_or(Error("UNSUPPORTED_OPERATION"));
                 }
-                let d = Arc::new(Dispatcher::with_registry(&o.root, configured_registry(o.qpdf, o.qpdf_exact))?);
+                let d = Arc::new(Dispatcher::with_registry(&o.root, configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib)?)?);
                 match o.command.as_str() {
                     "serve" => {
                         let file = o.token_file.ok_or(Error("INVALID_REQUEST"))?;

@@ -7,6 +7,8 @@ pub mod error;
 pub mod filesystem;
 pub mod http;
 pub mod mcp;
+#[cfg(feature = "pdfium")]
+pub mod pdfium;
 mod planner;
 use backend::{Backend, CompressMode, Control};
 use error::{Error, Result};
