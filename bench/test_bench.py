@@ -83,6 +83,22 @@ class CorpusTests(unittest.TestCase):
 
 
 class ScoringTests(unittest.TestCase):
+    def test_native_provider_signal_is_crash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for name in ['qpdf', 'pdfinfo', 'pdftotext', 'pdftoppm']:
+                binary = root / name
+                binary.write_text(f'#!{sys.executable}\nimport os,signal\nos.kill(os.getpid(), signal.SIGTERM)\n')
+                binary.chmod(0o755)
+            with patch.dict(os.environ, {'ANPDF_QPDF': str(root / 'qpdf'), 'PATH': str(root)}):
+                for provider, tasks in [('qpdf', ['pageCount', 'roundtrip']), ('poppler', ['pageCount', 'extractText', 'render'])]:
+                    for task in tasks:
+                        with self.subTest(provider=provider, task=task):
+                            result = invoke([sys.executable, f'bench/providers/{provider}.py'], 'run',
+                                            {'task': task, 'input': 'synthetic.pdf', 'output': str(root / 'out.png'), 'page': 1, 'dpi': 72}, 5)
+                            self.assertEqual('crash', result['status'])
+                            self.assertEqual(0, score(task, {'expected': {'expectError': True}}, result, None, None))
+
     def test_text(self):
         self.assertEqual(1, text_score('', ''))
         self.assertEqual(1, text_score('中 文\n日本語', '中文 日本語'))

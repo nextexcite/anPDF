@@ -1,5 +1,6 @@
 """Reference Poppler command provider."""
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -8,7 +9,11 @@ import sys
 
 
 def execute(args):
-    return subprocess.run(args, capture_output=True, check=True).stdout.decode('utf-8')
+    result = subprocess.run(args, capture_output=True)
+    if result.returncode < 0:
+        os.kill(os.getpid(), -result.returncode)
+    result.check_returncode()
+    return result.stdout.decode('utf-8')
 
 
 def main():
