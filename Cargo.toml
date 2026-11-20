@@ -6,10 +6,9 @@ license = "Apache-2.0"
 description = "Local agent-native PDF toolkit"
 rust-version = "1.100"
 
-[features]
-pdfoxide = ["dep:pdf_oxide"]
-
 [dependencies]
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+pdfium-render = { version = "=0.9.5", optional = true, default-features = false, features = ["pdfium_8125", "image_025", "thread_safe"] }
 serde_json = "1"
 sha2 = "0.10"
 tempfile = "3"
@@ -18,6 +17,11 @@ libc = "0.2"
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 pdf_oxide = { version = "=0.3.78", optional = true, features = ["rendering"] }
+
+[features]
+default = ["pdfium"]
+pdfium = ["dep:pdfium-render", "dep:image"]
+pdfoxide = ["dep:pdf_oxide"]
 
 [profile.release]
 strip = true

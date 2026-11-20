@@ -1,6 +1,6 @@
 {
   "target": "x86_64-unknown-linux-gnu",
-  "scope": "Rust native dependency inventory; OCI OS and external backend artifacts require separate SBOM review",
+  "scope": "Rust native dependency inventory (all features); OCI OS and external backend artifacts require separate SBOM review",
   "components": [
     {
       "component": "adler2",
@@ -2535,6 +2535,29 @@
       "decision": "permissive alternative inventoried; release artifact review pending"
     },
     {
+      "component": "itertools",
+      "version": "0.15.0",
+      "artifactSha256": "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc",
+      "source": "https://crates.io/crates/itertools/0.15.0",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "7576269ea71f767b99297934c0b2367532690f8c4badc695edf8e04ab6a1e545"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
       "component": "itoa",
       "version": "1.0.19",
       "artifactSha256": "3bd1574e617a9a6c1f8f8181bd7e841e1f20e4277607ef28945765188d6284d4",
@@ -2724,6 +2747,24 @@
       "decision": "permissive alternative inventoried; release artifact review pending"
     },
     {
+      "component": "libloading",
+      "version": "0.9.1",
+      "artifactSha256": "a1832accd5a4ca2795ace4d05d15c4039be15b62d3b950eff99746a990e3cc10",
+      "source": "https://crates.io/crates/libloading/0.9.1",
+      "spdxExpression": "ISC",
+      "selectedAlternative": "ISC",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/b29f8b01452350c20dd1af16ef83b598fea3053578ccc1c7a0ef40e57be2620f.txt",
+          "originalName": "LICENSE",
+          "sha256": "b29f8b01452350c20dd1af16ef83b598fea3053578ccc1c7a0ef40e57be2620f"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
       "component": "linux-raw-sys",
       "version": "0.12.1",
       "artifactSha256": "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53",
@@ -2862,6 +2903,29 @@
           "file": "THIRD_PARTY_LICENSES/162ce11ad71338d0a0c6ebaf5c48af72c6ae237b468859d3656fe2d9ed3f3a85.txt",
           "originalName": "LICENSE.httprouter",
           "sha256": "162ce11ad71338d0a0c6ebaf5c48af72c6ae237b468859d3656fe2d9ed3f3a85"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
+      "component": "maybe-owned",
+      "version": "0.3.4",
+      "artifactSha256": "4facc753ae494aeb6e3c22f839b158aebd4f9270f55cd3c79906c45476c47ab4",
+      "source": "https://crates.io/crates/maybe-owned/0.3.4",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/aecc100d0547aa3bcbe04bcf5cb87c7db0be11004602adfa5056edf8bb847b35.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "aecc100d0547aa3bcbe04bcf5cb87c7db0be11004602adfa5056edf8bb847b35"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/ef2b3bbd7b718a7881253226313f103e89b379e1279681a3c1ebcb65a27d209d.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "ef2b3bbd7b718a7881253226313f103e89b379e1279681a3c1ebcb65a27d209d"
         }
       ],
       "decision": "permissive alternative inventoried; release artifact review pending"
@@ -3444,6 +3508,24 @@
       "decision": "direct dependency and bundled DejaVu notice reviewed; release artifact review pending"
     },
     {
+      "component": "pdfium-render",
+      "version": "0.9.5",
+      "artifactSha256": "296b1146652b486ea6eea0d316e85ab6837ff69e8d2b1568e6fa7bc38bd4c00e",
+      "source": "https://crates.io/crates/pdfium-render/0.9.5",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/819dfb7c49a24bec7511f29304478d67f272bfd1f976b728095f2eb2c522791c.txt",
+          "originalName": "LICENSE.md",
+          "sha256": "819dfb7c49a24bec7511f29304478d67f272bfd1f976b728095f2eb2c522791c"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
       "component": "percent-encoding",
       "version": "2.3.2",
       "artifactSha256": "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220",
@@ -3557,6 +3639,24 @@
           "file": "THIRD_PARTY_LICENSES/23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3.txt",
           "originalName": "LICENSE-MIT",
           "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
+      "component": "piston-float",
+      "version": "1.0.1",
+      "artifactSha256": "ad78bf43dcf80e8f950c92b84f938a0fc7590b7f6866fbcbeca781609c115590",
+      "source": "https://crates.io/crates/piston-float/1.0.1",
+      "spdxExpression": "MIT",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/97d06daf5f54a5a5e12776d7f30613b30538c6c7ce4d326731084c27233c6b9b.txt",
+          "originalName": "LICENSE",
+          "sha256": "97d06daf5f54a5a5e12776d7f30613b30538c6c7ce4d326731084c27233c6b9b"
         }
       ],
       "decision": "permissive alternative inventoried; release artifact review pending"
@@ -5209,6 +5309,29 @@
       "decision": "permissive alternative inventoried; release artifact review pending"
     },
     {
+      "component": "utf16string",
+      "version": "0.2.0",
+      "artifactSha256": "0b62a1e85e12d5d712bf47a85f426b73d303e2d00a90de5f3004df3596e9d216",
+      "source": "https://crates.io/crates/utf16string/0.2.0",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/b5dd5bfd08ec04894af18caa0028257b3d868ef223393e5155eb6de140565286.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "b5dd5bfd08ec04894af18caa0028257b3d868ef223393e5155eb6de140565286"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
       "component": "utf8_iter",
       "version": "1.1.0",
       "artifactSha256": "af3bd9d3e571c26fcce9d033b87ea5ab061b8d2ffe9b7a5675d810d68f03edf0",
@@ -5324,6 +5447,24 @@
           "file": "THIRD_PARTY_LICENSES/71674605ec4c087fe9eb534e3e4f9e26eb2e4aabcd76a29fd156c6a844d44b3d.txt",
           "originalName": "LICENSE",
           "sha256": "71674605ec4c087fe9eb534e3e4f9e26eb2e4aabcd76a29fd156c6a844d44b3d"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
+      "component": "vecmath",
+      "version": "1.0.0",
+      "artifactSha256": "956ae1e0d85bca567dee1dcf87fb1ca2e792792f66f87dced8381f99cd91156a",
+      "source": "https://crates.io/crates/vecmath/1.0.0",
+      "spdxExpression": "MIT",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/c7766d2e29f88a4be81b6ac6216c62d2d0918c7d3f2fc98be6fecac8f6595e60.txt",
+          "originalName": "LICENSE",
+          "sha256": "c7766d2e29f88a4be81b6ac6216c62d2d0918c7d3f2fc98be6fecac8f6595e60"
         }
       ],
       "decision": "permissive alternative inventoried; release artifact review pending"
@@ -5811,6 +5952,111 @@
         }
       ],
       "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
+      "component": "pdfium-binaries",
+      "version": "chromium/8165",
+      "source": "https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium/8165",
+      "scope": "dynamically loaded external backend bundled in standard releases",
+      "modifications": "none",
+      "decision": "upstream notices retained; review target-specific notices before redistribution",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/ba26c1263131696b86c10496b5066b918a20b7161822a80c274d0080105f6c93.txt",
+          "originalName": "LICENSE",
+          "sha256": "ba26c1263131696b86c10496b5066b918a20b7161822a80c274d0080105f6c93"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747.txt",
+          "originalName": "licenses/abseil.txt",
+          "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/c110d3ea2ad77467ce0dcff7d3337e6c8be8049a5103f4b9bd5fd911a77972e5.txt",
+          "originalName": "licenses/agg23.txt",
+          "sha256": "c110d3ea2ad77467ce0dcff7d3337e6c8be8049a5103f4b9bd5fd911a77972e5"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/9e45e856bedccee9f67254082ca11851d954de2fed7448c4bed19ad9aab99a91.txt",
+          "originalName": "licenses/dragonbox-Apache2-LLVM.txt",
+          "sha256": "9e45e856bedccee9f67254082ca11851d954de2fed7448c4bed19ad9aab99a91"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566.txt",
+          "originalName": "licenses/dragonbox-Boost.txt",
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/e562f3f974ced7e69dd1db77b820b36bcf8f30377f1aa105723fba449c53c4e6.txt",
+          "originalName": "licenses/fast_float.txt",
+          "sha256": "e562f3f974ced7e69dd1db77b820b36bcf8f30377f1aa105723fba449c53c4e6"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/f4b133e25df1f86ad3ffea453aa0e613f0474f34778dbbb3e437e7b2724937d8.txt",
+          "originalName": "licenses/freetype.txt",
+          "sha256": "f4b133e25df1f86ad3ffea453aa0e613f0474f34778dbbb3e437e7b2724937d8"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64.txt",
+          "originalName": "licenses/harfbuzz.txt",
+          "sha256": "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt",
+          "originalName": "licenses/highway.txt",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af.txt",
+          "originalName": "licenses/icu.txt",
+          "sha256": "e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/7312b68c5b25e9bf2b828706fb4e29588f22705112f411fd42e1f7d84c3d139a.txt",
+          "originalName": "licenses/lcms.txt",
+          "sha256": "7312b68c5b25e9bf2b828706fb4e29588f22705112f411fd42e1f7d84c3d139a"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6.txt",
+          "originalName": "licenses/libjpeg_turbo.ijg",
+          "sha256": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/96f5b328adbb78eeaaec6980d73fd558cb1e4d62560ed615646bc3cf5e532430.txt",
+          "originalName": "licenses/libjpeg_turbo.md",
+          "sha256": "96f5b328adbb78eeaaec6980d73fd558cb1e4d62560ed615646bc3cf5e532430"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/c5ab0890a737c2dfa7ba675036554f6d17741d98629b0c2a145354d00617e6b2.txt",
+          "originalName": "licenses/libopenjpeg.txt",
+          "sha256": "c5ab0890a737c2dfa7ba675036554f6d17741d98629b0c2a145354d00617e6b2"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526.txt",
+          "originalName": "licenses/libpng.txt",
+          "sha256": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/ebcd9bbf783a73d05c53ba4d586b8d5813dcdf3bbec50265860ccc885e606f47.txt",
+          "originalName": "licenses/llvm-libc.txt",
+          "sha256": "ebcd9bbf783a73d05c53ba4d586b8d5813dcdf3bbec50265860ccc885e606f47"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/961eacd9633fff6d051db7208b755e9210e30efac7adec3e6a6d52798f0ccf0e.txt",
+          "originalName": "licenses/pdfium.txt",
+          "sha256": "961eacd9633fff6d051db7208b755e9210e30efac7adec3e6a6d52798f0ccf0e"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/fc8dbc04e03ad4efc08a647ffe7f995b811a95bc04c0e85a56d5277c6593fa5f.txt",
+          "originalName": "licenses/simdutf.txt",
+          "sha256": "fc8dbc04e03ad4efc08a647ffe7f995b811a95bc04c0e85a56d5277c6593fa5f"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/33fd641c9f3b0e0be64bc78fea9e94807674cdd70c48477599226cb8956565fe.txt",
+          "originalName": "licenses/zlib.txt",
+          "sha256": "33fd641c9f3b0e0be64bc78fea9e94807674cdd70c48477599226cb8956565fe"
+        }
+      ]
     }
   ]
 }

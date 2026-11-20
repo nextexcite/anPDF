@@ -26,7 +26,7 @@ upstream_notices={
  ('qcms','0.3.0'):('FirefoxGraphics/qcms','COPYING','36d847ae882f6574ebc72f56a4f354e4f104fde4a584373496482e97d52d31bc'),
  ('taffy','0.14.0'):('DioxusLabs/taffy','LICENSE','f97daf1a0124413dccf399a4e6626b4b74acd05282f80b6d64ac82225650b77a'),
 }
-approved={'0BSD','Apache-2.0','BSD-2-Clause','BSD-3-Clause','BSL-1.0','CC0-1.0','MIT','MIT-0','Unicode-3.0','Unlicense','Zlib'}
+approved={'0BSD','Apache-2.0','BSD-2-Clause','BSD-3-Clause','BSL-1.0','CC0-1.0','ISC','MIT','MIT-0','Unicode-3.0','Unlicense','Zlib'}
 
 def add(data,original):
  digest=hashlib.sha256(data).hexdigest();name=f'THIRD_PARTY_LICENSES/{digest}.txt'
@@ -75,11 +75,14 @@ for c in sorted(m['packages'],key=lambda c:(c['name'],c['version'])):
  assert notices,'missing legal text: '+c['name']
  components.append({'component':c['name'],'version':c['version'],'artifactSha256':checks[key],'source':f'https://crates.io/crates/{c["name"]}/{c["version"]}','spdxExpression':expression,'selectedAlternative':selected,'scope':scope,'modifications':'none','notices':notices,'decision':decision})
 manifest_path=ROOT/'license-manifest.json'
+pdfium_entry={'component':'pdfium-binaries','version':'chromium/8165','source':'https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium/8165','scope':'dynamically loaded external backend bundled in standard releases','modifications':'none','decision':'upstream notices retained; review target-specific notices before redistribution'}
 if a.check:
  manifest=json.loads(manifest_path.read_text())
  assert manifest['target']==a.target,'inventory target mismatch'
  recorded={(c['component'],c['version']):c for c in manifest['components']}
  assert len(recorded)==len(manifest['components']),'duplicate inventory components'
+ external=recorded.get((pdfium_entry['component'],pdfium_entry['version']),{})
+ assert external.get('notices') and all(external.get(k)==v for k,v in pdfium_entry.items()),'missing or stale PDFium inventory'
  for c in components:
   key=c['component'],c['version']
   assert recorded.get(key)==c,'missing or stale license entry: '+' '.join(key)
@@ -87,5 +90,9 @@ if a.check:
   for n in c['notices']:
    assert hashlib.sha256((ROOT/n['file']).read_bytes()).hexdigest()==n['sha256'],'notice checksum mismatch: '+n['file']
 else:
- manifest_path.write_text(json.dumps({'target':a.target,'scope':'Rust native dependency inventory; OCI OS and external backend artifacts require separate SBOM review','components':components},indent=2)+'\n')
+ pdfium=ROOT/'build/work/pdfium'
+ assert pdfium.is_dir(),'run build/get-pdfium.py build/work/pdfium before inventorying external notices'
+ assert 'BUILD=8165' in (pdfium/'VERSION').read_text(),'unexpected PDFium release'
+ notices=[add(f.read_bytes(),str(f.relative_to(pdfium))) for f in sorted([pdfium/'LICENSE',*(pdfium/'licenses').iterdir()]) if f.is_file()]
+ manifest_path.write_text(json.dumps({'target':a.target,'scope':'Rust native dependency inventory (all features); OCI OS and external backend artifacts require separate SBOM review','components':components+[{**pdfium_entry,'notices':notices}]},indent=2)+'\n')
 print(json.dumps({'nativeComponents':len(components),'uniqueNoticeFiles':len(list(out.glob('*.txt'))),'checked':a.check}))
