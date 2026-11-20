@@ -18,8 +18,7 @@ The goal is to **own the interface and the workflow**, while reusing proven PDF 
 
 **Version:** `0.3.0` — early development milestone (**not production-qualified**).
 
-Release preparation only: v0.3.0 artifacts and the final Homebrew checksum are not
-published by this change. See [CHANGELOG.md](CHANGELOG.md) and the
+Released as [v0.3.0](https://github.com/nextexcite/anPDF/releases/tag/v0.3.0). See [CHANGELOG.md](CHANGELOG.md) and the
 [release checklist](docs/BUILD.md#release-checklist).
 
 Versioning convention:
@@ -59,11 +58,12 @@ Install via Homebrew directly from this repository (installs `qpdf` and shell co
 
 ```sh
 brew tap nextexcite/anpdf https://github.com/nextexcite/anPDF
+brew trust --formula nextexcite/anpdf/anpdf   # current Homebrew requires trusting non-official tap formulae
 brew install anpdf
 anpdf --version
 ```
 
-Once released, download `anpdf-0.3.0-macos-arm64.tar.gz` from [GitHub Releases](https://github.com/nextexcite/anPDF/releases), verify against `SHA256SUMS-macos-arm64.txt`, and install `qpdf` (`brew install qpdf`).
+Or download `anpdf-0.3.0-macos-arm64.tar.gz` from [GitHub Releases](https://github.com/nextexcite/anPDF/releases), verify against `SHA256SUMS-macos-arm64.txt`, and install `qpdf` (`brew install qpdf`).
 
 ### Linux (OCI container, `linux/amd64` & `linux/arm64`)
 

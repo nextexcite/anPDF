@@ -6,7 +6,7 @@ Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on 
 tag pushes except PDFOxide preview tags, and on `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
 tag alignment on tag pushes), so untrusted PRs never receive package or release write permissions.
 
-Current release preparation: **0.3.0**, not yet published. Its baseline includes the
+Current release: **0.3.0** ([v0.3.0](https://github.com/nextexcite/anPDF/releases/tag/v0.3.0)). Its baseline includes the
 capability registry, default PDFium content operations, qpdf preservation reporting,
 and the synthetic comparison harness in `docs/BENCHMARK.md`.
 
