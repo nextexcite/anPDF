@@ -16,7 +16,11 @@ The goal is to **own the interface and the workflow**, while reusing proven PDF 
 
 ## What works today
 
-**Version:** `0.2.0` — early development milestone (**not production-qualified**).
+**Version:** `0.3.0` — early development milestone (**not production-qualified**).
+
+Release preparation only: v0.3.0 artifacts and the final Homebrew checksum are not
+published by this change. See [CHANGELOG.md](CHANGELOG.md) and the
+[release checklist](docs/BUILD.md#release-checklist).
 
 Versioning convention:
 - **`< 0.5.0`** (`0.2.0`, `0.3.0`, …): development milestones with no SemVer prerelease suffix (`v0.2.0`).
@@ -30,10 +34,16 @@ Versioning convention:
 | Split a PDF into multiple page-subset outputs | `split` | `POST /v1/split` | `splitPdf` |
 | Remove selected pages and keep the rest | `remove-pages` | `POST /v1/remove-pages` | `removePages` |
 | Compress streams / optimize images | `compress` | `POST /v1/compress` | `compressPdf` |
+| Extract embedded text with PDF-space spans | `extract-text` | `POST /v1/extract-text` | `extractText` |
+| Render a page as PNG | `render-page` | `POST /v1/render-page` | `renderPage` |
 
 All three surfaces use the same validated operation contract. The Rust runtime accepts **qpdf 12.x >=12.4.2**, with **12.4.2** the tested version; other accepted versions emit `BACKEND_VERSION_UNTESTED` once per response. `ANPDF_QPDF_EXACT=1` or `--qpdf-exact` requires exactly 12.4.2 (enabled in CI and OCI). Pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Release builds publish multi-arch **`linux/amd64` + `linux/arm64` OCI images** (GHCR) and **`macos/arm64` native binaries** (GitHub Releases + Homebrew tap from this repository).
 
 The development contract also exposes [embedded text extraction and PNG rendering](docs/PROTOCOLS.md#text-and-rendering-engine). Standard releases use bundled PDFium for these operations; qpdf remains the structural engine. A `--no-default-features` build reports content operations as unavailable.
+
+The capability registry selects registered providers consistently across all three
+surfaces. The [synthetic corpus and benchmark harness](docs/BENCHMARK.md) compare
+external engines; benchmark scores are not product or production qualification.
 
 Transforms currently **reject** encrypted, signed, form/XFA-bearing, or preservation-unknown PDFs. Inspection is structural—not visual, cryptographic, PDF/A, or malware certification.
 
@@ -53,19 +63,19 @@ brew install anpdf
 anpdf --version
 ```
 
-Or download `anpdf-0.2.0-macos-arm64.tar.gz` from [GitHub Releases](https://github.com/nextexcite/anPDF/releases), verify against `SHA256SUMS-macos-arm64.txt`, and install `qpdf` (`brew install qpdf`).
+Once released, download `anpdf-0.3.0-macos-arm64.tar.gz` from [GitHub Releases](https://github.com/nextexcite/anPDF/releases), verify against `SHA256SUMS-macos-arm64.txt`, and install `qpdf` (`brew install qpdf`).
 
 ### Linux (OCI container, `linux/amd64` & `linux/arm64`)
 
-The container image bundles the `anpdf` binary and `qpdf 12.4.2` on a minimal Debian 13 runtime and runs as non-root UID `65532`:
+The container image bundles `anpdf`, `qpdf 12.4.2` and PDFium on a minimal Debian 13 runtime and runs as non-root UID `65532`. The v0.3.0 example applies after publication:
 
 ```sh
-docker pull ghcr.io/nextexcite/anpdf:0.2.0
+docker pull ghcr.io/nextexcite/anpdf:0.3.0
 mkdir -p out
 docker run --rm --read-only --network=none \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   -v "$PWD:/data/in:ro" -v "$PWD/out:/data/out" \
-  ghcr.io/nextexcite/anpdf:0.2.0 \
+  ghcr.io/nextexcite/anpdf:0.3.0 \
   inspect --root /data --request-json '{"input":{"path":"in/sample.pdf"}}'
 ```
 
@@ -110,8 +120,8 @@ ANPDF_QPDF="$(command -v qpdf)" python3 tests/integration.py
 To build and verify the OCI image locally:
 
 ```sh
-docker build -f containers/Dockerfile -t anpdf:0.2.0-local .
-sh containers/smoke.sh anpdf:0.2.0-local
+docker build -f containers/Dockerfile -t anpdf:0.3.0-local .
+sh containers/smoke.sh anpdf:0.3.0-local
 ```
 
 When modifying `contracts/v1/openapi.json`, regenerate `generated/` and run the Forge schema/TS checks documented in [docs/FORGE.md](docs/FORGE.md).

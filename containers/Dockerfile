@@ -24,7 +24,7 @@ COPY --from=build /build/build/work/pdfium/licenses /usr/share/licenses/pdfium/l
 COPY LICENSE NOTICE license-manifest.json /usr/share/licenses/anpdf/
 COPY THIRD_PARTY_LICENSES /usr/share/licenses/anpdf/dependencies
 COPY --from=build /tmp/qpdf-12.4.2/LICENSE.txt /usr/share/licenses/qpdf/LICENSE.txt
-ARG APP_VERSION=0.2.0
+ARG APP_VERSION=0.3.0
 ENV ANPDF_QPDF=/opt/qpdf/bin/qpdf
 ENV ANPDF_PDFIUM_LIB=/usr/local/lib/anpdf/libpdfium.so
 ENV ANPDF_QPDF_EXACT=1

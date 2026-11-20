@@ -6,7 +6,11 @@ Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on 
 tag pushes and `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
 tag alignment on tag pushes), so untrusted PRs never receive package or release write permissions.
 
-Versioning convention: `< 0.5.0` tags use clean milestone versions (`0.2.0`, `v0.2.0`); SemVer prerelease identifiers (`-alpha.N`, `-rc.N`) start at `>= 0.5.0`.
+Current release preparation: **0.3.0**, not yet published. Its baseline includes the
+capability registry, default PDFium content operations, qpdf preservation reporting,
+and the synthetic comparison harness in `docs/BENCHMARK.md`.
+
+Versioning convention: `< 0.5.0` tags use clean milestone versions (`0.3.0`, `v0.3.0`); SemVer prerelease identifiers (`-alpha.N`, `-rc.N`) start at `>= 0.5.0`.
 
 ## Default content engine
 
@@ -23,8 +27,9 @@ Library precedence is `--pdfium-lib` > `ANPDF_PDFIUM_LIB` >
 operations unavailable. The native tarball contains `anpdf`, `libpdfium.dylib`,
 and `PDFIUM_LICENSES/` (upstream LICENSE plus licenses directory). Homebrew installs
 the dylib in `lib/anpdf/` and notices under its documentation directory. Its formula
-URL and SHA-256 remain release-managed: bump both to the newly published tarball
-before distributing this formula change; the old v0.2.0 tarball lacks PDFium.
+URL targets v0.3.0; its all-zero SHA-256 is a deliberate pre-release placeholder,
+not an installable checksum. Replace it after publication as described below;
+the old v0.2.0 tarball lacks PDFium.
 OCI installs `/usr/local/lib/anpdf/libpdfium.so`, sets `ANPDF_PDFIUM_LIB`, and
 carries `/usr/share/licenses/pdfium/`. Binary acquisition is SHA-256 pinned for
 Linux x64/arm64 and macOS arm64; the dynamic library is not statically linked.
@@ -59,13 +64,41 @@ is embedded with pinned `cargo-auditable 0.7.7` for actual binary SBOM discovery
 images carry license notices and retain distribution package copyright records.
 
 ```sh
-docker build -f containers/Dockerfile -t anpdf:0.2.0-local .
-sh containers/smoke.sh anpdf:0.2.0-local
+docker build -f containers/Dockerfile -t anpdf:0.3.0-local .
+sh containers/smoke.sh anpdf:0.3.0-local
 ```
 
 The smoke test uses numeric non-root UID `65532`, read-only rootfs, `--network=none`,
 `no-new-privileges`, dropped capabilities, bounded tmpfs and resource limits, with separate
 read-only input and writable temporary output mounts.
+
+## Release checklist
+
+For **v0.3.0**, release preparation must not push tags, dispatch publication workflows,
+or publish images/assets. Review `CHANGELOG.md`, the version in Cargo.toml/Cargo.lock,
+the Dockerfile `APP_VERSION`, baseline documentation and regenerated contract outputs.
+Keep Forge **0.2.0** and third-party dependency pins unchanged.
+
+Before separately authorizing publication:
+
+1. Dry-run the `prepare` job's version/tag validation with `GITHUB_REF_TYPE=tag`
+   and `GITHUB_REF_NAME=v0.3.0`; reject mismatched tags. Do not execute publish jobs.
+2. Run format, Clippy, tests and builds with default features and
+   `--no-default-features`; run the qpdf/PDFium cross-surface suite using a bundled
+   library layout without `ANPDF_PDFIUM_LIB`. Regenerate licenses without drift,
+   and run Forge qualification, privacy and gitleaks checks.
+3. Build an auditable release binary, stage the native tarball with its PDFium
+   library and notices, and smoke-test that staged binary. A Linux simulation is
+   not macOS qualification; retain hosted macOS evidence separately.
+4. Build the local OCI image, run `containers/smoke.sh`, export an OCI archive,
+   and run pinned Syft, Grype and `build/oci-audit.py` exactly as in `oci.yml`.
+   Review failures; do not waive CVE/license gates to publish.
+5. After a separately authorized tag build publishes the actual macOS tarball,
+   verify its SHA-256 against `SHA256SUMS-macos-arm64.txt`. In a follow-up commit,
+   replace the all-zero `Formula/anpdf.rb` checksum with that exact hash, following
+   the v0.2.0 post-release checksum-bump pattern. Never reuse the v0.2.0 checksum,
+   invent a checksum, or distribute the placeholder formula as installable.
+   Run `ruby -c Formula/anpdf.rb` and the Homebrew test on macOS against that artifact.
 
 ## CI matrix and pinned GitHub Actions
 
