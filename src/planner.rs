@@ -17,7 +17,11 @@ type Providers<T> = Vec<(&'static str, Arc<T>)>;
 
 impl BackendRegistry {
     pub fn with_qpdf(executable: PathBuf) -> Self {
-        Self::with_structural(Arc::new(Qpdf { executable }))
+        Self::with_qpdf_exact(executable, false)
+    }
+
+    pub fn with_qpdf_exact(executable: PathBuf, exact: bool) -> Self {
+        Self::with_structural(Arc::new(Qpdf { executable, exact }))
     }
 
     pub(crate) fn with_structural(structural: Arc<dyn Backend>) -> Self {

@@ -1,5 +1,6 @@
 use crate::error::{Error, Result};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     io::Read,
     os::unix::process::CommandExt,
@@ -128,6 +129,7 @@ pub trait RenderPageBackend: Send + Sync {
 
 pub struct Qpdf {
     pub executable: PathBuf,
+    pub exact: bool,
 }
 fn bounded(mut r: impl Read, max: usize, overflow: Arc<AtomicBool>) -> Vec<u8> {
     let mut out = Vec::new();
@@ -226,13 +228,144 @@ impl Qpdf {
         }
         Ok((status.code().unwrap(), bytes))
     }
-    fn qualified(&self, control: &Control) -> Result<()> {
+    fn qualified(&self, control: &Control) -> Result<Vec<Value>> {
         let (code, bytes) = self.run(&["--version".into()], control)?;
-        if code != 0 || !String::from_utf8_lossy(&bytes).starts_with("qpdf version 12.4.2\n") {
+        let exact = self.exact || std::env::var_os("ANPDF_QPDF_EXACT").is_some_and(|v| v == "1");
+        let version = qpdf_version(&bytes).ok_or(Error("BACKEND_UNAVAILABLE"))?;
+        if code != 0 || !supported_version(version, exact) {
             return Err(Error("BACKEND_UNAVAILABLE"));
         }
-        Ok(())
+        Ok(if version == (12, 4, 2) {
+            vec![]
+        } else {
+            vec![
+                json!({"code":"BACKEND_VERSION_UNTESTED","message":"This qpdf 12.x version is accepted but only 12.4.2 is qualified."}),
+            ]
+        })
     }
+    fn preservation_evidence(
+        &self,
+        v: &Value,
+        path: &str,
+        control: &Control,
+    ) -> Result<(bool, Value)> {
+        let objs = &v["qpdf"][1];
+        let trailer = &objs["trailer"]["value"];
+        let info = trailer
+            .get("/Info")
+            .map(|i| i.as_str().and_then(|r| resolve_obj(objs, r)).unwrap_or(i));
+        let catalog = trailer["/Root"].as_str().and_then(|r| resolve_obj(objs, r));
+        let xmp = catalog.and_then(|c| c.get("/Metadata"));
+        let mut evidence = json!({});
+        let mut metadata = vec![info.cloned().unwrap_or(Value::Null)];
+        let mut metadata_known = !walk_any(&json!(info), |m| {
+            m.values().any(|v| {
+                v.as_str()
+                    .is_some_and(|s| s.ends_with(" R") && !s.starts_with("u:"))
+            })
+        })?;
+        if let Some(xmp) = xmp {
+            if let Some(reference) = xmp.as_str().and_then(|r| r.strip_suffix(" R")) {
+                let (code, bytes) = self.run(
+                    &[
+                        format!("--show-object={}", reference.replace(' ', ",")),
+                        "--filtered-stream-data".into(),
+                        path.into(),
+                    ],
+                    control,
+                )?;
+                if code == 0 {
+                    metadata.push(json!(hex_hash(&bytes)));
+                } else {
+                    metadata_known = false;
+                }
+            } else {
+                metadata_known = false;
+            }
+        }
+        if metadata_known {
+            evidence["metadata"] = json!(hex_hash(
+                &serde_json::to_vec(&metadata).map_err(|_| Error("INTERNAL"))?
+            ));
+        }
+        if let Some(outlines) = normalized_outlines(&v["outlines"], &v["pages"]) {
+            evidence["bookmarks"] =
+                json!(serde_json::to_string(&outlines).map_err(|_| Error("INTERNAL"))?);
+        }
+        if let Some(attachments) = v["attachments"].as_object() {
+            let mut normalized = json!({});
+            let mut known = true;
+            for (key, attachment) in attachments {
+                if attachment["streams"]
+                    .as_object()
+                    .is_none_or(|m| m.len() != 1)
+                {
+                    known = false;
+                    break;
+                }
+                let extracted =
+                    self.run(&[format!("--show-attachment={key}"), path.into()], control);
+                control.check()?;
+                let Ok((0, bytes)) = extracted else {
+                    known = false;
+                    break;
+                };
+                let mut detail = attachment.clone();
+                if let Some(map) = detail.as_object_mut() {
+                    map.remove("filespec");
+                    map.remove("preferredcontents");
+                }
+                normalized[key] = json!({"detail":detail,"sha256":hex_hash(&bytes)});
+            }
+            if known {
+                evidence["attachments"] = json!(hex_hash(
+                    &serde_json::to_vec(&normalized).map_err(|_| Error("INTERNAL"))?
+                ));
+            }
+        }
+        Ok((info.is_some() || xmp.is_some(), evidence))
+    }
+}
+fn hex_hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn normalized_outlines(value: &Value, pages: &Value) -> Option<Value> {
+    let mut outlines = value.as_array()?.clone();
+    for outline in &mut outlines {
+        let map = outline.as_object_mut()?;
+        map.remove("object");
+        if let Some(dest) = map.get_mut("dest").and_then(Value::as_array_mut) {
+            let reference = dest.first()?.as_str()?;
+            let page = pages
+                .as_array()?
+                .iter()
+                .find(|p| p["object"] == reference)?;
+            dest[0] = page["pageposfrom1"].clone();
+        }
+        map.insert("kids".into(), normalized_outlines(map.get("kids")?, pages)?);
+    }
+    Some(Value::Array(outlines))
+}
+fn qpdf_version(bytes: &[u8]) -> Option<(u64, u64, u64)> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let version = text.lines().next()?.strip_prefix("qpdf version ")?;
+    let parts = version.split('.').collect::<Vec<_>>();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return None;
+    }
+    Some((
+        parts[0].parse().ok()?,
+        parts[1].parse().ok()?,
+        parts[2].parse().ok()?,
+    ))
+}
+fn supported_version(version: (u64, u64, u64), exact: bool) -> bool {
+    version == (12, 4, 2) || (!exact && version.0 == 12 && version >= (12, 4, 2))
 }
 fn warning(code: i32) -> Vec<Value> {
     if code == 3 {
@@ -344,6 +477,17 @@ fn extract_pages(v: &Value, objs: &Value) -> Vec<Value> {
         let mut entry = serde_json::Map::new();
         entry.insert("pageNumber".into(), json!(num));
         let dict = page["object"].as_str().and_then(|r| resolve_obj(objs, r));
+        if let Some(dict) = dict {
+            let annots = dict.get("/Annots");
+            let annots =
+                annots.and_then(|a| a.as_str().and_then(|r| resolve_obj(objs, r)).or(Some(a)));
+            if annots.is_none() || annots.is_some_and(Value::is_array) {
+                entry.insert(
+                    "annotationCount".into(),
+                    json!(annots.and_then(Value::as_array).map_or(0, Vec::len)),
+                );
+            }
+        }
         let rot = dict
             .and_then(|d| inherited_attr(objs, d, "/Rotate"))
             .and_then(Value::as_i64)
@@ -446,7 +590,7 @@ fn inspect_json(v: &Value, warn_code: i32) -> Result<(Value, Vec<Value>)> {
 }
 impl Backend for Qpdf {
     fn inspect(&self, path: &Path, control: &Control) -> Result<(Value, Vec<Value>)> {
-        self.qualified(control)?;
+        let mut warnings = self.qualified(control)?;
         let path = path.to_str().ok_or(Error("ACCESS_DENIED"))?.to_string();
         let (encrypted, _) = self.run(&["--is-encrypted".into(), path.clone()], control)?;
         // qpdf --is-encrypted: 0 encrypted, 2 not encrypted, all other exits are errors.
@@ -461,14 +605,23 @@ impl Backend for Qpdf {
             return Err(Error("INVALID_PDF"));
         }
         let (code, data) = self.run(
-            &["--json=2".into(), "--json-stream-data=none".into(), path],
+            &[
+                "--json=2".into(),
+                "--json-stream-data=none".into(),
+                path.clone(),
+            ],
             control,
         )?;
         if code != 0 && code != 3 {
             return Err(Error("INVALID_PDF"));
         }
         let v: Value = serde_json::from_slice(&data).map_err(|_| Error("INVALID_PDF"))?;
-        inspect_json(&v, if check == 3 || code == 3 { 3 } else { 0 })
+        let (mut report, w) = inspect_json(&v, if check == 3 || code == 3 { 3 } else { 0 })?;
+        let (has_metadata, evidence) = self.preservation_evidence(&v, &path, control)?;
+        report["hasMetadata"] = json!(has_metadata);
+        report["preservationEvidence"] = evidence;
+        warnings.extend(w);
+        Ok((report, warnings))
     }
     fn transform(
         &self,
@@ -478,7 +631,12 @@ impl Backend for Qpdf {
         control: &Control,
     ) -> Result<Vec<Value>> {
         let mut args = vec![
-            "--empty".into(),
+            paths
+                .first()
+                .ok_or(Error("INVALID_REQUEST"))?
+                .to_str()
+                .ok_or(Error("ACCESS_DENIED"))?
+                .into(),
             "--deterministic-id".into(),
             "--pages".into(),
         ];
@@ -534,6 +692,108 @@ mod tests {
     use serde_json::{Value, json};
 
     #[test]
+    fn attachment_evidence_is_best_effort_with_bounded_processes() {
+        use super::{Control, Qpdf};
+        use std::{
+            fs,
+            os::unix::fs::PermissionsExt,
+            time::{Duration, Instant},
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("backend");
+        fs::write(&executable, "#!/bin/sh\nprintf synthetic\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let qpdf = Qpdf {
+            executable: executable.clone(),
+            exact: false,
+        };
+        let report = json!({"outlines":[], "pages":[], "attachments":{"sample.txt":{"streams":{"/F":"1 0 R"}}}, "qpdf":[{},{}]});
+        let (_, evidence) = qpdf
+            .preservation_evidence(&report, "input.pdf", &Control::default())
+            .unwrap();
+        assert!(evidence["attachments"].is_string());
+        for script in [
+            "#!/bin/sh\ndd if=/dev/zero bs=1048576 count=33 2>/dev/null\n",
+            "#!/bin/sh\nexit 2\n",
+        ] {
+            fs::write(&executable, script).unwrap();
+            let (_, evidence) = qpdf
+                .preservation_evidence(&report, "input.pdf", &Control::default())
+                .unwrap();
+            assert!(evidence.get("attachments").is_none());
+        }
+        let empty = json!({"attachments":{}, "outlines":[], "pages":[], "qpdf":[{},{}]});
+        assert!(
+            qpdf.preservation_evidence(&empty, "input.pdf", &Control::default())
+                .unwrap()
+                .1["attachments"]
+                .is_string()
+        );
+        fs::write(&executable, "#!/bin/sh\nexec sleep 10\n").unwrap();
+        let control = Control {
+            deadline: Instant::now() + Duration::from_millis(40),
+            ..Control::default()
+        };
+        let start = Instant::now();
+        assert_eq!(
+            qpdf.preservation_evidence(&report, "input.pdf", &control)
+                .unwrap_err()
+                .0,
+            "TIMEOUT"
+        );
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn version_range_and_strict_mode() {
+        use super::{qpdf_version, supported_version};
+        for (text, expected) in [
+            ("12.4.1", false),
+            ("12.4.2", true),
+            ("12.4.10", true),
+            ("12.10.0", true),
+            ("13.0.0", false),
+            ("11.9.9", false),
+        ] {
+            let version =
+                qpdf_version(format!("qpdf version {text}\nRun qpdf --copyright\n").as_bytes())
+                    .unwrap();
+            assert_eq!(supported_version(version, false), expected);
+            assert_eq!(supported_version(version, true), text == "12.4.2");
+        }
+        for text in [
+            "",
+            "12.4.2",
+            "qpdf version 12.4",
+            "qpdf version 12.4.2.1",
+            "qpdf version 12.4.2-dev",
+            "qpdf version +12.4.2",
+            "qpdf version 12.4.2 extra",
+            "qpdf version 99999999999999999999999.4.2",
+        ] {
+            assert!(qpdf_version(text.as_bytes()).is_none(), "{text}");
+        }
+    }
+
+    #[test]
+    fn annotation_counts_resolve_arrays_and_leave_unknown_unreported() {
+        let v = json!({"pages":[{"object":"1 0 R"},{"object":"2 0 R"},{"object":"3 0 R"},{"object":"4 0 R"}]});
+        let objs = json!({
+            "obj:1 0 R":{"value":{"/Annots":["8 0 R","9 0 R"]}},
+            "obj:2 0 R":{"value":{"/Annots":"7 0 R"}},
+            "obj:3 0 R":{"value":{"/Annots":false}},
+            "obj:4 0 R":{"value":{}},
+            "obj:7 0 R":{"value":["9 0 R"]}
+        });
+        let pages = extract_pages(&v, &objs);
+        assert_eq!(pages[0]["annotationCount"], 2);
+        assert_eq!(pages[1]["annotationCount"], 1);
+        assert!(pages[2].get("annotationCount").is_none());
+        assert_eq!(pages[3]["annotationCount"], 0);
+    }
+
+    #[test]
     fn metadata_and_inherited_page_geometry() {
         let v = json!({
             "pages": [
@@ -559,8 +819,8 @@ mod tests {
         assert_eq!(
             extract_pages(&v, objs),
             vec![
-                json!({"pageNumber": 1, "rotation": 270, "widthPoints": 612.0, "heightPoints": 792.0, "label": "i"}),
-                json!({"pageNumber": 2, "rotation": 180, "widthPoints": 300.0, "heightPoints": 400.0})
+                json!({"pageNumber": 1, "rotation": 270, "widthPoints": 612.0, "heightPoints": 792.0, "label": "i", "annotationCount":0}),
+                json!({"pageNumber": 2, "rotation": 180, "widthPoints": 300.0, "heightPoints": 400.0, "annotationCount":0})
             ]
         );
     }
@@ -573,7 +833,7 @@ mod tests {
         });
         assert_eq!(
             extract_pages(&v, &v["qpdf"][1]),
-            vec![json!({"pageNumber": 1, "rotation": 0})]
+            vec![json!({"pageNumber": 1, "rotation": 0, "annotationCount":0})]
         );
     }
 
@@ -597,7 +857,10 @@ mod tests {
             ]
         });
         let (res, _) = inspect_json(&huge_box, 0).unwrap();
-        assert_eq!(res["pages"], json!([{"pageNumber": 1, "rotation": 0}]));
+        assert_eq!(
+            res["pages"],
+            json!([{"pageNumber": 1, "rotation": 0, "annotationCount":0}])
+        );
 
         let mut objs = serde_json::Map::new();
         for i in 0..=MAX_JSON_OBJECTS {

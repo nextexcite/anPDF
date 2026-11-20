@@ -67,7 +67,7 @@ pub fn discovery_with(registry: &BackendRegistry) -> Value {
         } else if matches!(id, "extractText" | "renderPage") {
             "implemented; configured engine required"
         } else {
-            "implemented; qpdf 12.4.2 backend required"
+            "implemented; qpdf 12.x >=12.4.2 required; only 12.4.2 qualified; strict mode requires exact"
         };
         json!({
             "operationId": id, "description": op["summary"], "path":path,

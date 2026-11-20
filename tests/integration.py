@@ -1,5 +1,8 @@
 """Real qpdf cross-surface qualification. Requires built anpdf, qpdf 12.4.2, Poppler."""
 import hashlib,importlib.util,json,os,pathlib,shutil,socket,subprocess,tempfile,time,urllib.request,urllib.error,zlib
+from pypdf import PdfWriter
+from pypdf.annotations import Text, Link
+from pypdf.generic import DecodedStreamObject, NameObject
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BIN=pathlib.Path(os.environ.get('ANPDF_BINARY',ROOT/'target/debug/anpdf')).resolve()
 QPDF=pathlib.Path(os.environ.get('ANPDF_QPDF') or shutil.which('qpdf') or '/usr/bin/qpdf').resolve()
@@ -24,6 +27,29 @@ def build_pdf(objs):
     for o in offs[1:]:res.extend(f'{o:010d} 00000 n \n'.encode())
     res.extend(f'trailer\n<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode());return bytes(res)
 
+def rich_pdf(path,title):
+    w=PdfWriter()
+    for _ in range(3):w.add_blank_page(width=300,height=200)
+    w.add_metadata({'/Title':title,'/Author':'Synthetic','/Custom':'Synthetic custom metadata'})
+    xmp=DecodedStreamObject();xmp.set_data(b'<?xpacket begin=""?><synthetic>metadata</synthetic><?xpacket end="w"?>')
+    xmp[NameObject('/Type')]=NameObject('/Metadata');xmp[NameObject('/Subtype')]=NameObject('/XML')
+    w.root_object[NameObject('/Metadata')]=w._add_object(xmp)
+    w.add_outline_item('First page',0);w.add_outline_item('Last page',2)
+    w.add_attachment('sample.txt',b'Synthetic attachment')
+    w.add_annotation(0,Text(rect=(10,10,30,30),text='Synthetic note'))
+    w.add_annotation(2,Link(rect=(10,10,30,30),url='https://example.invalid/'))
+    with path.open('wb') as f:w.write(f)
+
+def qpdf_features(path):
+    v=json.loads(subprocess.check_output([str(QPDF),'--json=2','--json-stream-data=none',str(path)]));objs=v['qpdf'][1]
+    def resolve(value):return objs['obj:'+value]['value'] if isinstance(value,str) else value
+    trailer=objs['trailer']['value'];catalog=resolve(trailer['/Root'])
+    xmp=catalog.get('/Metadata')
+    if xmp:xmp=subprocess.check_output([str(QPDF),'--show-object='+xmp.removesuffix(' R').replace(' ',','),'--filtered-stream-data',str(path)])
+    attachments={key:subprocess.check_output([str(QPDF),'--show-attachment='+key,str(path)]) for key in v['attachments']}
+    annots=[len(resolve(resolve(page['object']).get('/Annots',[]))) for page in v['pages']]
+    return {'metadata':resolve(trailer.get('/Info',{})),'xmp':xmp,'outlines':[(o['title'],o['destpageposfrom1']) for o in v['outlines']],'attachments':attachments,'annotations':annots}
+
 def run():
  with tempfile.TemporaryDirectory(prefix='anpdf-tests-') as t:
     base=pathlib.Path(t);roots={s:base/s for s in ['cli','http','mcp']}
@@ -47,6 +73,10 @@ def run():
     ])
     for root in roots.values():
         gen.generate(root)
+        rich_pdf(root/'primary.pdf','Primary');rich_pdf(root/'secondary.pdf','Secondary')
+        large=PdfWriter();large.add_blank_page(width=300,height=200)
+        large.add_attachment('large.txt',b'x'*(33*1024*1024))
+        with (root/'large-attachment.pdf').open('wb') as f:large.write(f)
         subprocess.run([str(QPDF),'--encrypt','','synthetic-only','256','--',str(root/'one.pdf'),str(root/'encrypted.pdf')],check=True,capture_output=True)
         (root/'truncated.pdf').write_bytes(b'%PDF-1.7\n1 0 obj\n<< /Type /Catalog')
         (root/'bad-header.pdf').write_bytes(b'NOT-A-PDF-HEADER\x00\xff')
@@ -151,7 +181,24 @@ def run():
               ('inspect',{'input':{'path':'tampered.pdf'}},None),
               ('extract',{'input':{'path':'signed.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED'),
               ('extract',{'input':{'path':'tampered.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED')])
+        corpus.extend([
+          ('inspect',{'input':{'path':'large-attachment.pdf'}},None),
+          ('extract',{'input':{'path':'large-attachment.pdf'},'pages':[1],'output':{'path':'large-extract.pdf'}},None),
+          ('extract',{'input':{'path':'large-attachment.pdf'},'pages':[1],'output':{'path':'large-unmet.pdf'},'preserve':{'attachments':True}},'PRESERVATION_UNMET'),
+          ('extract',{'input':{'path':'primary.pdf'},'pages':[1,3],'output':{'path':'rich-extract.pdf'},'preserve':{'metadata':True,'bookmarks':True,'annotations':True,'attachments':True}},None),
+          ('remove-pages',{'input':{'path':'primary.pdf'},'pages':[1,3],'output':{'path':'rich-remove.pdf'}},None),
+          ('merge',{'inputs':[{'path':'primary.pdf'},{'path':'secondary.pdf'}],'output':{'path':'rich-merge.pdf'}},None),
+          ('merge',{'inputs':[{'path':'primary.pdf'},{'path':'one.pdf'}],'output':{'path':'rich-primary.pdf'},'preserve':{'metadata':True,'bookmarks':True,'annotations':True,'attachments':True}},None),
+          ('merge',{'inputs':[{'path':'one.pdf'},{'path':'primary.pdf'}],'output':{'path':'rich-secondary.pdf'}},None),
+          ('merge',{'inputs':[{'path':'primary.pdf'},{'path':'secondary.pdf'}],'output':{'path':'unmet.pdf'},'preserve':{'metadata':True}},'PRESERVATION_UNMET'),
+          ('remove-pages',{'input':{'path':'primary.pdf'},'pages':[1,3],'output':{'path':'unmet.pdf'},'preserve':{'bookmarks':True}},'PRESERVATION_UNMET'),
+          ('split',{'input':{'path':'primary.pdf'},'parts':[{'pages':[1,2,3],'output':{'path':'unmet-split-a.pdf'}},{'pages':[2],'output':{'path':'unmet-split-b.pdf'}}],'preserve':{'bookmarks':True}},'PRESERVATION_UNMET'),
+          ('split',{'input':{'path':'primary.pdf'},'parts':[{'pages':[1,3],'output':{'path':'rich-split-a.pdf'}},{'pages':[2],'output':{'path':'rich-split-b.pdf'}}]},None),
+          ('compress',{'input':{'path':'compressed.pdf'},'output':{'path':'fallback.pdf'}},None),
+          ('compress',{'input':{'path':'compressed.pdf'},'output':{'path':'larger.pdf'},'allowLargerOutput':True},None),
+        ])
         originals={surface:{f.name:digest(f) for f in root.glob('*.pdf')} for surface,root in roots.items()}
+        responses={}
         for n,(command,request,error) in enumerate(corpus,10):
             op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf','split':'splitPdf','remove-pages':'removePages','compress':'compressPdf','extract-text':'extractText','render-page':'renderPage'}[command]
             cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps(request)],capture_output=True,text=True)
@@ -166,6 +213,7 @@ def run():
             if error:assert a['error']['code']==error,(n,a)
             else:assert status==200
             if error=='BACKEND_UNAVAILABLE':assert status==503 and cli.returncode==8
+            if not error and 'output' in request:responses[request['output']['path']]=a
             for surface,root in roots.items():
                 for name,h in originals[surface].items():assert digest(root/name)==h,(n,'input changed',name)
         assert all(not (root/'page.png').exists() for root in roots.values())
@@ -181,14 +229,56 @@ def run():
         comp_res=json.loads(subprocess.check_output([str(BIN),'compress','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'three.pdf'},'output':{'path':'compressed.pdf','replaceExisting':True}})]))['result']
         assert comp_res['mode']=='lossless' and comp_res['pageCount']==3 and comp_res['savedBytes']==comp_res['inputBytes']-comp_res['bytes'] and comp_res['savedBytes']>0
         recomp=json.loads(subprocess.check_output([str(BIN),'compress','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'compressed.pdf'},'output':{'path':'recompressed.pdf'}})]))
-        assert recomp['result']['bytes']>=recomp['result']['inputBytes'] and any(w['code']=='NO_SIZE_REDUCTION' for w in recomp['warnings'])
+        assert recomp['result']['outputSource']=='original' and recomp['result']['sha256']==digest(roots['cli']/'compressed.pdf') and recomp['result']['savedBytes']==0 and recomp['result']['compressionRatio']==1.0 and any(w['code']=='NO_SIZE_REDUCTION' for w in recomp['warnings'])
+        expected={
+          'rich-extract.pdf':('preserved','preserved','preserved','preserved'),
+          'rich-remove.pdf':('preserved','omitted','absent','preserved'),
+          'rich-merge.pdf':('omitted','omitted','preserved','omitted'),
+          'rich-primary.pdf':('preserved','preserved','preserved','preserved'),
+          'rich-secondary.pdf':('omitted','omitted','preserved','omitted'),
+        }
+        for root in roots.values():
+            assert not (root/'large-unmet.pdf').exists()
+            assert len(subprocess.check_output([str(QPDF),'--show-attachment=large.txt',str(root/'large-extract.pdf')]))==33*1024*1024
+            primary=qpdf_features(root/'primary.pdf')
+            for name,statuses in expected.items():
+                report=responses[name];features=qpdf_features(root/name)
+                assert report['result']['preservation']==dict(zip(['metadata','bookmarks','annotations','attachments'],statuses)),(name,report)
+                assert features['annotations']=={'rich-extract.pdf':[1,1],'rich-remove.pdf':[0],'rich-merge.pdf':[1,0,1,1,0,1],'rich-primary.pdf':[1,0,1,0],'rich-secondary.pdf':[0,1,0,1]}[name],(name,features)
+                if name!='rich-secondary.pdf':
+                    assert features['metadata']==primary['metadata'] and features['xmp']==primary['xmp'] and features['attachments']==primary['attachments']
+                else:assert features['metadata']=={} and not features['xmp'] and not features['attachments'] and not features['outlines']
+                if name=='rich-remove.pdf':assert features['outlines']==[('First page',None),('Last page',None)]
+                elif name=='rich-extract.pdf':assert features['outlines']==[('First page',1),('Last page',2)]
+                elif name!='rich-secondary.pdf':assert features['outlines']==primary['outlines']
+                omitted=[key for key,value in report['result']['preservation'].items() if value=='omitted']
+                warnings=[w for w in report['warnings'] if w['code']=='PRESERVATION_OMITTED']
+                assert len(warnings)==bool(omitted)
+                if omitted:assert all(key in warnings[0]['message'] for key in omitted)
+            for name in ['unmet.pdf','unmet-split-a.pdf','unmet-split-b.pdf']:assert not (root/name).exists()
+            assert digest(root/'fallback.pdf')==digest(root/'compressed.pdf')
+        assert responses['fallback.pdf']['result']['outputSource']=='original'
+        assert responses['large-extract.pdf']['result']['preservation']['attachments']=='omitted'
+        assert any(w['code']=='PRESERVATION_OMITTED' and 'attachments' in w['message'] for w in responses['large-extract.pdf']['warnings'])
+        assert responses['larger.pdf']['result']['outputSource']=='compressed' and responses['larger.pdf']['result']['bytes']>=responses['larger.pdf']['result']['inputBytes']
         for root in roots.values():assert not (root/'split-rollback.pdf').exists()
         # Verify enriched inspectPdf metadata, page geometry, rotation, and action signals.
         mixed_inspect=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'mixed.pdf'}})]))['result']
         assert mixed_inspect['pdfVersion']=='1.7' and mixed_inspect['actions']=='absent' and mixed_inspect['hasOutline'] is False and mixed_inspect['hasAttachments'] is False and mixed_inspect['metadata']=={}
-        assert mixed_inspect['pages']==[{'pageNumber':1,'rotation':0,'widthPoints':300.0,'heightPoints':200.0},{'pageNumber':2,'rotation':90,'widthPoints':310.0,'heightPoints':200.0}]
+        assert mixed_inspect['pages']==[{'pageNumber':1,'rotation':0,'widthPoints':300.0,'heightPoints':200.0,'annotationCount':0},{'pageNumber':2,'rotation':90,'widthPoints':310.0,'heightPoints':200.0,'annotationCount':0}]
         action_inspect=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'action.pdf'}})]))['result']
         assert action_inspect['actions']=='present'
+        # A version-reporting wrapper still delegates every PDF command to real qpdf.
+        version_wrapper=base/'version-qpdf'
+        version_wrapper.write_text('#!/usr/bin/python3\nimport os,sys\nif sys.argv[1:]==["--version"]: print("qpdf version 12.4.10")\nelse: os.execv('+repr(str(QPDF))+', ['+repr(str(QPDF))+']+sys.argv[1:])\n');version_wrapper.chmod(0o700)
+        env=dict(os.environ);env['ANPDF_QPDF_EXACT']='0'
+        args=[str(BIN),'merge','--root',str(roots['cli']),'--qpdf',str(version_wrapper),'--request-json',json.dumps({'inputs':[{'path':'one.pdf'},{'path':'three.pdf'}],'output':{'path':'version-output.pdf'}})]
+        r=subprocess.run(args,capture_output=True,text=True,env=env);assert r.returncode==0,r.stderr
+        assert len([w for w in json.loads(r.stdout)['warnings'] if w['code']=='BACKEND_VERSION_UNTESTED'])==1
+        (roots['cli']/'version-output.pdf').unlink()
+        for strict_args,strict_env in [(args+['--qpdf-exact'],env),(args,dict(env,ANPDF_QPDF_EXACT='1'))]:
+            r=subprocess.run(strict_args,capture_output=True,text=True,env=strict_env)
+            assert r.returncode==8 and json.loads(r.stderr)['error']['code']=='BACKEND_UNAVAILABLE',r
         # Verify CLI help/version/completions and trusted-PATH qpdf auto-discovery.
         for args in [['--help'],['-h'],['help'],['split','--help'],['completions','--help'],['completions','bash'],['completions','zsh'],['completions','fish'],['--version'],['-V'],['version']]:
             r=subprocess.run([str(BIN),*args],capture_output=True,text=True);assert r.returncode==0 and r.stdout and not r.stderr,(args,r)

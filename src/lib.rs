@@ -37,7 +37,10 @@ impl Drop for Permit<'_> {
 }
 impl Dispatcher {
     pub fn new(root: &Path, executable: PathBuf) -> Result<Self> {
-        Self::with_registry(root, BackendRegistry::with_qpdf(executable))
+        Self::new_exact(root, executable, false)
+    }
+    pub fn new_exact(root: &Path, executable: PathBuf, exact: bool) -> Result<Self> {
+        Self::with_registry(root, BackendRegistry::with_qpdf_exact(executable, exact))
     }
     pub fn with_backend(root: &Path, backend: Arc<dyn Backend>) -> Result<Self> {
         Self::with_registry(root, BackendRegistry::with_structural(backend))
@@ -236,6 +239,7 @@ impl Dispatcher {
                 let (extracted, provider_warnings) =
                     backend.extract_text(&paths[0], &pages, control)?;
                 warnings.extend(provider_warnings);
+                dedupe_warnings(&mut warnings);
                 let value = content::text_envelope(engine, &pages, extracted, warnings)?;
                 self.workspace.unchanged(&mut inputs)?;
                 control.check()?;
@@ -259,6 +263,7 @@ impl Dispatcher {
                     "path":request["output"]["path"], "sha256":filesystem::hash(&mut png)?,
                     "bytes":info.bytes, "width":info.width, "height":info.height,
                 });
+                dedupe_warnings(&mut warnings);
                 let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
                 content::validate_envelope(id, &envelope)?;
                 self.workspace.unchanged(&mut inputs)?;
@@ -288,6 +293,8 @@ impl Dispatcher {
                     rel_path,
                     control,
                     &mut warnings,
+                    &reports,
+                    &request["preserve"],
                 )?;
                 total_output_bytes += bytes;
                 if total_output_bytes > TOTAL_LIMIT {
@@ -296,6 +303,7 @@ impl Dispatcher {
                 artifacts.push(artifact);
                 staged_outputs.push(out);
             }
+            dedupe_warnings(&mut warnings);
             let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":{"outputs":artifacts},"warnings":warnings});
             if !contract::valid_output(id, &envelope) {
                 return Err(Error("INTERNAL"));
@@ -329,22 +337,28 @@ impl Dispatcher {
                 {
                     return Err(Error("PRESERVATION_UNKNOWN"));
                 }
-                let mut file = std::fs::File::open(&out)?;
+                let compressed_bytes = std::fs::metadata(&out)?.len();
+                let input_bytes = inputs[0].bytes;
+                let keep_original =
+                    compressed_bytes >= input_bytes && request["allowLargerOutput"] != true;
+                let source = if keep_original { &paths[0] } else { &out };
+                let mut file = std::fs::File::open(source)?;
                 let bytes = file.metadata()?.len();
                 if bytes > TOTAL_LIMIT {
                     return Err(Error("LIMIT_EXCEEDED"));
                 }
-                let input_bytes = inputs[0].bytes;
                 let saved_bytes = input_bytes as i64 - bytes as i64;
-                let ratio = if input_bytes > 0 {
+                let ratio = if keep_original {
+                    1.0
+                } else if input_bytes > 0 {
                     ((bytes as f64 / input_bytes as f64) * 10000.0).round() / 10000.0
                 } else {
                     0.0
                 };
-                if bytes >= input_bytes {
+                if compressed_bytes >= input_bytes {
                     warnings.push(json!({
                         "code": "NO_SIZE_REDUCTION",
-                        "message": "Output size is not smaller than input; input may already be compact."
+                        "message": if keep_original { "Compressed output is not smaller; original bytes were kept." } else { "Compressed output is not smaller; compressed bytes were kept as requested." }
                     }));
                 }
                 let result = json!({
@@ -356,14 +370,16 @@ impl Dispatcher {
                     "savedBytes": saved_bytes,
                     "compressionRatio": ratio,
                     "mode": mode_str,
+                    "outputSource": if keep_original { "original" } else { "compressed" },
                 });
+                dedupe_warnings(&mut warnings);
                 let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
                 if !contract::valid_output(id, &envelope) {
                     return Err(Error("INTERNAL"));
                 }
                 self.workspace.unchanged(&mut inputs)?;
                 control.check()?;
-                destination.commit(&out, &inputs)?;
+                destination.commit(source, &inputs)?;
                 return Ok(envelope);
             }
             if pages
@@ -392,7 +408,10 @@ impl Dispatcher {
                 request["output"]["path"].as_str().unwrap(),
                 control,
                 &mut warnings,
+                &reports,
+                &request["preserve"],
             )?;
+            dedupe_warnings(&mut warnings);
             let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
             if !contract::valid_output(id, &envelope) {
                 return Err(Error("INTERNAL"));
@@ -406,6 +425,7 @@ impl Dispatcher {
         };
         self.workspace.unchanged(&mut inputs)?;
         control.check()?;
+        dedupe_warnings(&mut warnings);
         let value = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
         if !contract::valid_output(id, &value) {
             return Err(Error("INTERNAL"));
@@ -450,6 +470,8 @@ fn transform_artifact(
     rel_path: &str,
     control: &Control,
     warnings: &mut Vec<Value>,
+    inputs: &[Value],
+    preserve: &Value,
 ) -> Result<(Value, u64)> {
     warnings.extend(backend.transform(paths, pages, out, control)?);
     let (report, w) = backend.inspect(out, control)?;
@@ -466,10 +488,149 @@ fn transform_artifact(
     if bytes > TOTAL_LIMIT {
         return Err(Error("LIMIT_EXCEEDED"));
     }
+    let preservation = preservation_status(inputs, &report, pages);
+    for aspect in ["metadata", "bookmarks", "annotations", "attachments"] {
+        if preserve[aspect] == true && preservation[aspect] == "omitted" {
+            return Err(Error("PRESERVATION_UNMET"));
+        }
+    }
+    let omitted = ["metadata", "bookmarks", "annotations", "attachments"]
+        .into_iter()
+        .filter(|a| preservation[*a] == "omitted")
+        .collect::<Vec<_>>();
+    if !omitted.is_empty() {
+        warnings.push(json!({"code":"PRESERVATION_OMITTED","message":format!("Document aspects omitted or not verified: {}.", omitted.join(", "))}));
+    }
     Ok((
-        json!({"path":rel_path,"sha256":filesystem::hash(&mut file)?,"bytes":bytes,"pageCount":expected}),
+        json!({"path":rel_path,"sha256":filesystem::hash(&mut file)?,"bytes":bytes,"pageCount":expected,"preservation":preservation}),
         bytes,
     ))
+}
+
+fn dedupe_warnings(warnings: &mut Vec<Value>) {
+    let mut unique = Vec::new();
+    let mut omitted = std::collections::BTreeSet::new();
+    for warning in warnings.drain(..) {
+        if warning["code"] == "PRESERVATION_OMITTED" {
+            for aspect in ["metadata", "bookmarks", "annotations", "attachments"] {
+                if warning["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains(aspect))
+                {
+                    omitted.insert(aspect);
+                }
+            }
+        } else if !unique.contains(&warning) {
+            unique.push(warning);
+        }
+    }
+    if !omitted.is_empty() {
+        unique.push(json!({"code":"PRESERVATION_OMITTED","message":format!("Document aspects omitted or not verified: {}.", omitted.into_iter().collect::<Vec<_>>().join(", "))}));
+    }
+    *warnings = unique;
+}
+
+fn annotation_count(report: &Value, pages: Option<&[u64]>) -> Option<u64> {
+    let entries = report["pages"].as_array()?;
+    if entries.len() as u64 != report["pageCount"].as_u64()? {
+        return None;
+    }
+    entries
+        .iter()
+        .filter(|p| {
+            pages.is_none_or(|selected| {
+                p["pageNumber"]
+                    .as_u64()
+                    .is_some_and(|n| selected.contains(&n))
+            })
+        })
+        .try_fold(0u64, |sum, p| {
+            sum.checked_add(p["annotationCount"].as_u64()?)
+        })
+}
+
+fn preservation_status(inputs: &[Value], output: &Value, pages: Option<&[u64]>) -> Value {
+    let status = |exists: bool, carried: bool| {
+        if !exists {
+            "absent"
+        } else if carried {
+            "preserved"
+        } else {
+            "omitted"
+        }
+    };
+    let metadata_present = |i: &Value| {
+        i["hasMetadata"] == true || i["metadata"].as_object().is_none_or(|m| !m.is_empty())
+    };
+    let evidence_matches = |i: &Value, key: &str| {
+        i["preservationEvidence"][key]
+            .as_str()
+            .is_some_and(|hash| output["preservationEvidence"][key] == hash)
+    };
+    let metadata_exists = inputs.iter().any(metadata_present);
+    let metadata_preserved = inputs
+        .iter()
+        .all(|i| !metadata_present(i) || evidence_matches(i, "metadata"));
+    let feature = |key: &str, aspect: &str| {
+        let exists = inputs.iter().any(|i| i[key] != false);
+        let primary_matches = if aspect == "bookmarks" {
+            bookmarks_match(&inputs[0], output, pages)
+        } else {
+            evidence_matches(&inputs[0], aspect)
+        };
+        let carried = output[key] == true
+            && primary_matches
+            && inputs.iter().skip(1).all(|i| i[key] == false);
+        status(exists, carried)
+    };
+    let input_annotations = inputs
+        .iter()
+        .try_fold(0u64, |sum, i| sum.checked_add(annotation_count(i, pages)?));
+    let output_annotations = annotation_count(output, None);
+    json!({
+        "metadata": status(metadata_exists, metadata_preserved),
+        "bookmarks": feature("hasOutline", "bookmarks"),
+        "attachments": feature("hasAttachments", "attachments"),
+        "annotations": match (input_annotations, output_annotations) {
+            (Some(0), _) => "absent",
+            (Some(a), Some(b)) if a == b => "preserved",
+            _ => "omitted",
+        }
+    })
+}
+
+fn bookmarks_match(input: &Value, output: &Value, pages: Option<&[u64]>) -> bool {
+    fn remap(outlines: &mut Value, pages: &[u64]) -> Option<()> {
+        for outline in outlines.as_array_mut()? {
+            if let Some(n) = outline["destpageposfrom1"].as_u64() {
+                let position = pages.iter().position(|p| *p == n)? as u64 + 1;
+                outline["destpageposfrom1"] = json!(position);
+                if let Some(dest) = outline["dest"].as_array_mut() {
+                    *dest.first_mut()? = json!(position);
+                }
+            }
+            remap(&mut outline["kids"], pages)?;
+        }
+        Some(())
+    }
+    let Some(source) = input["preservationEvidence"]["bookmarks"].as_str() else {
+        return false;
+    };
+    let Some(target) = output["preservationEvidence"]["bookmarks"].as_str() else {
+        return false;
+    };
+    let (Ok(mut source), Ok(target)) = (
+        serde_json::from_str::<Value>(source),
+        serde_json::from_str::<Value>(target),
+    ) else {
+        return false;
+    };
+    if let Some(pages) = pages
+        && remap(&mut source, pages).is_none()
+    {
+        return false;
+    }
+    source == target
 }
 
 #[cfg(test)]

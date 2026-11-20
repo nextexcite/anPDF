@@ -214,6 +214,233 @@ mod content_operations {
     }
 }
 
+fn preservation_report() -> serde_json::Value {
+    json!({"sha256":"0".repeat(64),"bytes":1,"pageCount":1,"pdfVersion":"1.7",
+        "structuralStatus":"valid","encrypted":false,"forms":"absent","signatures":"absent",
+        "signatureValidity":"notChecked","actions":"absent","hasOutline":false,"hasAttachments":false,
+        "metadata":{},"pages":[{"pageNumber":1,"rotation":0,"annotationCount":0}]})
+}
+
+struct PreservationBackend {
+    input: serde_json::Value,
+    output: serde_json::Value,
+    bytes: Vec<u8>,
+}
+impl crate::backend::Backend for PreservationBackend {
+    fn inspect(
+        &self,
+        path: &std::path::Path,
+        _: &crate::backend::Control,
+    ) -> crate::error::Result<(serde_json::Value, Vec<serde_json::Value>)> {
+        let input = path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("input-");
+        Ok((
+            if input {
+                self.input.clone()
+            } else {
+                self.output.clone()
+            },
+            vec![json!({"code":"BACKEND_VERSION_UNTESTED","message":"Test backend version."})],
+        ))
+    }
+    fn transform(
+        &self,
+        _: &[std::path::PathBuf],
+        _: Option<&[u64]>,
+        out: &std::path::Path,
+        _: &crate::backend::Control,
+    ) -> crate::error::Result<Vec<serde_json::Value>> {
+        fs::write(out, &self.bytes)?;
+        Ok(vec![])
+    }
+    fn compress(
+        &self,
+        _: &std::path::Path,
+        _: crate::backend::CompressMode,
+        out: &std::path::Path,
+        _: &crate::backend::Control,
+    ) -> crate::error::Result<Vec<serde_json::Value>> {
+        fs::write(out, &self.bytes)?;
+        Ok(vec![])
+    }
+}
+
+#[test]
+fn preservation_statuses_and_required_failure_do_not_publish() {
+    use crate::{Dispatcher, backend::Control, preservation_status};
+    let empty = preservation_report();
+    assert_eq!(
+        preservation_status(std::slice::from_ref(&empty), &empty, None),
+        json!({"metadata":"absent","bookmarks":"absent","attachments":"absent","annotations":"absent"})
+    );
+    let mut rich = empty.clone();
+    rich["metadata"] = json!({"title":"Synthetic"});
+    rich["hasOutline"] = json!(true);
+    rich["hasAttachments"] = json!(true);
+    rich["pages"][0]["annotationCount"] = json!(2);
+    rich["preservationEvidence"] =
+        json!({"metadata":"a".repeat(64),"attachments":"b".repeat(64),"bookmarks":"[]"});
+    let preserved = preservation_status(std::slice::from_ref(&rich), &rich, None);
+    for aspect in ["metadata", "bookmarks", "attachments", "annotations"] {
+        assert_eq!(preserved[aspect], "preserved");
+    }
+    let merged = preservation_status(&[rich.clone(), rich.clone()], &rich, None);
+    assert_eq!(merged["metadata"], "preserved");
+    for aspect in ["bookmarks", "attachments", "annotations"] {
+        assert_eq!(merged[aspect], "omitted");
+    }
+    let mut unknown = rich.clone();
+    unknown["pages"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("annotationCount");
+    assert_eq!(
+        preservation_status(&[unknown], &rich, None)["annotations"],
+        "omitted"
+    );
+    let t = tempfile::tempdir().unwrap();
+    fs::write(t.path().join("in.pdf"), b"original").unwrap();
+    fs::write(t.path().join("existing.pdf"), b"existing").unwrap();
+    let d = Dispatcher::with_backend(
+        t.path(),
+        std::sync::Arc::new(PreservationBackend {
+            input: rich,
+            output: empty,
+            bytes: b"transformed".to_vec(),
+        }),
+    )
+    .unwrap();
+    let best = d
+        .dispatch(
+            "extractPdf",
+            &json!({"input":{"path":"in.pdf"},"pages":[1],"output":{"path":"best.pdf"}}),
+            false,
+            &Control::default(),
+        )
+        .unwrap();
+    assert_eq!(best["result"]["preservation"]["metadata"], "omitted");
+    assert_eq!(
+        best["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| w["code"] == "PRESERVATION_OMITTED")
+            .count(),
+        1
+    );
+    assert_eq!(
+        best["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| w["code"] == "BACKEND_VERSION_UNTESTED")
+            .count(),
+        1
+    );
+    for aspect in ["metadata", "bookmarks", "attachments", "annotations"] {
+        let request = json!({"input":{"path":"in.pdf"},"pages":[1],"output":{"path":"existing.pdf","replaceExisting":true},"preserve":{aspect:true}});
+        assert_eq!(
+            d.dispatch("extractPdf", &request, false, &Control::default())
+                .unwrap_err()
+                .0,
+            "PRESERVATION_UNMET"
+        );
+        assert_eq!(
+            fs::read(t.path().join("existing.pdf")).unwrap(),
+            b"existing"
+        );
+    }
+    let error = Error("PRESERVATION_UNMET");
+    assert_eq!((error.http(), error.exit()), (422, 5));
+    assert_eq!(error.envelope("extractPdf")["error"]["retryable"], false);
+    assert!(!contract::valid_input(
+        "extractPdf",
+        &json!({"input":{"path":"in.pdf"},"pages":[1],"output":{"path":"out.pdf"},"preserve":{"unknown":true}})
+    ));
+}
+
+#[test]
+fn compression_fallback_and_opt_out_describe_published_bytes() {
+    use crate::{Dispatcher, backend::Control};
+    for (input, compressed, allow, expected) in [
+        (
+            b"input".as_slice(),
+            b"larger output".as_slice(),
+            false,
+            "original",
+        ),
+        (b"input", b"larger output", true, "compressed"),
+        (b"larger input", b"small", false, "compressed"),
+        (b"input", b"equal", false, "original"),
+        (b"", b"", false, "original"),
+    ] {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(t.path().join("in.pdf"), input).unwrap();
+        let d = Dispatcher::with_backend(
+            t.path(),
+            std::sync::Arc::new(PreservationBackend {
+                input: preservation_report(),
+                output: preservation_report(),
+                bytes: compressed.to_vec(),
+            }),
+        )
+        .unwrap();
+        let response = d.dispatch("compressPdf", &json!({"input":{"path":"in.pdf"},"output":{"path":"out.pdf"},"allowLargerOutput":allow}), false, &Control::default()).unwrap();
+        let result = &response["result"];
+        let written = fs::read(t.path().join("out.pdf")).unwrap();
+        assert_eq!(
+            written,
+            if expected == "original" {
+                input
+            } else {
+                compressed
+            }
+        );
+        assert_eq!(result["outputSource"], expected);
+        assert_eq!(result["bytes"], written.len());
+        assert_eq!(
+            result["sha256"],
+            crate::filesystem::hash(&mut fs::File::open(t.path().join("out.pdf")).unwrap())
+                .unwrap()
+        );
+        if expected == "original" {
+            assert_eq!(result["savedBytes"], 0);
+            assert_eq!(result["compressionRatio"], 1.0);
+        }
+    }
+}
+
+#[test]
+fn compression_invalid_output_never_falls_back_or_publishes() {
+    let t = tempfile::tempdir().unwrap();
+    fs::write(t.path().join("in.pdf"), b"original").unwrap();
+    let mut output = preservation_report();
+    output["pageCount"] = json!(2);
+    let d = crate::Dispatcher::with_backend(
+        t.path(),
+        std::sync::Arc::new(PreservationBackend {
+            input: preservation_report(),
+            output,
+            bytes: b"larger compressed bytes".to_vec(),
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        d.dispatch(
+            "compressPdf",
+            &json!({"input":{"path":"in.pdf"},"output":{"path":"out.pdf"}}),
+            false,
+            &crate::backend::Control::default()
+        )
+        .unwrap_err()
+        .0,
+        "PRESERVATION_UNKNOWN"
+    );
+    assert!(!t.path().join("out.pdf").exists());
+}
 #[test]
 fn schema_rejects_unknown_properties_and_bad_pages() {
     assert!(contract::valid_input(
@@ -380,6 +607,7 @@ fn process_timeout_and_output_limits() {
     fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
     let q = Qpdf {
         executable: exe.clone(),
+        exact: false,
     };
     let c = Control {
         deadline: Instant::now() + Duration::from_millis(40),
