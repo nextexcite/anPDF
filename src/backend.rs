@@ -55,12 +55,11 @@ pub fn compress_deadline(input_bytes: u64) -> Duration {
     }
     Duration::from_secs(60 + input_bytes.div_ceil(1024 * 1024) * 20).min(Duration::from_secs(600))
 }
-const RSS_LIMIT_BYTES: u64 = 768 * 1024 * 1024;
 const MAX_JSON_OBJECTS: usize = 200_000;
 const MAX_WALK_NODES: usize = 2_000_000;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn child_rss_exceeded(pid: i32) -> bool {
+pub(crate) fn child_rss_exceeded(pid: i32, limit: u64) -> bool {
     let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
     let rc = unsafe {
@@ -72,11 +71,11 @@ pub(crate) fn child_rss_exceeded(pid: i32) -> bool {
             size,
         )
     };
-    rc == size && info.pti_resident_size > RSS_LIMIT_BYTES
+    rc == size && info.pti_resident_size > limit
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn child_rss_exceeded(pid: i32) -> bool {
+pub(crate) fn child_rss_exceeded(pid: i32, limit: u64) -> bool {
     // Linux: read VmRSS from procfs so the RLIMIT_AS clamp's tolerated
     // failure path still leaves the worker's memory bounded.
     let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
@@ -86,7 +85,7 @@ pub(crate) fn child_rss_exceeded(pid: i32) -> bool {
         .lines()
         .find_map(|l| l.strip_prefix("VmRSS:"))
         .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
-        .is_some_and(|kb| kb * 1024 > RSS_LIMIT_BYTES)
+        .is_some_and(|kb| kb * 1024 > limit)
 }
 
 #[derive(Clone, Copy)]
@@ -290,7 +289,7 @@ impl Qpdf {
         let f = overflow.clone();
         let err = std::thread::spawn(move || bounded(stderr, 65536, f));
         let status = loop {
-            let mem_exceeded = child_rss_exceeded(pid);
+            let mem_exceeded = child_rss_exceeded(pid, self.as_limit);
             if control.check().is_err() || overflow.load(Ordering::Relaxed) || mem_exceeded {
                 unsafe { libc::kill(-pid, libc::SIGKILL) };
                 let _ = child.wait();

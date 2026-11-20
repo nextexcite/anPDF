@@ -70,7 +70,7 @@ impl PdfOxide {
                 stop(&mut child);
                 return Err(e);
             }
-            if child_rss_exceeded(pid) {
+            if child_rss_exceeded(pid, 768 * 1024 * 1024) {
                 stop(&mut child);
                 return Err(Error("LIMIT_EXCEEDED", None));
             }
