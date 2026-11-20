@@ -59,8 +59,11 @@ identity exceptions in `build/privacy-baseline.json`. Each entry requires review
 and binds a full commit SHA to the SHA-256 of its exact
 `git show -s --format='%an%n%ae%n%cn%n%ce'` output, including the final newline;
 names and addresses must not appear in the baseline. Invalid baselines fail the
-gate. Exceptions do not exempt blobs, remotes, or any other privacy checks, and
-do not generally permit web merges or particular address formats.
+gate. The reviewed `webMergeIdentitySha256` list additionally permits an exact
+identity hash only for commits with at least two parents. The approved identity
+does not permit single-parent squash, rebase, or ordinary commits; other names,
+addresses, and committers remain rejected. Neither allowance exempts blobs,
+remotes, or any other privacy checks.
 
 Blob checks still scan the history reachable from every ref, including `HEAD`.
 Email-bearing license notice blobs must be sanctioned by the committed
