@@ -55,7 +55,6 @@ pub fn compress_deadline(input_bytes: u64) -> Duration {
     }
     Duration::from_secs(60 + input_bytes.div_ceil(1024 * 1024) * 20).min(Duration::from_secs(600))
 }
-#[cfg(target_os = "macos")]
 const RSS_LIMIT_BYTES: u64 = 768 * 1024 * 1024;
 const MAX_JSON_OBJECTS: usize = 200_000;
 const MAX_WALK_NODES: usize = 2_000_000;
@@ -77,8 +76,17 @@ pub(crate) fn child_rss_exceeded(pid: i32) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn child_rss_exceeded(_pid: i32) -> bool {
-    false
+pub(crate) fn child_rss_exceeded(pid: i32) -> bool {
+    // Linux: read VmRSS from procfs so the RLIMIT_AS clamp's tolerated
+    // failure path still leaves the worker's memory bounded.
+    let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
+        return false;
+    };
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmRSS:"))
+        .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        .is_some_and(|kb| kb * 1024 > RSS_LIMIT_BYTES)
 }
 
 #[derive(Clone, Copy)]
