@@ -31,11 +31,15 @@ Versioning convention:
 | Remove selected pages and keep the rest | `remove-pages` | `POST /v1/remove-pages` | `removePages` |
 | Compress streams / optimize images | `compress` | `POST /v1/compress` | `compressPdf` |
 
-All three surfaces use the same validated operation contract. The Rust runtime uses **qpdf 12.4.2** for PDF processing; pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Release builds publish multi-arch **`linux/amd64` + `linux/arm64` OCI images** (GHCR) and **`macos/arm64` native binaries** (GitHub Releases + Homebrew tap from this repository).
+All three surfaces use the same validated operation contract. The Rust runtime accepts **qpdf 12.x >=12.4.2**, with **12.4.2** the tested version; other accepted versions emit `BACKEND_VERSION_UNTESTED` once per response. `ANPDF_QPDF_EXACT=1` or `--qpdf-exact` requires exactly 12.4.2 (enabled in CI and OCI). Pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Release builds publish multi-arch **`linux/amd64` + `linux/arm64` OCI images** (GHCR) and **`macos/arm64` native binaries** (GitHub Releases + Homebrew tap from this repository).
 
 The development contract also exposes [embedded text extraction and PNG rendering](docs/PROTOCOLS.md#optional-text-and-rendering-engines). These operations require optional engine providers; the qpdf-only build reports them as unavailable.
 
 Transforms currently **reject** encrypted, signed, form/XFA-bearing, or preservation-unknown PDFs. Inspection is structural—not visual, cryptographic, PDF/A, or malware certification.
+
+Merge, extract, split and remove-pages retain the first input as the primary document. Each output reports `preservation` for `metadata`, `bookmarks`, `annotations` and `attachments`: `preserved`, `omitted` (including uncertainty), or `absent`. Optional `preserve` booleans require those aspects when present; an unmet requirement fails with `PRESERVATION_UNMET` before any output is published. Defaults are best effort, with one `PRESERVATION_OMITTED` warning naming omissions. Secondary merge metadata can be omitted, and secondary bookmarks/attachments are not merged. Inspection includes optional per-page `annotationCount`. See [preservation evidence and limitations](docs/PROTOCOLS.md#preservation-and-compression).
+
+Compression keeps the validated original bytes if compressed output is not smaller, unless `allowLargerOutput:true` is requested. Required `outputSource` identifies `original` or `compressed`; reported hashes, sizes and savings describe the bytes actually written. `NO_SIZE_REDUCTION` names which was kept.
 
 ## Basic usage
 
@@ -91,7 +95,7 @@ See [protocols and setup](docs/PROTOCOLS.md) for JSON schemas, error codes, and 
 
 ## Build from source
 
-Requires **Rust 1.100.0**, **Python 3**, and **qpdf 12.4.2** on a standard/trusted path (or `ANPDF_QPDF` / `--qpdf`). The integration test suite also requires **Poppler** (`pdftotext`).
+Requires **Rust 1.100.0**, **Python 3**, and **qpdf 12.x >=12.4.2** on a standard/trusted path (or `ANPDF_QPDF` / `--qpdf`). Qualification uses exactly **12.4.2**. The integration test suite also requires **Poppler** (`pdftotext`) and `build/test-requirements.txt`.
 
 ```sh
 cargo fmt --all --check
