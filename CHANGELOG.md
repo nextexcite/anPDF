@@ -18,15 +18,30 @@ SemVer prerelease suffixes, not production-qualified releases.
   `--dpi`; `--` terminates flag parsing for dash-leading filenames. Shorthand
   produces the same contract request and identical result envelopes as
   `--request-json`/`--request-file`.
-- `<pages>` shorthand accepts comma lists and ranges (`1,3`, `2-5`).
+- `<pages>` shorthand accepts comma lists and ranges (`1,3`, `2-5`), and is
+  also available as the `--pages <spec>` flag for extract, remove-pages and
+  extract-text.
+- Shorthand paths may be absolute or start with `~` (expanded via `$HOME`):
+  the invocation's workspace root adapts to the files' common canonical
+  directory, so `cd /tmp && anpdf compress ~/Downloads/x.pdf` works. An
+  explicit `--root` pins the sandbox and refuses absolute inputs outside it;
+  JSON requests, HTTP and MCP keep workspace-relative paths unchanged.
+- Error envelopes carry a detail suffix naming the failing field, flag or
+  file — e.g. `/input/path: 1 is not of type "string"`, `--level expects
+  1, 2 or 3`, `input 'missing.pdf'`. The error schema and exit codes are
+  unchanged, and envelopes stay identical across CLI, HTTP and MCP.
 
 ### Changed
 - A bare `anpdf` or `anpdf <operation>` on a terminal prints command usage and
   exits instead of blocking on stdin; piped stdin still supplies the JSON
   request.
+- On a terminal, successful results print pretty-printed JSON and errors
+  print `anpdf <command>: <reason>`; piped stdout/stderr keep the canonical
+  envelopes byte-identical.
 - Parse-stage `INVALID_REQUEST`/`UNSUPPORTED_OPERATION` print usage on a
   terminal; non-terminal stderr keeps the canonical JSON error envelope
   byte-identical.
+- Non-UTF-8 arguments fail with `INVALID_REQUEST` instead of panicking.
 - `anpdf serve` now fails fast with `INVALID_REQUEST` when `--token-file` is
   missing, at parse time.
 - `--help`/`-h` works in any position for known commands (e.g.

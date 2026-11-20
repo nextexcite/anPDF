@@ -39,7 +39,7 @@ async fn handle(State(state): State<App>, request: Request) -> Response {
         .map(|(_, o)| o["operationId"].as_str().unwrap())
         .unwrap_or("unknown");
     let fail = |code| {
-        let e = Error(code);
+        let e = Error(code, None);
         response(e.envelope(op), e.http())
     };
     if request.headers().contains_key("origin")
@@ -107,15 +107,15 @@ pub async fn shutdown_signal() {
 }
 pub async fn serve(dispatcher: Arc<Dispatcher>, port: u16, token: String) -> Result<()> {
     if token.len() < 32 || !token.bytes().all(|b| b.is_ascii_graphic()) {
-        return Err(Error("INVALID_REQUEST"));
+        return Err(Error("INVALID_REQUEST", None));
     }
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let listener = tokio::net::TcpListener::bind(address)
         .await
-        .map_err(|_| Error("ACCESS_DENIED"))?;
+        .map_err(|_| Error("ACCESS_DENIED", None))?;
     let host = listener
         .local_addr()
-        .map_err(|_| Error("INTERNAL"))?
+        .map_err(|_| Error("INTERNAL", None))?
         .to_string();
     let shutdown_dispatcher = dispatcher.clone();
     let app = Router::new().fallback(handle).with_state(App {
@@ -129,5 +129,5 @@ pub async fn serve(dispatcher: Arc<Dispatcher>, port: u16, token: String) -> Res
             shutdown_dispatcher.cancel_all();
         })
         .await
-        .map_err(|_| Error("INTERNAL"))
+        .map_err(|_| Error("INTERNAL", None))
 }

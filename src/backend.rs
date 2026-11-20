@@ -29,7 +29,7 @@ impl Default for Control {
 impl Control {
     pub fn check(&self) -> Result<()> {
         if self.cancelled.load(Ordering::Relaxed) || Instant::now() > self.deadline {
-            Err(Error("TIMEOUT"))
+            Err(Error("TIMEOUT", None))
         } else {
             Ok(())
         }
@@ -106,13 +106,13 @@ pub const MAX_RENDER_PIXELS: u64 = 16 * 1024 * 1024;
 
 pub fn validate_render_dimensions(width: u32, height: u32) -> Result<()> {
     if width == 0 || height == 0 {
-        return Err(Error("INTERNAL"));
+        return Err(Error("INTERNAL", None));
     }
     if width > MAX_RENDER_SIDE
         || height > MAX_RENDER_SIDE
         || u64::from(width) * u64::from(height) > MAX_RENDER_PIXELS
     {
-        return Err(Error("LIMIT_EXCEEDED"));
+        return Err(Error("LIMIT_EXCEEDED", None));
     }
     Ok(())
 }
@@ -201,7 +201,9 @@ impl Qpdf {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         limit_worker(&mut cmd, 250 * 1024 * 1024);
-        let mut child = cmd.spawn().map_err(|_| Error("BACKEND_UNAVAILABLE"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|_| Error("BACKEND_UNAVAILABLE", None))?;
         let pid = child.id() as i32;
         let overflow = Arc::new(AtomicBool::new(false));
         let stdout = child.stdout.take().unwrap();
@@ -217,11 +219,14 @@ impl Qpdf {
                 let _ = child.wait();
                 let _ = out.join();
                 let _ = err.join();
-                return Err(Error(if mem_exceeded || overflow.load(Ordering::Relaxed) {
-                    "LIMIT_EXCEEDED"
-                } else {
-                    "TIMEOUT"
-                }));
+                return Err(Error(
+                    if mem_exceeded || overflow.load(Ordering::Relaxed) {
+                        "LIMIT_EXCEEDED"
+                    } else {
+                        "TIMEOUT"
+                    },
+                    None,
+                ));
             }
             match child.try_wait() {
                 Ok(Some(s)) => break s,
@@ -231,28 +236,28 @@ impl Qpdf {
                     let _ = child.wait();
                     let _ = out.join();
                     let _ = err.join();
-                    return Err(Error("INTERNAL"));
+                    return Err(Error("INTERNAL", None));
                 }
             }
         };
         // Kill descendants before joining pipe readers, even if the leader exited.
         unsafe { libc::kill(-pid, libc::SIGKILL) };
-        let bytes = out.join().map_err(|_| Error("INTERNAL"))?;
+        let bytes = out.join().map_err(|_| Error("INTERNAL", None))?;
         let _ = err.join();
         if overflow.load(Ordering::Relaxed) {
-            return Err(Error("LIMIT_EXCEEDED"));
+            return Err(Error("LIMIT_EXCEEDED", None));
         }
         if status.code().is_none() {
-            return Err(Error("LIMIT_EXCEEDED"));
+            return Err(Error("LIMIT_EXCEEDED", None));
         }
         Ok((status.code().unwrap(), bytes))
     }
     fn qualified(&self, control: &Control) -> Result<Vec<Value>> {
         let (code, bytes) = self.run(&["--version".into()], control)?;
         let exact = self.exact || std::env::var_os("ANPDF_QPDF_EXACT").is_some_and(|v| v == "1");
-        let version = qpdf_version(&bytes).ok_or(Error("BACKEND_UNAVAILABLE"))?;
+        let version = qpdf_version(&bytes).ok_or(Error("BACKEND_UNAVAILABLE", None))?;
         if code != 0 || !supported_version(version, exact) {
-            return Err(Error("BACKEND_UNAVAILABLE"));
+            return Err(Error("BACKEND_UNAVAILABLE", None));
         }
         Ok(if version == (12, 4, 2) {
             vec![]
@@ -304,12 +309,12 @@ impl Qpdf {
         }
         if metadata_known {
             evidence["metadata"] = json!(hex_hash(
-                &serde_json::to_vec(&metadata).map_err(|_| Error("INTERNAL"))?
+                &serde_json::to_vec(&metadata).map_err(|_| Error("INTERNAL", None))?
             ));
         }
         if let Some(outlines) = normalized_outlines(&v["outlines"], &v["pages"]) {
             evidence["bookmarks"] =
-                json!(serde_json::to_string(&outlines).map_err(|_| Error("INTERNAL"))?);
+                json!(serde_json::to_string(&outlines).map_err(|_| Error("INTERNAL", None))?);
         }
         if let Some(attachments) = v["attachments"].as_object() {
             let mut normalized = json!({});
@@ -338,7 +343,7 @@ impl Qpdf {
             }
             if known {
                 evidence["attachments"] = json!(hex_hash(
-                    &serde_json::to_vec(&normalized).map_err(|_| Error("INTERNAL"))?
+                    &serde_json::to_vec(&normalized).map_err(|_| Error("INTERNAL", None))?
                 ));
             }
         }
@@ -404,7 +409,7 @@ fn walk_any(
     while let Some(node) = stack.pop() {
         visited += 1;
         if visited > MAX_WALK_NODES {
-            return Err(Error("LIMIT_EXCEEDED"));
+            return Err(Error("LIMIT_EXCEEDED", None));
         }
         match node {
             Value::Object(m) => {
@@ -542,17 +547,17 @@ fn extract_pages(v: &Value, objs: &Value) -> Vec<Value> {
 fn inspect_json(v: &Value, warn_code: i32) -> Result<(Value, Vec<Value>)> {
     let pages = v["pages"]
         .as_array()
-        .ok_or(Error("PRESERVATION_UNKNOWN"))?
+        .ok_or(Error("PRESERVATION_UNKNOWN", None))?
         .len();
     if pages > 2000 {
-        return Err(Error("LIMIT_EXCEEDED"));
+        return Err(Error("LIMIT_EXCEEDED", None));
     }
     let objs = v["qpdf"]
         .as_array()
         .and_then(|a| a.get(1))
         .unwrap_or(&Value::Null);
     if objs.as_object().is_some_and(|m| m.len() > MAX_JSON_OBJECTS) {
-        return Err(Error("LIMIT_EXCEEDED"));
+        return Err(Error("LIMIT_EXCEEDED", None));
     }
     let known = objs.is_object();
     let pdf_version = v["qpdf"]
@@ -610,18 +615,21 @@ fn inspect_json(v: &Value, warn_code: i32) -> Result<(Value, Vec<Value>)> {
 impl Backend for Qpdf {
     fn inspect(&self, path: &Path, control: &Control) -> Result<(Value, Vec<Value>)> {
         let mut warnings = self.qualified(control)?;
-        let path = path.to_str().ok_or(Error("ACCESS_DENIED"))?.to_string();
+        let path = path
+            .to_str()
+            .ok_or(Error("ACCESS_DENIED", None))?
+            .to_string();
         let (encrypted, _) = self.run(&["--is-encrypted".into(), path.clone()], control)?;
         // qpdf --is-encrypted: 0 encrypted, 2 not encrypted, all other exits are errors.
         if encrypted == 0 {
-            return Err(Error("ENCRYPTED_UNSUPPORTED"));
+            return Err(Error("ENCRYPTED_UNSUPPORTED", None));
         }
         if encrypted != 2 {
-            return Err(Error("INVALID_PDF"));
+            return Err(Error("INVALID_PDF", None));
         }
         let (check, _) = self.run(&["--check".into(), path.clone()], control)?;
         if check != 0 && check != 3 {
-            return Err(Error("INVALID_PDF"));
+            return Err(Error("INVALID_PDF", None));
         }
         let (code, data) = self.run(
             &[
@@ -632,9 +640,9 @@ impl Backend for Qpdf {
             control,
         )?;
         if code != 0 && code != 3 {
-            return Err(Error("INVALID_PDF"));
+            return Err(Error("INVALID_PDF", None));
         }
-        let v: Value = serde_json::from_slice(&data).map_err(|_| Error("INVALID_PDF"))?;
+        let v: Value = serde_json::from_slice(&data).map_err(|_| Error("INVALID_PDF", None))?;
         let (mut report, w) = inspect_json(&v, if check == 3 || code == 3 { 3 } else { 0 })?;
         let (has_metadata, evidence) = self.preservation_evidence(&v, &path, control)?;
         report["hasMetadata"] = json!(has_metadata);
@@ -652,15 +660,15 @@ impl Backend for Qpdf {
         let mut args = vec![
             paths
                 .first()
-                .ok_or(Error("INVALID_REQUEST"))?
+                .ok_or(Error("INVALID_REQUEST", None))?
                 .to_str()
-                .ok_or(Error("ACCESS_DENIED"))?
+                .ok_or(Error("ACCESS_DENIED", None))?
                 .into(),
             "--deterministic-id".into(),
             "--pages".into(),
         ];
         for path in paths {
-            args.push(path.to_str().ok_or(Error("ACCESS_DENIED"))?.into());
+            args.push(path.to_str().ok_or(Error("ACCESS_DENIED", None))?.into());
             args.push(
                 pages
                     .map(|p| p.iter().map(u64::to_string).collect::<Vec<_>>().join(","))
@@ -668,10 +676,10 @@ impl Backend for Qpdf {
             );
         }
         args.push("--".into());
-        args.push(out.to_str().ok_or(Error("ACCESS_DENIED"))?.into());
+        args.push(out.to_str().ok_or(Error("ACCESS_DENIED", None))?.into());
         let (code, _) = self.run(&args, control)?;
         if code != 0 && code != 3 {
-            return Err(Error("INVALID_PDF"));
+            return Err(Error("INVALID_PDF", None));
         }
         Ok(warning(code))
     }
@@ -695,11 +703,11 @@ impl Backend for Qpdf {
             args.push(format!("--jpeg-quality={jpeg_quality}"));
         }
         args.push("--".into());
-        args.push(path.to_str().ok_or(Error("ACCESS_DENIED"))?.into());
-        args.push(out.to_str().ok_or(Error("ACCESS_DENIED"))?.into());
+        args.push(path.to_str().ok_or(Error("ACCESS_DENIED", None))?.into());
+        args.push(out.to_str().ok_or(Error("ACCESS_DENIED", None))?.into());
         let (code, _) = self.run(&args, control)?;
         if code != 0 && code != 3 {
-            return Err(Error("INVALID_PDF"));
+            return Err(Error("INVALID_PDF", None));
         }
         Ok(warning(code))
     }

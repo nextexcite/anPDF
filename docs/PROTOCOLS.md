@@ -32,7 +32,9 @@ CLI operations also accept positional shorthand instead of `--request-json`/`--r
 | `anpdf extract-text <doc.pdf> <pages>` | `input`, `pages` (+`--engine`) |
 | `anpdf render-page <doc.pdf> <page> [-o <image>]` | `input`, `page`, `output` (+`--dpi`, `--engine`) |
 
-`--replace` maps to `output.replaceExisting`, and `--preserve metadata,bookmarks,annotations,attachments` (or `all`) maps to `preserve`. `--` terminates flag parsing for dash-leading filenames. On a terminal, a bare operation or parse-stage misuse prints usage instead of a JSON envelope or blocking on stdin; non-terminal stderr keeps the canonical JSON error envelope, and piped stdin still supplies the request.
+`--replace` maps to `output.replaceExisting`, and `--preserve metadata,bookmarks,annotations,attachments` (or `all`) maps to `preserve`. `--` terminates flag parsing for dash-leading filenames. `extract`, `remove-pages` and `extract-text` also accept `--pages <spec>` in place of the positional. Shorthand paths may be absolute or `~/`-prefixed: the invocation's workspace root then adapts to the files' common canonical directory, while `--root` pins it and refuses inputs outside. JSON requests (inline, file, stdin, HTTP, MCP) always stay workspace-relative to `--root`.
+
+Error messages may append a detail suffix (` — <detail>`) naming the failing field (a JSON pointer like `/input/path`), flag or file; the envelope schema and codes are unchanged. On a terminal, a bare operation or parse-stage misuse prints usage instead of a JSON envelope or blocking on stdin, successful results print pretty JSON, and errors print `anpdf <command>: <reason>`; non-terminal stdout/stderr keep the canonical envelopes byte-identical, and piped stdin still supplies the request. Non-UTF-8 arguments fail with `INVALID_REQUEST`.
 
 Authenticated HTTP discovery: GET `/v1/operations` and `/v1/openapi.json`.
 A canonical error is `{contractVersion, operationId, error:{code,message,retryable}}`.

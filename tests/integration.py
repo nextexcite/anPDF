@@ -494,7 +494,26 @@ def run():
         for args in [['inspect','a.pdf','b.pdf'],['inspect','one.pdf','--request-json','{}'],['compress','one.pdf','x.pdf','-o','y.pdf'],['compress','--mode','lossy'],['merge','one.pdf','three.pdf'],['extract','three.pdf','1','x.pdf','-o','y.pdf'],['serve'],['inspect','one.pdf','--engine','qpdf']]:
             r=sh(args);assert r.returncode and not r.stdout and json.loads(r.stderr)['error']['code']=='INVALID_REQUEST',(args,r.returncode,r.stderr)
         r=sh(['fill-forms']);assert r.returncode==6 and json.loads(r.stderr)['error']['code']=='UNSUPPORTED_OPERATION',r
-        # A bare operation on a terminal prints usage instead of blocking; piped stdin still reads JSON.
+        # Error envelopes name the failing flag, field or file (piped stderr).
+        r=sh(['compress','--mode']);assert '--mode expects a value' in r.stderr,r.stderr
+        r=sh(['extract','three.pdf','abc','-o','x.pdf']);assert "invalid pages 'abc'" in r.stderr,r.stderr
+        r=sh(['extract','three.pdf','1-2','--pages','3']);assert 'pages given both' in r.stderr,r.stderr
+        r=sh(['serve']);assert '--token-file' in r.stderr,r.stderr
+        r=sh(['inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'missing.pdf']);assert "input 'missing.pdf'" in r.stderr,r.stderr
+        r=sh(['inspect','--root',str(roots['cli']),'--request-json',json.dumps({'input':{'path':1}})]);assert '/input/path' in r.stderr,r.stderr
+        r=sh(['bogus']);assert "unknown command 'bogus'" in r.stderr,r.stderr
+        # --pages as a flag builds the same request as the positional spec.
+        a=sh(['extract','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','--pages','1-2','-o','flag-sub.pdf']);b=sh(['extract','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','1-2','-o','flag-sub2.pdf']);assert a.returncode==0 and b.returncode==0 and json.loads(a.stdout)['result']['pageCount']==2,(a.stderr,b.stderr)
+        # Absolute and ~ shorthand paths adapt the workspace root.
+        with tempfile.TemporaryDirectory() as ad:
+            ad=pathlib.Path(ad).resolve();(ad/'outside.pdf').write_bytes((roots['cli']/'one.pdf').read_bytes())
+            with tempfile.TemporaryDirectory() as other:
+                r=sh(['compress',str(ad/'outside.pdf')],cwd=other);assert r.returncode==0 and json.loads(r.stdout)['result']['path']=='outside-compressed.pdf',r.stderr
+                assert (ad/'outside-compressed.pdf').exists()
+                # Explicit --root pins the sandbox; an absolute path outside it is refused.
+                r=sh(['inspect','--root',str(other),str(ad/'outside.pdf')]);assert r.returncode==2 and 'outside the workspace root' in r.stderr,r.stderr
+        # Non-UTF-8 argv fails cleanly instead of panicking.
+        r=subprocess.run([str(BIN),'inspect',os.fsdecode(b'bad-\xff.pdf')],capture_output=True);assert r.returncode==2 and b'UTF-8' in r.stderr,(r.returncode,r.stderr)
         pid,fd=pty.fork()
         if pid==0:os.execv(str(BIN),[str(BIN),'inspect']);os._exit(127)
         out=b'';deadline=time.time()+10

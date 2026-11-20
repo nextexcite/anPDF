@@ -114,7 +114,7 @@ fn register<T: ?Sized>(
         || !chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
         || providers.iter().any(|(id, _)| *id == engine)
     {
-        return Err(Error("INVALID_REQUEST"));
+        return Err(Error("INVALID_REQUEST", None));
     }
     providers.push((engine, provider));
     Ok(())
@@ -128,7 +128,7 @@ fn select<'a, T: ?Sized>(
         .iter()
         .find(|(id, _)| engine.is_none_or(|name| name == *id))
         .map(|(name, provider)| (*name, provider.as_ref()))
-        .ok_or(Error("BACKEND_UNAVAILABLE"))
+        .ok_or(Error("BACKEND_UNAVAILABLE", None))
 }
 
 enum Capability {
@@ -146,7 +146,7 @@ fn capability(id: &str) -> Result<Capability> {
         "compressPdf" => Ok(Capability::Compress),
         "extractText" => Ok(Capability::Text),
         "renderPage" => Ok(Capability::Render),
-        _ => Err(Error("UNSUPPORTED_OPERATION")),
+        _ => Err(Error("UNSUPPORTED_OPERATION", None)),
     }
 }
 

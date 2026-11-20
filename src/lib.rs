@@ -85,10 +85,10 @@ impl Dispatcher {
         control: &Control,
     ) -> Result<Value> {
         if contract::operation(id).is_none() {
-            return Err(Error("UNSUPPORTED_OPERATION"));
+            return Err(Error("UNSUPPORTED_OPERATION", None));
         }
-        if !contract::valid_input(id, request) {
-            return Err(Error("INVALID_REQUEST"));
+        if let Some(detail) = contract::invalid_detail(id, request) {
+            return Err(Error("INVALID_REQUEST", Some(detail)));
         }
         if self
             .active
@@ -97,7 +97,7 @@ impl Dispatcher {
             })
             .is_err()
         {
-            return Err(Error("LIMIT_EXCEEDED"));
+            return Err(Error("LIMIT_EXCEEDED", None));
         }
         let _permit = Permit(&self.active);
         {
@@ -120,7 +120,7 @@ impl Dispatcher {
             .map(|v| self.workspace.input(v["path"].as_str().unwrap()))
             .collect::<Result<Vec<_>>>()?;
         if inputs.iter().map(|i| i.bytes).sum::<u64>() > TOTAL_LIMIT {
-            return Err(Error("LIMIT_EXCEEDED"));
+            return Err(Error("LIMIT_EXCEEDED", None));
         }
         let mut parts: Option<Vec<(Vec<u64>, String, filesystem::Destination)>> = None;
         let pages = if matches!(id, "extractPdf" | "removePages") {
@@ -152,16 +152,27 @@ impl Dispatcher {
                 .map(request_integer)
                 .transpose()?;
             if request.get("onTargetMiss").is_some() && max_output.is_none() {
-                return Err(Error("INVALID_REQUEST"));
+                return Err(Error(
+                    "INVALID_REQUEST",
+                    Some("onTargetMiss requires maxOutputBytes".into()),
+                ));
             }
             let lossy_requested = mode_str == "lossy";
             match level {
-                Some(1) if lossy_requested => return Err(Error("INVALID_REQUEST")),
+                Some(1) if lossy_requested => {
+                    return Err(Error(
+                        "INVALID_REQUEST",
+                        Some("compressionLevel 1 is strictly lossless and conflicts with mode \"lossy\"".into()),
+                    ));
+                }
                 Some(2..=3) if mode_str == "lossless" && request.get("mode").is_some() => {
-                    return Err(Error("INVALID_REQUEST"));
+                    return Err(Error(
+                        "INVALID_REQUEST",
+                        Some("compressionLevel 2..3 performs lossy resampling and conflicts with mode \"lossless\"".into()),
+                    ));
                 }
                 Some(1..=3) | None => {}
-                Some(_) => return Err(Error("INVALID_REQUEST")),
+                Some(_) => return Err(Error("INVALID_REQUEST", None)),
             }
             // A bare target still implies lossy descent — except at level 1,
             // which stays strictly lossless and simply reports the miss.
@@ -169,10 +180,16 @@ impl Dispatcher {
                 || level.is_some_and(|l| l >= 2)
                 || (max_output.is_some() && level != Some(1));
             if jpeg_quality.is_some() && !lossy_requested {
-                return Err(Error("INVALID_REQUEST"));
+                return Err(Error(
+                    "INVALID_REQUEST",
+                    Some("jpegQuality applies only to mode \"lossy\"".into()),
+                ));
             }
             if lossy_requested && level == Some(1) {
-                return Err(Error("INVALID_REQUEST"));
+                return Err(Error(
+                    "INVALID_REQUEST",
+                    Some("mode \"lossy\" requires compressionLevel 2 or 3".into()),
+                ));
             }
             let mode = if lossy {
                 CompressMode::Lossy {
@@ -200,7 +217,10 @@ impl Dispatcher {
                 let dest = self.workspace.destination(&out_path, replace, &inputs)?;
                 for (_, _, existing) in &parsed {
                     if dest.same_target(existing)? {
-                        return Err(Error("INVALID_REQUEST"));
+                        return Err(Error(
+                            "INVALID_REQUEST",
+                            Some(format!("parts write to the same output '{out_path}'")),
+                        ));
                     }
                 }
                 parsed.push((p, out_path, dest));
@@ -228,7 +248,7 @@ impl Dispatcher {
         let staging = tempfile::Builder::new()
             .prefix("anpdf-")
             .tempdir()
-            .map_err(|_| Error("INTERNAL"))?;
+            .map_err(|_| Error("INTERNAL", None))?;
         let mut paths = Vec::new();
         let mut warnings = Vec::new();
         let mut reports = Vec::new();
@@ -239,7 +259,7 @@ impl Dispatcher {
             input.stage(&path)?;
             let (mut report, mut w) = plan.structural.inspect(&path, control)?;
             if !report.is_object() {
-                return Err(Error("INTERNAL"));
+                return Err(Error("INTERNAL", None));
             }
             report["sha256"] = json!(input.hash);
             report["bytes"] = json!(input.bytes);
@@ -248,29 +268,29 @@ impl Dispatcher {
                 "inspectPdf",
                 &json!({"contractVersion":contract::VERSION,"operationId":"inspectPdf","result":report,"warnings":w}),
             ) {
-                return Err(Error("INTERNAL"));
+                return Err(Error("INTERNAL", None));
             }
             total_pages += report["pageCount"].as_u64().unwrap();
             if total_pages > 2000 {
-                return Err(Error("LIMIT_EXCEEDED"));
+                return Err(Error("LIMIT_EXCEEDED", None));
             }
             if !matches!(plan.job, Job::Inspect) {
                 if report["encrypted"] == true {
-                    return Err(Error("ENCRYPTED_UNSUPPORTED"));
+                    return Err(Error("ENCRYPTED_UNSUPPORTED", None));
                 }
                 if report["pageCount"] == 0 {
-                    return Err(Error("INVALID_PDF"));
+                    return Err(Error("INVALID_PDF", None));
                 }
             }
             if plan.job.writes_pdf() {
                 if report["signatures"] == "present" {
-                    return Err(Error("SIGNED_UNSUPPORTED"));
+                    return Err(Error("SIGNED_UNSUPPORTED", None));
                 }
                 if report["forms"] == "present" {
-                    return Err(Error("FORM_UNSUPPORTED"));
+                    return Err(Error("FORM_UNSUPPORTED", None));
                 }
                 if report["forms"] != "absent" || report["signatures"] != "absent" {
-                    return Err(Error("PRESERVATION_UNKNOWN"));
+                    return Err(Error("PRESERVATION_UNKNOWN", None));
                 }
             }
             warnings.append(&mut w);
@@ -284,7 +304,7 @@ impl Dispatcher {
                 pages,
             } => {
                 if pages.last().is_some_and(|&page| page > total_pages) {
-                    return Err(Error("INVALID_REQUEST"));
+                    return Err(Error("INVALID_REQUEST", None));
                 }
                 control.check()?;
                 let (extracted, provider_warnings) =
@@ -303,7 +323,7 @@ impl Dispatcher {
                 dpi,
             } => {
                 if page > total_pages {
-                    return Err(Error("INVALID_REQUEST"));
+                    return Err(Error("INVALID_REQUEST", None));
                 }
                 control.check()?;
                 let out = staging.path().join("output.png");
@@ -332,7 +352,7 @@ impl Dispatcher {
             let mut total_output_bytes = 0u64;
             for (idx, (part_pages, rel_path, _)) in parts.iter().enumerate() {
                 if part_pages.last().copied().unwrap_or(0) > total_pages {
-                    return Err(Error("INVALID_REQUEST"));
+                    return Err(Error("INVALID_REQUEST", None));
                 }
                 let out = staging.path().join(format!("output-{idx}.pdf"));
                 let (artifact, bytes) = transform_artifact(
@@ -349,7 +369,7 @@ impl Dispatcher {
                 )?;
                 total_output_bytes += bytes;
                 if total_output_bytes > TOTAL_LIMIT {
-                    return Err(Error("LIMIT_EXCEEDED"));
+                    return Err(Error("LIMIT_EXCEEDED", None));
                 }
                 artifacts.push(artifact);
                 staged_outputs.push(out);
@@ -357,7 +377,7 @@ impl Dispatcher {
             dedupe_warnings(&mut warnings);
             let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":{"outputs":artifacts},"warnings":warnings});
             if !contract::valid_output(id, &envelope) {
-                return Err(Error("INTERNAL"));
+                return Err(Error("INTERNAL", None));
             }
             self.workspace.unchanged(&mut inputs)?;
             control.check()?;
@@ -399,7 +419,7 @@ impl Dispatcher {
                 if !rungs.is_empty() && spec.max_output_bytes.is_none_or(|t| candidate_bytes > t) {
                     match plan.resampler {
                         None if spec.max_output_bytes.is_none() => {
-                            return Err(Error("BACKEND_UNAVAILABLE"))
+                            return Err(Error("BACKEND_UNAVAILABLE", None))
                         }
                         None => warnings.push(json!({
                             "code": "SIZE_TARGET_UNMET",
@@ -462,7 +482,7 @@ impl Dispatcher {
                     || report["forms"] != "absent"
                     || report["signatures"] != "absent"
                 {
-                    return Err(Error("PRESERVATION_UNKNOWN"));
+                    return Err(Error("PRESERVATION_UNKNOWN", None));
                 }
                 let compressed_bytes = candidate_bytes;
                 let input_bytes = inputs[0].bytes;
@@ -472,7 +492,7 @@ impl Dispatcher {
                 let mut file = std::fs::File::open(source)?;
                 let bytes = file.metadata()?.len();
                 if bytes > TOTAL_LIMIT {
-                    return Err(Error("LIMIT_EXCEEDED"));
+                    return Err(Error("LIMIT_EXCEEDED", None));
                 }
                 if keep_original {
                     techniques.clear();
@@ -494,7 +514,7 @@ impl Dispatcher {
                 let target_met = spec.max_output_bytes.map(|t| bytes <= t);
                 if target_met == Some(false) {
                     if spec.error_on_miss {
-                        return Err(Error("SIZE_TARGET_UNMET"));
+                        return Err(Error("SIZE_TARGET_UNMET", None));
                     }
                     warnings.push(json!({
                         "code": "SIZE_TARGET_UNMET",
@@ -520,7 +540,7 @@ impl Dispatcher {
                 dedupe_warnings(&mut warnings);
                 let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
                 if !contract::valid_output(id, &envelope) {
-                    return Err(Error("INTERNAL"));
+                    return Err(Error("INTERNAL", None));
                 }
                 self.workspace.unchanged(&mut inputs)?;
                 control.check()?;
@@ -531,13 +551,13 @@ impl Dispatcher {
                 .as_ref()
                 .is_some_and(|p| p.last().copied().unwrap_or(0) > total_pages)
             {
-                return Err(Error("INVALID_REQUEST"));
+                return Err(Error("INVALID_REQUEST", None));
             }
             let selected_pages = if id == "removePages" {
                 let remove = pages.as_ref().unwrap();
                 let kept: Vec<u64> = (1..=total_pages).filter(|p| !remove.contains(p)).collect();
                 if kept.is_empty() {
-                    return Err(Error("INVALID_REQUEST"));
+                    return Err(Error("INVALID_REQUEST", None));
                 }
                 Some(kept)
             } else {
@@ -559,7 +579,7 @@ impl Dispatcher {
             dedupe_warnings(&mut warnings);
             let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
             if !contract::valid_output(id, &envelope) {
-                return Err(Error("INTERNAL"));
+                return Err(Error("INTERNAL", None));
             }
             self.workspace.unchanged(&mut inputs)?;
             control.check()?;
@@ -573,7 +593,7 @@ impl Dispatcher {
         dedupe_warnings(&mut warnings);
         let value = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
         if !contract::valid_output(id, &value) {
-            return Err(Error("INTERNAL"));
+            return Err(Error("INTERNAL", None));
         }
         Ok(value)
     }
@@ -589,7 +609,7 @@ fn request_integer(value: &Value) -> Result<u64> {
                 .filter(|v| (0.0..=9_007_199_254_740_991.0).contains(v) && v.fract() == 0.0)
                 .map(|v| v as u64)
         })
-        .ok_or(Error("INVALID_REQUEST"))
+        .ok_or(Error("INVALID_REQUEST", None))
 }
 
 fn parse_pages(value: &Value) -> Result<Vec<u64>> {
@@ -600,7 +620,7 @@ fn parse_pages(value: &Value) -> Result<Vec<u64>> {
         .map(request_integer)
         .collect::<Result<Vec<_>>>()?;
     if pages.windows(2).any(|w| w[0] >= w[1]) {
-        return Err(Error("INVALID_REQUEST"));
+        return Err(Error("INVALID_REQUEST", None));
     }
     Ok(pages)
 }
@@ -626,17 +646,17 @@ fn transform_artifact(
         || report["forms"] != "absent"
         || report["signatures"] != "absent"
     {
-        return Err(Error("PRESERVATION_UNKNOWN"));
+        return Err(Error("PRESERVATION_UNKNOWN", None));
     }
     let mut file = std::fs::File::open(out)?;
     let bytes = file.metadata()?.len();
     if bytes > TOTAL_LIMIT {
-        return Err(Error("LIMIT_EXCEEDED"));
+        return Err(Error("LIMIT_EXCEEDED", None));
     }
     let preservation = preservation_status(inputs, &report, pages);
     for aspect in ["metadata", "bookmarks", "annotations", "attachments"] {
         if preserve[aspect] == true && preservation[aspect] == "omitted" {
-            return Err(Error("PRESERVATION_UNMET"));
+            return Err(Error("PRESERVATION_UNMET", None));
         }
     }
     let omitted = ["metadata", "bookmarks", "annotations", "attachments"]

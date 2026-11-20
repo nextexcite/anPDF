@@ -29,9 +29,9 @@ impl Write for ResponseBudget {
 
 pub(crate) fn validate_envelope(id: &str, value: &Value) -> Result<()> {
     serde_json::to_writer(ResponseBudget(MAX_TEXT_RESPONSE_BYTES), value)
-        .map_err(|_| Error("LIMIT_EXCEEDED"))?;
+        .map_err(|_| Error("LIMIT_EXCEEDED", None))?;
     if !contract::valid_output(id, value) {
-        return Err(Error("INTERNAL"));
+        return Err(Error("INTERNAL", None));
     }
     Ok(())
 }
@@ -58,7 +58,7 @@ pub(crate) fn text_envelope(
                 })
         })
     {
-        return Err(Error("INTERNAL"));
+        return Err(Error("INTERNAL", None));
     }
     Ok(value)
 }
@@ -74,19 +74,19 @@ pub(crate) fn read_png(path: &Path) -> Result<(File, PngInfo)> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
-        .map_err(|_| Error("INTERNAL"))?;
+        .map_err(|_| Error("INTERNAL", None))?;
     let metadata = file.metadata()?;
     if !metadata.is_file() || metadata.len() < 57 {
-        return Err(Error("INTERNAL"));
+        return Err(Error("INTERNAL", None));
     }
     if metadata.len() > MAX_PNG_BYTES {
-        return Err(Error("LIMIT_EXCEEDED"));
+        return Err(Error("LIMIT_EXCEEDED", None));
     }
     let mut header = [0u8; 24];
     file.read_exact(&mut header)
-        .map_err(|_| Error("INTERNAL"))?;
+        .map_err(|_| Error("INTERNAL", None))?;
     if &header[..16] != b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR" {
-        return Err(Error("INTERNAL"));
+        return Err(Error("INTERNAL", None));
     }
     let width = u32::from_be_bytes(header[16..20].try_into().unwrap());
     let height = u32::from_be_bytes(header[20..24].try_into().unwrap());

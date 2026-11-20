@@ -30,7 +30,8 @@ pub struct Destination {
     replace: bool,
 }
 fn c(s: &str) -> Result<CString> {
-    CString::new(s).map_err(|_| Error("ACCESS_DENIED"))
+    CString::new(s)
+        .map_err(|_| Error("ACCESS_DENIED", None).with(format!("path '{s}' contains a NUL byte")))
 }
 fn open_at(dir: &File, name: &CString, flags: i32, mode: u32) -> Result<File> {
     let fd = unsafe {
@@ -52,7 +53,7 @@ fn trusted_dir(f: &File) -> Result<()> {
         || m.mode() & 0o022 != 0
         || (m.uid() != unsafe { libc::geteuid() } && m.uid() != 0)
     {
-        return Err(Error("ACCESS_DENIED"));
+        return Err(Error("ACCESS_DENIED", None));
     }
     Ok(())
 }
@@ -64,13 +65,17 @@ fn parts(path: &str) -> Result<Vec<&str>> {
             .split('/')
             .any(|x| x.is_empty() || x == "." || x == "..")
     {
-        return Err(Error("ACCESS_DENIED"));
+        return Err(Error("ACCESS_DENIED", None).with(format!(
+            "path '{path}' must be workspace-relative with no '..', '.', ':' or '\\\\' components"
+        )));
     }
     if Path::new(path)
         .components()
         .any(|c| !matches!(c, Component::Normal(_)))
     {
-        return Err(Error("ACCESS_DENIED"));
+        return Err(Error("ACCESS_DENIED", None).with(format!(
+            "path '{path}' must be workspace-relative with no '..', '.', ':' or '\\\\' components"
+        )));
     }
     Ok(path.split('/').collect())
 }
@@ -86,7 +91,7 @@ pub fn hash(file: &mut File) -> Result<String> {
         }
         total += n as u64;
         if total > TOTAL_LIMIT {
-            return Err(Error("LIMIT_EXCEEDED"));
+            return Err(Error("LIMIT_EXCEEDED", None));
         }
         h.update(&buf[..n]);
     }
@@ -111,20 +116,40 @@ impl Workspace {
         }
         Ok((dir, c(p[p.len() - 1])?))
     }
+    /// Attach `input '<path>':` context to errors; when the inner error
+    /// already carries a detail it is appended so the file is always named.
+    fn input_ctx(path: &str, e: Error) -> Error {
+        match e.1 {
+            Some(d) => Error(e.0, Some(format!("input '{path}': {d}"))),
+            None => e.with(format!("input '{path}'")),
+        }
+    }
     pub fn input(&self, path: &str) -> Result<Input> {
-        let (dir, name) = self.parent(path)?;
+        let (dir, name) = self.parent(path).map_err(|e| Self::input_ctx(path, e))?;
         // NONBLOCK prevents blocking on FIFOs before regular-file validation.
-        let mut file = open_at(&dir, &name, libc::O_RDONLY | libc::O_NONBLOCK, 0)?;
-        let m = file.metadata()?;
+        let mut file = open_at(&dir, &name, libc::O_RDONLY | libc::O_NONBLOCK, 0)
+            .map_err(|e| Self::input_ctx(path, e))?;
+        let m = file
+            .metadata()
+            .map_err(|e| Self::input_ctx(path, e.into()))?;
         if !m.is_file() {
-            return Err(Error("ACCESS_DENIED"));
+            return Err(
+                Error("ACCESS_DENIED", None).with(format!("input '{path}' is not a regular file"))
+            );
         }
         if m.len() > FILE_LIMIT {
-            return Err(Error("LIMIT_EXCEEDED"));
+            return Err(Error(
+                "LIMIT_EXCEEDED",
+                Some(format!(
+                    "input '{path}' exceeds the {} MiB file limit",
+                    FILE_LIMIT / 1024 / 1024
+                )),
+            ));
         }
-        let digest = hash(&mut file)?;
+        let digest = hash(&mut file).map_err(|e| Self::input_ctx(path, e))?;
         if file.metadata()?.len() != m.len() {
-            return Err(Error("INPUT_CHANGED"));
+            return Err(Error("INPUT_CHANGED", None)
+                .with(format!("input '{path}' changed during processing")));
         }
         Ok(Input {
             file,
@@ -136,20 +161,26 @@ impl Workspace {
         })
     }
     pub fn destination(&self, path: &str, replace: bool, inputs: &[Input]) -> Result<Destination> {
-        let (dir, name) = self.parent(path)?;
+        let ctx = |e: Error| match e.1 {
+            Some(d) => Error(e.0, Some(format!("output '{path}': {d}"))),
+            None => e.with(format!("output '{path}'")),
+        };
+        let (dir, name) = self.parent(path).map_err(ctx)?;
         let d = Destination { dir, name, replace };
-        d.check(inputs)?;
+        d.check(inputs).map_err(ctx)?;
         Ok(d)
     }
     pub fn unchanged(&self, inputs: &mut [Input]) -> Result<()> {
         for i in inputs {
-            let current = self.input(&i.path).map_err(|_| Error("INPUT_CHANGED"))?;
+            let current = self
+                .input(&i.path)
+                .map_err(|_| Error("INPUT_CHANGED", None))?;
             if current.dev != i.dev
                 || current.ino != i.ino
                 || current.hash != i.hash
                 || hash(&mut i.file)? != i.hash
             {
-                return Err(Error("INPUT_CHANGED"));
+                return Err(Error("INPUT_CHANGED", None));
             }
         }
         Ok(())
@@ -166,7 +197,7 @@ impl Input {
             .open(path)?;
         let n = std::io::copy(&mut (&mut self.file).take(FILE_LIMIT + 1), &mut out)?;
         if n != self.bytes || hash(&mut self.file)? != self.hash || hash(&mut out)? != self.hash {
-            return Err(Error("INPUT_CHANGED"));
+            return Err(Error("INPUT_CHANGED", None));
         }
         out.sync_all()?;
         Ok(())
@@ -213,15 +244,18 @@ impl Destination {
             Ok(f) => {
                 let m = f.metadata()?;
                 if !m.is_file() || inputs.iter().any(|i| i.dev == m.dev() && i.ino == m.ino()) {
-                    return Err(Error("ACCESS_DENIED"));
+                    return Err(Error("ACCESS_DENIED", None));
                 }
                 if !self.replace {
-                    return Err(Error("OUTPUT_EXISTS"));
+                    return Err(Error(
+                        "OUTPUT_EXISTS",
+                        Some("pass --replace or set replaceExisting to overwrite".into()),
+                    ));
                 }
                 Ok(())
             }
-            Err(Error("NOT_FOUND")) => Ok(()),
-            Err(_) => Err(Error("ACCESS_DENIED")),
+            Err(Error("NOT_FOUND", None)) => Ok(()),
+            Err(_) => Err(Error("ACCESS_DENIED", None)),
         }
     }
     pub fn commit(&self, source: &Path, inputs: &[Input]) -> Result<()> {
@@ -254,7 +288,7 @@ impl Destination {
         let result = (|| {
             let n = std::io::copy(&mut source.take(limit + 1), &mut temp)?;
             if n > limit {
-                return Err(Error("LIMIT_EXCEEDED"));
+                return Err(Error("LIMIT_EXCEEDED", None));
             }
             temp.flush()?;
             temp.sync_all()?;

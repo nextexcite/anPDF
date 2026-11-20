@@ -142,7 +142,7 @@ pub fn serve(dispatcher: Arc<Dispatcher>) -> Result<()> {
                 continue;
             }
             if a.len() >= 2 {
-                let e = Error("LIMIT_EXCEEDED");
+                let e = Error("LIMIT_EXCEEDED", None);
                 send(
                     &output,
                     json!({"jsonrpc":"2.0","id":id,"result":{"isError":true,"content":[{"type":"text","text":e.envelope(&name).to_string()}]}}),

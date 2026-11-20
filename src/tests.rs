@@ -60,7 +60,7 @@ mod content_operations {
         ) -> Result<(Vec<Value>, Vec<Value>)> {
             assert_eq!(path.file_name().unwrap(), "input-0.pdf");
             if self.0 == "fails" {
-                return Err(Error("INTERNAL"));
+                return Err(Error("INTERNAL", None));
             }
             let pages = pages.iter().map(|page| {
                 let right = if self.0 == "wrong-bounds" { 0 } else { 3 };
@@ -353,7 +353,7 @@ fn preservation_statuses_and_required_failure_do_not_publish() {
             b"existing"
         );
     }
-    let error = Error("PRESERVATION_UNMET");
+    let error = Error("PRESERVATION_UNMET", None);
     assert_eq!((error.http(), error.exit()), (422, 5));
     assert_eq!(error.envelope("extractPdf")["error"]["retryable"], false);
     assert!(!contract::valid_input(
@@ -505,9 +505,10 @@ fn schema_rejects_unknown_properties_and_bad_pages() {
             .as_array()
             .unwrap()
     {
-        let error = Error(Box::leak(
-            code.as_str().unwrap().to_string().into_boxed_str(),
-        ));
+        let error = Error(
+            Box::leak(code.as_str().unwrap().to_string().into_boxed_str()),
+            None,
+        );
         assert!(contract::valid(
             &contract::resolve(&contract::document()["components"]["schemas"]["Error"]),
             &error.envelope("unknown")
