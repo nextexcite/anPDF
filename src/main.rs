@@ -42,6 +42,7 @@ impl Shell {
             Self::Bash => {
                 r#"_anpdf() {
     local cur prev cmd
+    local IFS=$'\n'  # keep spaced filenames as single candidates
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev=""
@@ -563,6 +564,9 @@ impl CliArgs {
 /// Parse a `<pages>` spec: comma-separated 1-based numbers or `a-b` ranges
 /// ("1,3", "2-5"). Ordering/duplicates are validated by the contract.
 fn parse_page_list(spec: &str) -> Result<Vec<u64>> {
+    // Widest `pages` bound in the contract (extractPdf/removePages/splitPdf);
+    // exceeding it is always INVALID_REQUEST, so fail before allocating.
+    const MAX_PAGES: u64 = 2000;
     let mut pages = Vec::new();
     for part in spec.split(',') {
         let part = part.trim();
@@ -570,12 +574,22 @@ fn parse_page_list(spec: &str) -> Result<Vec<u64>> {
             Some((start, end)) => {
                 let start: u64 = start.trim().parse().map_err(|_| Error("INVALID_REQUEST"))?;
                 let end: u64 = end.trim().parse().map_err(|_| Error("INVALID_REQUEST"))?;
-                if start > end {
+                if start > end || end - start >= MAX_PAGES {
                     return Err(Error("INVALID_REQUEST"));
                 }
-                pages.extend(start..=end);
+                for page in start..=end {
+                    if pages.len() as u64 >= MAX_PAGES {
+                        return Err(Error("INVALID_REQUEST"));
+                    }
+                    pages.push(page);
+                }
             }
-            None => pages.push(part.parse().map_err(|_| Error("INVALID_REQUEST"))?),
+            None => {
+                if pages.len() as u64 >= MAX_PAGES {
+                    return Err(Error("INVALID_REQUEST"));
+                }
+                pages.push(part.parse().map_err(|_| Error("INVALID_REQUEST"))?);
+            }
         }
     }
     if pages.is_empty() {
@@ -791,13 +805,6 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
         _ => {}
     }
     let rest: Vec<String> = args.collect();
-    if rest.iter().any(|a| a == "--help" || a == "-h") {
-        return if KNOWN_COMMANDS.contains(&command.as_str()) {
-            Ok(Action::Help(Some(command)))
-        } else {
-            Err(Error("UNSUPPORTED_OPERATION"))
-        };
-    }
 
     let mut args = rest.into_iter();
     let mut o = Options {
@@ -816,7 +823,11 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
     let mut positionals: Vec<String> = Vec::new();
     let mut qpdf_flag = None;
     if o.command == "schema" {
-        o.schema = Some(args.next().ok_or(Error("INVALID_REQUEST"))?)
+        let arg = args.next().ok_or(Error("INVALID_REQUEST"))?;
+        if arg == "--help" || arg == "-h" {
+            return Ok(Action::Help(Some("schema".into())));
+        }
+        o.schema = Some(arg);
     }
     let mut seen = std::collections::HashSet::new();
     while let Some(flag) = args.next() {
@@ -833,6 +844,13 @@ fn parse_action<I: Iterator<Item = String>>(mut args: I) -> Result<Action> {
         } else {
             flag.as_str()
         };
+        if canonical == "--help" || canonical == "-h" {
+            return if KNOWN_COMMANDS.contains(&o.command.as_str()) {
+                Ok(Action::Help(Some(o.command.clone())))
+            } else {
+                Err(Error("UNSUPPORTED_OPERATION"))
+            };
+        }
         if !seen.insert(canonical.to_string()) {
             return Err(Error("INVALID_REQUEST"));
         }
@@ -1096,9 +1114,12 @@ async fn async_main() {
     let action = match parse_action(std::env::args().skip(1)) {
         Ok(action) => action,
         Err(e) => {
-            // Interactive misuse gets usage text; machine surfaces keep the
-            // canonical JSON envelope byte-identical.
-            if std::io::stderr().is_terminal() {
+            // Interactive arg-shape misuse gets usage text; other errors
+            // (missing request files, unreadable tokens) keep the canonical
+            // envelope even on a terminal, since it names the failure.
+            if std::io::stderr().is_terminal()
+                && matches!(e.0, "INVALID_REQUEST" | "UNSUPPORTED_OPERATION")
+            {
                 let topic = KNOWN_COMMANDS
                     .contains(&command.as_str())
                     .then_some(command.as_str());
@@ -1391,6 +1412,19 @@ mod tests {
             run_request(&["inspect", "--", "-flag.pdf"]),
             serde_json::json!({"input": {"path": "-flag.pdf"}})
         );
+        // `-h` after `--` or as an option value is a filename, not help.
+        assert_eq!(
+            run_request(&["inspect", "--", "-h"]),
+            serde_json::json!({"input": {"path": "-h"}})
+        );
+        assert_eq!(
+            run_request(&["compress", "a.pdf", "-o", "-h"]),
+            serde_json::json!({"input": {"path": "a.pdf"}, "output": {"path": "-h"}})
+        );
+        assert!(matches!(
+            parse_action(["schema", "--help"].iter().copied().map(String::from)),
+            Ok(Action::Help(Some(topic))) if topic == "schema"
+        ));
     }
 
     #[test]
@@ -1405,6 +1439,14 @@ mod tests {
             &["extract", "doc.pdf", "1", "out.pdf", "-o", "other.pdf"][..],
             &["extract", "doc.pdf", "3-1", "-o", "x.pdf"][..],
             &["extract", "doc.pdf", "abc", "-o", "x.pdf"][..],
+            &["extract", "doc.pdf", "1-2001", "-o", "x.pdf"][..],
+            &[
+                "extract",
+                "doc.pdf",
+                "1-18446744073709551615",
+                "-o",
+                "x.pdf",
+            ][..],
             &["split", "doc.pdf", "p1.pdf"][..],
             &["split", "doc.pdf", "no-equals-sign", "p2.pdf=3"][..],
             &["render-page", "doc.pdf", "two", "-o", "p.png"][..],
