@@ -1,13 +1,37 @@
 use serde_json::{Value, json};
+/// Canonical error code plus an optional human-facing detail naming the
+/// field, flag or file at fault. The detail rides inside `message` so the
+/// envelope schema is unchanged and identical across CLI, HTTP and MCP.
 #[derive(Debug, Clone)]
-pub struct Error(pub &'static str);
+pub struct Error(pub &'static str, pub Option<String>);
 pub type Result<T> = std::result::Result<T, Error>;
 impl Error {
+    /// Attach a detail sentence to an error produced elsewhere.
+    pub fn with(mut self, detail: impl Into<String>) -> Self {
+        self.1 = Some(detail.into());
+        self
+    }
+    /// `From<io::Error>` loses the path context; rebuild the code with a
+    /// detail naming the file or argument that failed.
+    pub fn io(e: &std::io::Error, detail: impl Into<String>) -> Self {
+        Self::from_io_kind(e.kind()).with(detail)
+    }
+    fn from_io_kind(kind: std::io::ErrorKind) -> Self {
+        Self(
+            match kind {
+                std::io::ErrorKind::NotFound => "NOT_FOUND",
+                std::io::ErrorKind::AlreadyExists => "OUTPUT_EXISTS",
+                _ => "ACCESS_DENIED",
+            },
+            None,
+        )
+    }
     pub fn envelope(&self, op: &str) -> Value {
         json!({"contractVersion":crate::contract::VERSION,"operationId":op,
         "error":{"code":self.0,"message":self.message(),"retryable":matches!(self.0,"TIMEOUT"|"INPUT_CHANGED"|"BACKEND_UNAVAILABLE")}})
     }
-    pub fn message(&self) -> &'static str {
+    /// The canonical base sentence for the code, without any detail.
+    pub fn base(&self) -> &'static str {
         match self.0 {
             "INVALID_REQUEST" => "Request does not satisfy the operation contract.",
             "NOT_FOUND" => "Requested resource was not found.",
@@ -31,6 +55,16 @@ impl Error {
             }
             "UNAUTHENTICATED" => "Bearer authentication is required.",
             _ => "Processing failed internally.",
+        }
+    }
+    /// The detail sentence naming the field, flag or file at fault.
+    pub fn detail(&self) -> Option<&str> {
+        self.1.as_deref()
+    }
+    pub fn message(&self) -> String {
+        match &self.1 {
+            Some(detail) => format!("{} — {detail}", self.base()),
+            None => self.base().into(),
         }
     }
     pub fn http(&self) -> u16 {
@@ -73,10 +107,6 @@ impl Error {
 }
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
-        Self(match e.kind() {
-            std::io::ErrorKind::NotFound => "NOT_FOUND",
-            std::io::ErrorKind::AlreadyExists => "OUTPUT_EXISTS",
-            _ => "ACCESS_DENIED",
-        })
+        Self::from_io_kind(e.kind())
     }
 }

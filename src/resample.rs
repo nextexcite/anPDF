@@ -511,7 +511,7 @@ fn resampled(image: &image::DynamicImage, w: u32, h: u32) -> image::DynamicImage
 }
 
 fn resample_document(input: &Path, output: &Path, dpi_cap: u32, jpeg_quality: u8) -> Result<Value> {
-    let mut doc = Document::load(input).map_err(|_| Error("INVALID_PDF"))?;
+    let mut doc = Document::load(input).map_err(|_| Error("INVALID_PDF", None))?;
     let placements = collect_placements(&doc);
     let (fallback_w, fallback_h) = placements.fallback;
     let mut processed = 0u64;
@@ -696,8 +696,8 @@ fn resample_document(input: &Path, output: &Path, dpi_cap: u32, jpeg_quality: u8
         image_bytes_out += edit.jpeg.len() as u64;
         processed += 1;
     }
-    doc.save_to(&mut std::fs::File::create(output).map_err(|_| Error("INTERNAL_ERROR"))?)
-        .map_err(|_| Error("INTERNAL_ERROR"))?;
+    doc.save_to(&mut std::fs::File::create(output).map_err(|_| Error("INTERNAL_ERROR", None))?)
+        .map_err(|_| Error("INTERNAL_ERROR", None))?;
     let input_bytes = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
     Ok(json!({
         "imagesProcessed": processed,
@@ -734,11 +734,11 @@ impl ImageResampler for ResampleProvider {
         }
         .run(&[WORKER_ARG.to_string(), request.to_string()], control)?;
         let summary: Value =
-            serde_json::from_slice(&stdout).map_err(|_| Error("INTERNAL_ERROR"))?;
+            serde_json::from_slice(&stdout).map_err(|_| Error("INTERNAL_ERROR", None))?;
         if let Some(code) = summary.get("error").and_then(Value::as_str) {
             return Err(match code {
-                "INVALID_PDF" => Error("INVALID_PDF"),
-                _ => Error("INTERNAL_ERROR"),
+                "INVALID_PDF" => Error("INVALID_PDF", None),
+                _ => Error("INTERNAL_ERROR", None),
             });
         }
         Ok(summary)
@@ -749,25 +749,25 @@ fn process(arguments: &[OsString]) -> Result<Value> {
     let request_text = arguments
         .first()
         .map(|a| a.to_string_lossy().into_owned())
-        .ok_or(Error("INVALID_REQUEST"))?;
+        .ok_or(Error("INVALID_REQUEST", None))?;
     if request_text.len() > MAX_REQUEST_BYTES {
-        return Err(Error("INVALID_REQUEST"));
+        return Err(Error("INVALID_REQUEST", None));
     }
     let request: Value =
-        serde_json::from_str(&request_text).map_err(|_| Error("INVALID_REQUEST"))?;
+        serde_json::from_str(&request_text).map_err(|_| Error("INVALID_REQUEST", None))?;
     let input = request
         .get("input")
         .and_then(Value::as_str)
-        .ok_or(Error("INVALID_REQUEST"))?;
+        .ok_or(Error("INVALID_REQUEST", None))?;
     let output = request
         .get("output")
         .and_then(Value::as_str)
-        .ok_or(Error("INVALID_REQUEST"))?;
+        .ok_or(Error("INVALID_REQUEST", None))?;
     let dpi = request
         .get("dpiCap")
         .and_then(Value::as_u64)
         .filter(|d| (36..=600).contains(d))
-        .ok_or(Error("INVALID_REQUEST"))? as u32;
+        .ok_or(Error("INVALID_REQUEST", None))? as u32;
     let quality = request
         .get("jpegQuality")
         .and_then(Value::as_u64)

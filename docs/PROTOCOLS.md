@@ -19,6 +19,23 @@ status, and explicit unsupported/excluded capabilities.
 CLI discovery/utility commands: `operations`, `schema <operationId>`, `completions <bash|zsh|fish>`, `help [command]` / `--help` / `-h`, `version` / `--version` / `-V`.
 When neither `--qpdf` nor `ANPDF_QPDF` is set, the CLI/server checks standard system paths (`/opt/qpdf/bin/qpdf`, `/usr/bin/qpdf`, `/opt/homebrew/bin/qpdf`, `/usr/local/bin/qpdf`) and trusted `PATH` directories (absolute, owned by the effective user or root, without group/other write bits).
 
+CLI operations also accept positional shorthand instead of `--request-json`/`--request-file`; both forms produce the same contract request and identical envelopes. `<pages>` is a comma list of 1-based numbers and `a-b` ranges.
+
+| CLI shorthand | Request fields |
+|---|---|
+| `anpdf inspect <doc.pdf>` | `input` |
+| `anpdf merge <a.pdf> <b.pdf> [...] [-o <out.pdf>]` | `inputs` (2–20), `output` (`-o` or trailing positional) |
+| `anpdf extract <doc.pdf> <pages> [-o <out.pdf>]` | `input`, `pages`, `output` |
+| `anpdf split <doc.pdf> <out=pages>...` | `input`, `parts` (2–20 `output=pages` pairs) |
+| `anpdf remove-pages <doc.pdf> <pages> [-o <out.pdf>]` | `input`, `pages`, `output` |
+| `anpdf compress <doc.pdf> [<out.pdf>]` | `input`, `output` (defaults to `<name>-compressed.pdf`; `--mode`, `--jpeg-quality`, `--level`, `--max-bytes`, `--on-target-miss`, `--allow-larger` map to `mode`, `jpegQuality`, `compressionLevel`, `maxOutputBytes`, `onTargetMiss`, `allowLargerOutput`) |
+| `anpdf extract-text <doc.pdf> <pages>` | `input`, `pages` (+`--engine`) |
+| `anpdf render-page <doc.pdf> <page> [-o <image>]` | `input`, `page`, `output` (+`--dpi`, `--engine`) |
+
+`--replace` maps to `output.replaceExisting`, and `--preserve metadata,bookmarks,annotations,attachments` (or `all`) maps to `preserve`. `--` terminates flag parsing for dash-leading filenames. `extract`, `remove-pages` and `extract-text` also accept `--pages <spec>` in place of the positional. Shorthand paths may be absolute or `~/`-prefixed: the invocation's workspace root then adapts to the files' common canonical directory, while `--root` pins it and refuses inputs outside. JSON requests (inline, file, stdin, HTTP, MCP) always stay workspace-relative to `--root`.
+
+Error messages may append a detail suffix (` — <detail>`) naming the failing field (a JSON pointer like `/input/path`), flag or file; the envelope schema and codes are unchanged. On a terminal, a bare operation or parse-stage misuse prints usage instead of a JSON envelope or blocking on stdin, successful results print a short plain summary (the pretty envelope via `--json`), and errors print `anpdf <command>: <reason>` leading with the specific detail; non-terminal stdout/stderr keep the canonical envelopes byte-identical, and piped stdin still supplies the request. Non-UTF-8 arguments fail with `INVALID_REQUEST`.
+
 Authenticated HTTP discovery: GET `/v1/operations` and `/v1/openapi.json`.
 A canonical error is `{contractVersion, operationId, error:{code,message,retryable}}`.
 Messages never include raw backend output, absolute input paths, or credentials.

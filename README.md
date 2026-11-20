@@ -16,7 +16,7 @@ The goal is to **own the interface and the workflow**, while reusing proven PDF 
 
 ## What works today
 
-**Version:** `0.3.1` — early development milestone (**not production-qualified**).
+**Version:** `0.3.2` — early development milestone (**not production-qualified**).
 
 Released as [v0.3.0](https://github.com/nextexcite/anPDF/releases/tag/v0.3.0). See [CHANGELOG.md](CHANGELOG.md) and the
 [release checklist](docs/BUILD.md#release-checklist).

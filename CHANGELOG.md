@@ -4,6 +4,53 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
+## [0.3.2] - 2026-11-20
+
+### Added
+- Positional CLI shorthand for every PDF operation: `anpdf inspect <doc.pdf>`,
+  `anpdf merge <a.pdf> <b.pdf> [...] <out.pdf>`, `anpdf extract <doc.pdf> <pages>
+  [-o <out.pdf>]`, `anpdf split <doc.pdf> <out=pages>...`, `anpdf remove-pages
+  <doc.pdf> <pages>`, `anpdf compress <doc.pdf> [<out.pdf>]` (output defaults to
+  `<name>-compressed.pdf`), `anpdf extract-text <doc.pdf> <pages>` and
+  `anpdf render-page <doc.pdf> <page> [-o <image>]`. Shorthand flags cover
+  `--output`/`-o`, `--replace`, `--preserve`, `--mode`, `--jpeg-quality`,
+  `--level`, `--max-bytes`, `--on-target-miss`, `--allow-larger`, `--engine` and
+  `--dpi`; `--` terminates flag parsing for dash-leading filenames. Shorthand
+  produces the same contract request and identical result envelopes as
+  `--request-json`/`--request-file`.
+- `<pages>` shorthand accepts comma lists and ranges (`1,3`, `2-5`), and is
+  also available as the `--pages <spec>` flag for extract, remove-pages and
+  extract-text.
+- Shorthand paths may be absolute or start with `~` (expanded via `$HOME`):
+  the invocation's workspace root adapts to the files' common canonical
+  directory, so `cd /tmp && anpdf compress ~/Downloads/x.pdf` works. An
+  explicit `--root` pins the sandbox and refuses absolute inputs outside it;
+  JSON requests, HTTP and MCP keep workspace-relative paths unchanged.
+- Error envelopes carry a detail suffix naming the failing field, flag or
+  file — e.g. `/input/path: 1 is not of type "string"`, `--level expects
+  1, 2 or 3`, `input 'missing.pdf'`. The error schema and exit codes are
+  unchanged, and envelopes stay identical across CLI, HTTP and MCP.
+
+### Changed
+- A bare `anpdf` or `anpdf <operation>` on a terminal prints command usage and
+  exits instead of blocking on stdin; piped stdin still supplies the JSON
+  request.
+- On a terminal, successful results print a short plain-language summary
+  (output path, sizes and saving, warnings in words) and errors lead with
+  the specific reason (`anpdf <command>: <reason>`); `--json` prints the
+  envelope on a terminal, and piped stdout/stderr keep the canonical
+  envelopes byte-identical.
+- Parse-stage `INVALID_REQUEST`/`UNSUPPORTED_OPERATION` print usage on a
+  terminal; non-terminal stderr keeps the canonical JSON error envelope
+  byte-identical.
+- Non-UTF-8 arguments fail with `INVALID_REQUEST` instead of panicking.
+- `anpdf serve` now fails fast with `INVALID_REQUEST` when `--token-file` is
+  missing, at parse time.
+- `--help`/`-h` works in any position for known commands (e.g.
+  `anpdf compress doc.pdf --help`).
+- Shell completions (bash/zsh/fish) cover the new shorthand flags and complete
+  filenames for positional arguments.
+
 ## [0.3.1] - 2026-11-20
 
 ### Added

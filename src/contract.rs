@@ -47,6 +47,23 @@ pub fn valid(schema: &Value, value: &Value) -> bool {
 pub fn valid_input(id: &str, value: &Value) -> bool {
     input(id).is_some_and(|s| valid(&s, value))
 }
+/// First schema violation for a request, rendered as `/<path>: <reason>`
+/// so error envelopes can name the offending field.
+pub fn invalid_detail(id: &str, value: &Value) -> Option<String> {
+    let schema = input(id)?;
+    jsonschema::validator_for(&schema)
+        .ok()?
+        .iter_errors(value)
+        .next()
+        .map(|e| {
+            let path = e.instance_path.as_str();
+            if path.is_empty() {
+                format!("/: {e}")
+            } else {
+                format!("{path}: {e}")
+            }
+        })
+}
 pub fn valid_output(id: &str, value: &Value) -> bool {
     operation(id).is_some_and(|op| {
         valid(

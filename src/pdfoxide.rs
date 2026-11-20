@@ -57,7 +57,9 @@ impl PdfOxide {
             .stdout(output)
             .stderr(Stdio::null());
         limit_worker(&mut cmd, file_limit as libc::rlim_t);
-        let mut child = cmd.spawn().map_err(|_| Error("BACKEND_UNAVAILABLE"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|_| Error("BACKEND_UNAVAILABLE", None))?;
         let pid = child.id() as i32;
         let stop = |child: &mut std::process::Child| {
             unsafe { libc::kill(-pid, libc::SIGKILL) };
@@ -70,25 +72,25 @@ impl PdfOxide {
             }
             if child_rss_exceeded(pid) {
                 stop(&mut child);
-                return Err(Error("LIMIT_EXCEEDED"));
+                return Err(Error("LIMIT_EXCEEDED", None));
             }
             match child.try_wait() {
                 Ok(Some(status)) => {
                     unsafe { libc::kill(-pid, libc::SIGKILL) };
                     return match status.code() {
                         Some(0) => Ok(()),
-                        Some(2) => Err(Error("INVALID_REQUEST")),
-                        Some(5) => Err(Error("INVALID_PDF")),
-                        Some(6) => Err(Error("UNSUPPORTED_OPERATION")),
-                        Some(7) | None => Err(Error("LIMIT_EXCEEDED")),
-                        Some(9) => Err(Error("ENCRYPTED_UNSUPPORTED")),
-                        _ => Err(Error("INTERNAL")),
+                        Some(2) => Err(Error("INVALID_REQUEST", None)),
+                        Some(5) => Err(Error("INVALID_PDF", None)),
+                        Some(6) => Err(Error("UNSUPPORTED_OPERATION", None)),
+                        Some(7) | None => Err(Error("LIMIT_EXCEEDED", None)),
+                        Some(9) => Err(Error("ENCRYPTED_UNSUPPORTED", None)),
+                        _ => Err(Error("INTERNAL", None)),
                     };
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(10)),
                 Err(_) => {
                     stop(&mut child);
-                    return Err(Error("INTERNAL"));
+                    return Err(Error("INTERNAL", None));
                 }
             }
         }
@@ -102,7 +104,7 @@ impl ExtractTextBackend for PdfOxide {
         pages: &[u64],
         control: &Control,
     ) -> Result<(Vec<Value>, Vec<Value>)> {
-        let mut output = tempfile::tempfile_in(input.parent().ok_or(Error("INTERNAL"))?)?;
+        let mut output = tempfile::tempfile_in(input.parent().ok_or(Error("INTERNAL", None))?)?;
         let mut args = vec!["text".into(), input.into()];
         args.extend(pages.iter().map(|page| page.to_string().into()));
         self.run(
@@ -113,7 +115,7 @@ impl ExtractTextBackend for PdfOxide {
         )?;
         output.rewind()?;
         let pages = serde_json::from_reader(output.take(MAX_TEXT_RESPONSE_BYTES as u64))
-            .map_err(|_| Error("INTERNAL"))?;
+            .map_err(|_| Error("INTERNAL", None))?;
         Ok((pages, Vec::new()))
     }
 }
@@ -151,21 +153,23 @@ fn span_bounds(rect: Rect) -> Result<Value> {
     let right = left + f64::from(rect.width);
     let top = bottom + f64::from(rect.height);
     if ![left, bottom, right, top].into_iter().all(f64::is_finite) || right < left || top < bottom {
-        return Err(Error("INVALID_PDF"));
+        return Err(Error("INVALID_PDF", None));
     }
     Ok(json!({"left":left,"bottom":bottom,"right":right,"top":top}))
 }
 
 fn extract(doc: &PdfDocument, pages: &[usize], mut output: impl Write) -> Result<()> {
-    output.write_all(b"[").map_err(|_| Error("INTERNAL"))?;
+    output
+        .write_all(b"[")
+        .map_err(|_| Error("INTERNAL", None))?;
     for (i, &page) in pages.iter().enumerate() {
         let spans = doc
             .extract_spans_with_reading_order(page - 1, ReadingOrder::ColumnAware)
-            .map_err(|_| Error("INVALID_PDF"))?;
+            .map_err(|_| Error("INVALID_PDF", None))?;
         if spans.len() > MAX_SPANS
             || spans.iter().map(|s| s.text.len()).sum::<usize>() > MAX_TEXT_RESPONSE_BYTES
         {
-            return Err(Error("LIMIT_EXCEEDED"));
+            return Err(Error("LIMIT_EXCEEDED", None));
         }
         let spans = spans
             .into_iter()
@@ -174,17 +178,19 @@ fn extract(doc: &PdfDocument, pages: &[usize], mut output: impl Write) -> Result
             .collect::<Result<Vec<_>>>()?;
         let text = doc
             .extract_text(page - 1)
-            .map_err(|_| Error("INVALID_PDF"))?;
+            .map_err(|_| Error("INVALID_PDF", None))?;
         if text.len() > MAX_TEXT_RESPONSE_BYTES {
-            return Err(Error("LIMIT_EXCEEDED"));
+            return Err(Error("LIMIT_EXCEEDED", None));
         }
         if i != 0 {
-            output.write_all(b",").map_err(|_| Error("INTERNAL"))?;
+            output
+                .write_all(b",")
+                .map_err(|_| Error("INTERNAL", None))?;
         }
         serde_json::to_writer(&mut output, &json!({"page":page,"text":text,"spans":spans}))
-            .map_err(|_| Error("INTERNAL"))?;
+            .map_err(|_| Error("INTERNAL", None))?;
     }
-    output.write_all(b"]").map_err(|_| Error("INTERNAL"))
+    output.write_all(b"]").map_err(|_| Error("INTERNAL", None))
 }
 
 fn render_dimensions(
@@ -212,70 +218,76 @@ fn render_dimensions(
         std::mem::swap(&mut width, &mut height);
     }
     if !width.is_finite() || !height.is_finite() || width < 1.0 || height < 1.0 {
-        return Err(Error("INVALID_PDF"));
+        return Err(Error("INVALID_PDF", None));
     }
     let dimensions = (width as u32, height as u32);
     validate_render_dimensions(dimensions.0, dimensions.1)?;
     let precise_extent = |points| (f64::from(points) * f64::from(scale)).ceil();
     if precise_extent(visible.width) * precise_extent(visible.height) > MAX_RENDER_PIXELS as f64 {
-        return Err(Error("LIMIT_EXCEEDED"));
+        return Err(Error("LIMIT_EXCEEDED", None));
     }
     Ok(dimensions)
 }
 
 fn rasterize(doc: &PdfDocument, page: usize, dpi: u32, mut output: impl Write) -> Result<()> {
-    let page_dict = doc.get_page(page - 1).map_err(|_| Error("INVALID_PDF"))?;
+    let page_dict = doc
+        .get_page(page - 1)
+        .map_err(|_| Error("INVALID_PDF", None))?;
     if let Some(unit) = page_dict
         .as_dict()
-        .ok_or(Error("INVALID_PDF"))?
+        .ok_or(Error("INVALID_PDF", None))?
         .get("UserUnit")
     {
-        let unit = doc.resolve_object(unit).map_err(|_| Error("INVALID_PDF"))?;
+        let unit = doc
+            .resolve_object(unit)
+            .map_err(|_| Error("INVALID_PDF", None))?;
         match unit {
             Object::Null | Object::Integer(1) | Object::Real(1.0) => {}
-            Object::Integer(n) if n > 0 => return Err(Error("UNSUPPORTED_OPERATION")),
+            Object::Integer(n) if n > 0 => return Err(Error("UNSUPPORTED_OPERATION", None)),
             Object::Real(n) if n.is_finite() && n > 0.0 => {
-                return Err(Error("UNSUPPORTED_OPERATION"));
+                return Err(Error("UNSUPPORTED_OPERATION", None));
             }
-            _ => return Err(Error("INVALID_PDF")),
+            _ => return Err(Error("INVALID_PDF", None)),
         }
     }
     let info = doc
         .get_page_info(page - 1)
-        .map_err(|_| Error("INVALID_PDF"))?;
+        .map_err(|_| Error("INVALID_PDF", None))?;
     let dimensions = render_dimensions(info.media_box, info.crop_box, info.rotation, dpi)?;
     let mut options = RenderOptions::with_dpi(dpi);
     options.render_annotations = false;
     options.max_output_pixels = MAX_RENDER_PIXELS;
-    let image = render_page(doc, page - 1, &options).map_err(|_| Error("INVALID_PDF"))?;
+    let image = render_page(doc, page - 1, &options).map_err(|_| Error("INVALID_PDF", None))?;
     if (image.width, image.height) != dimensions {
-        return Err(Error("INTERNAL"));
+        return Err(Error("INTERNAL", None));
     }
     if image.data.len() as u64 > MAX_PNG_BYTES {
-        return Err(Error("LIMIT_EXCEEDED"));
+        return Err(Error("LIMIT_EXCEEDED", None));
     }
-    output.write_all(&image.data).map_err(|_| Error("INTERNAL"))
+    output
+        .write_all(&image.data)
+        .map_err(|_| Error("INTERNAL", None))
 }
 
 fn run_worker(mut args: impl Iterator<Item = OsString>, mut output: impl Write) -> Result<()> {
-    let job = args.next().ok_or(Error("INVALID_REQUEST"))?;
-    let input = args.next().ok_or(Error("INVALID_REQUEST"))?;
-    let doc = PdfDocument::open(input).map_err(|_| Error("INVALID_PDF"))?;
+    let job = args.next().ok_or(Error("INVALID_REQUEST", None))?;
+    let input = args.next().ok_or(Error("INVALID_REQUEST", None))?;
+    let doc = PdfDocument::open(input).map_err(|_| Error("INVALID_PDF", None))?;
     if doc.is_encrypted() {
-        return Err(Error("ENCRYPTED_UNSUPPORTED"));
+        return Err(Error("ENCRYPTED_UNSUPPORTED", None));
     }
-    let count = doc.page_count().map_err(|_| Error("INVALID_PDF"))?;
+    let count = doc.page_count().map_err(|_| Error("INVALID_PDF", None))?;
     let number = |arg: OsString| {
         arg.to_str()
             .and_then(|s| s.parse::<usize>().ok())
-            .ok_or(Error("INVALID_REQUEST"))
+            .ok_or(Error("INVALID_REQUEST", None))
     };
     let page = |arg| {
         number(arg).and_then(|n| {
             (1..=count)
                 .contains(&n)
                 .then_some(n)
-                .ok_or(Error("INVALID_REQUEST"))
+                .ok_or(Error("INVALID_REQUEST", None))
         })
     };
     match job.as_os_str() {
@@ -285,23 +297,23 @@ fn run_worker(mut args: impl Iterator<Item = OsString>, mut output: impl Write) 
             &mut output,
         )?,
         j if j == OsStr::new("render") => {
-            let page = page(args.next().ok_or(Error("INVALID_REQUEST"))?)?;
-            let dpi = number(args.next().ok_or(Error("INVALID_REQUEST"))?)?;
+            let page = page(args.next().ok_or(Error("INVALID_REQUEST", None))?)?;
+            let dpi = number(args.next().ok_or(Error("INVALID_REQUEST", None))?)?;
             if !(36..=300).contains(&dpi) || args.next().is_some() {
-                return Err(Error("INVALID_REQUEST"));
+                return Err(Error("INVALID_REQUEST", None));
             }
             rasterize(&doc, page, dpi as u32, &mut output)?;
         }
-        _ => return Err(Error("INVALID_REQUEST")),
+        _ => return Err(Error("INVALID_REQUEST", None)),
     }
-    output.flush().map_err(|_| Error("INTERNAL"))
+    output.flush().map_err(|_| Error("INTERNAL", None))
 }
 
 #[doc(hidden)]
 pub fn worker(args: impl Iterator<Item = OsString>) -> i32 {
     match run_worker(args, BufWriter::new(io::stdout().lock())) {
         Ok(()) => 0,
-        Err(Error("ENCRYPTED_UNSUPPORTED")) => 9,
+        Err(Error("ENCRYPTED_UNSUPPORTED", None)) => 9,
         Err(e) => e.exit(),
     }
 }
