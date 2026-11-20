@@ -1,5 +1,9 @@
 # Synthetic fixtures
 
+For a broader synthetic engine-comparison corpus and external provider harness,
+see [the benchmark guide](../docs/BENCHMARK.md). It is separate from product
+qualification and does not enable unsupported product operations.
+
 Run `python3 fixtures/generate.py build/work/fixtures`.
 Original deterministic byte fixtures are Apache-2.0. Recipes contain no timestamps,
 external files, personal metadata, or keys. The signature marker is deliberately
