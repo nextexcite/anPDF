@@ -5,6 +5,38 @@ use std::{
     os::unix::fs::{PermissionsExt, symlink},
 };
 
+#[test]
+fn rung_choice_prefers_gentlest_fit() {
+    use crate::resample::choose_rung;
+    // Measured per-rung document bytes, gentlest → hardest; all usable.
+    let usable = [true; 4];
+    // Gentle-most rung under target wins over smaller harder rungs.
+    assert_eq!(
+        choose_rung(
+            &[9_000_000, 2_900_000, 1_800_000, 900_000],
+            &usable,
+            3_000_000
+        ),
+        1
+    );
+    // No rung fits: smallest measured rung is the best-effort pick.
+    assert_eq!(
+        choose_rung(&[9_000_000, 2_900_000, 1_800_000], &usable, 1_000),
+        2
+    );
+    // Rungs left unmeasured by a budget stop are not eligible.
+    assert_eq!(
+        choose_rung(
+            &[9_000_000, 1_800_000, 900_000],
+            &[true, true, false],
+            3_000_000
+        ),
+        1
+    );
+    // Exact-fit boundary counts as meeting the target.
+    assert_eq!(choose_rung(&[3_000_000, 2_000_000], &usable, 3_000_000), 0);
+}
+
 mod content_operations {
     use crate::{
         BackendRegistry, Dispatcher,
@@ -611,6 +643,8 @@ fn process_timeout_and_output_limits() {
     let q = Qpdf {
         executable: exe.clone(),
         exact: false,
+        as_limit: 768 * 1024 * 1024,
+        cpu_scale: 1,
     };
     let c = Control {
         deadline: Instant::now() + Duration::from_millis(40),

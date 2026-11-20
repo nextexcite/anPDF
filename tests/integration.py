@@ -228,8 +228,8 @@ def run():
           ('compress',{'input':{'path':'three.pdf'},'output':{'path':'compressed.pdf'}},None),
           ('compress',{'input':{'path':'three.pdf'},'output':{'path':'compressed-lossy.pdf'},'mode':'lossy','jpegQuality':75},None),
           ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'resampled.pdf'},'maxOutputBytes':400000},None),
-          ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'resampled-tight.pdf'},'maxOutputBytes':20000},None),
-          ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'resampled-err.pdf'},'maxOutputBytes':20000,'onTargetMiss':'error'},'SIZE_TARGET_UNMET'),
+          ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'resampled-tight.pdf'},'maxOutputBytes':1000},None),
+          ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'resampled-err.pdf'},'maxOutputBytes':1000,'onTargetMiss':'error'},'SIZE_TARGET_UNMET'),
           ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'level-two.pdf'},'compressionLevel':2},None),
           ('compress',{'input':{'path':'bitonal.pdf'},'output':{'path':'bitonal-l3.pdf'},'compressionLevel':3},None),
           ('compress',{'input':{'path':'three.pdf'},'output':{'path':'bad-compress.pdf'},'mode':'lossless','jpegQuality':75},'INVALID_REQUEST'),
@@ -333,7 +333,7 @@ def run():
             cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps(request)],capture_output=True,text=True)
             assert bool(cli.returncode)==bool(error),(n,command,cli.returncode,cli.stderr,cli.stdout);a=json.loads(cli.stderr if error else cli.stdout)
             assert not (cli.stdout if error else cli.stderr),(n,'framing')
-            try:status,b=http(port,token,'/v1/'+command,request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else 15)
+            try:status,b=http(port,token,'/v1/'+command,request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else (30 if command=='compress' else 15))
             except TimeoutError as e:raise AssertionError((n,command,request.get('input'),'HTTP timeout')) from e
             mcp_send(mcp,{'jsonrpc':'2.0','id':n,'method':'tools/call','params':{'name':op,'arguments':request}})
             result=mcp_read(mcp)['result'];c=json.loads(result['content'][0]['text'])
@@ -455,6 +455,15 @@ def run():
             assert not (root/'resampled-err.pdf').exists()
             assert digest(root/'resampled.pdf')!=digest(root/'oversampled.pdf')
         for root in roots.values():assert not (root/'split-rollback.pdf').exists()
+        # A deadline spent mid-descent still publishes the smallest achieved
+        # bytes with SIZE_TARGET_UNMET instead of failing with TIMEOUT.
+        # The outcome holds whether the descent finishes at the floor or is
+        # cut short, so a tiny target makes it deterministic on any host.
+        env=dict(os.environ,ANPDF_JOB_DEADLINE_MS='2000')
+        slow=subprocess.run([str(BIN),'compress','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'oversampled.pdf'},'output':{'path':'deadline-best.pdf'},'maxOutputBytes':1000})],capture_output=True,text=True,env=env)
+        assert slow.returncode==0,(slow.returncode,slow.stderr,slow.stdout)
+        sb=json.loads(slow.stdout)
+        assert sb['result']['targetMet'] is False and any(w['code']=='SIZE_TARGET_UNMET' for w in sb['warnings']) and (roots['cli']/'deadline-best.pdf').exists(),sb
         # Verify enriched inspectPdf metadata, page geometry, rotation, and action signals.
         mixed_inspect=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'mixed.pdf'}})]))['result']
         assert mixed_inspect['pdfVersion']=='1.7' and mixed_inspect['actions']=='absent' and mixed_inspect['hasOutline'] is False and mixed_inspect['hasAttachments'] is False and mixed_inspect['metadata']=={}

@@ -23,6 +23,8 @@ impl PdfiumProvider {
         let (code, bytes) = Qpdf {
             executable: self.worker_executable.clone(),
             exact: false,
+            as_limit: 768 * 1024 * 1024,
+            cpu_scale: 1,
         }
         .run(
             &[

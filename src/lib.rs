@@ -25,6 +25,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 pub struct Dispatcher {
@@ -119,9 +120,17 @@ impl Dispatcher {
             .iter()
             .map(|v| self.workspace.input(v["path"].as_str().unwrap()))
             .collect::<Result<Vec<_>>>()?;
-        if inputs.iter().map(|i| i.bytes).sum::<u64>() > TOTAL_LIMIT {
+        let input_bytes = inputs.iter().map(|i| i.bytes).sum::<u64>();
+        if input_bytes > TOTAL_LIMIT {
             return Err(Error("LIMIT_EXCEEDED", None));
         }
+        // Resample passes dominate a compress job's runtime and scale with
+        // input size, so the deadline scales too (bounded at 10 minutes).
+        let mut sized = control.clone();
+        if matches!(plan.job, Job::Compress) {
+            sized.deadline = Instant::now() + backend::compress_deadline(input_bytes);
+        }
+        let control = &sized;
         let mut parts: Option<Vec<(Vec<u64>, String, filesystem::Destination)>> = None;
         let pages = if matches!(id, "extractPdf" | "removePages") {
             Some(parse_pages(&request["pages"])?)
@@ -130,8 +139,9 @@ impl Dispatcher {
         };
         /// Descent ladder for size-targeted compression: (DPI cap, JPEG quality)
         /// pairs from gentlest to hardest. `compressionLevel` bounds how far the
-        /// ladder may descend — level 2 floors at the 200dpi rung, level 3 (the
-        /// default floor for a bare target) at the 120dpi rung.
+        /// ladder may descend — level 2 floors at the 200dpi rung, level 3 at
+        /// the 120dpi rung. A bare target (`maxOutputBytes` without a level)
+        /// may descend to the 72dpi floor when the target demands it.
         struct CompressSpec {
             mode: CompressMode,
             lossy: bool,
@@ -139,7 +149,14 @@ impl Dispatcher {
             error_on_miss: bool,
             level: Option<u64>,
         }
-        const LADDER: &[(u32, u8)] = &[(300, 80), (200, 75), (150, 65), (120, 55)];
+        const LADDER: &[(u32, u8)] = &[
+            (300, 80),
+            (200, 75),
+            (150, 65),
+            (120, 55),
+            (96, 50),
+            (72, 45),
+        ];
         let compress_spec = if matches!(plan.job, Job::Compress) {
             let mode_str = request["mode"].as_str().unwrap_or("lossless");
             let jpeg_quality = request["jpegQuality"].as_u64();
@@ -416,13 +433,30 @@ impl Dispatcher {
                 // Rungs the ladder may touch: a bare target descends to the
                 // level floor (default 120dpi); a level without a target pins
                 // exactly its rung; level 1 never resamples.
-                let rungs: &[(u32, u8)] = match (spec.max_output_bytes.is_some(), spec.level) {
+                let rungs_base: &[(u32, u8)] = match (spec.max_output_bytes.is_some(), spec.level) {
                     (_, Some(1)) => &[],
                     (true, Some(2)) => &LADDER[..2],
+                    (true, Some(3)) => &LADDER[..4],
                     (true, _) => LADDER,
                     (false, Some(2)) => &LADDER[1..2],
                     (false, Some(3)) => &LADDER[3..4],
                     (false, _) => &[],
+                };
+                // A size target measures interpolated midpoints between
+                // adjacent rungs as well, so the gentlest fit lands near the
+                // target instead of dropping a whole rung of quality.
+                let dense: Vec<(u32, u8)> = rungs_base
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, &(dpi, q))| match rungs_base.get(i + 1) {
+                        Some(&(nd, nq)) => vec![(dpi, q), ((dpi + nd) / 2, (q + nq) / 2)],
+                        None => vec![(dpi, q)],
+                    })
+                    .collect();
+                let rungs: &[(u32, u8)] = if spec.max_output_bytes.is_some() {
+                    &dense
+                } else {
+                    rungs_base
                 };
                 if !rungs.is_empty() && spec.max_output_bytes.is_none_or(|t| candidate_bytes > t) {
                     match plan.resampler {
@@ -434,57 +468,102 @@ impl Dispatcher {
                             "message": "Compressed output could not meet the requested maximum size; no image-resampling backend is configured."
                         })),
                         Some(resampler) => {
-                            'ladder: for (rung, (dpi, quality)) in rungs.iter().enumerate() {
-                        control.check()?;
-                        let raw = staging.path().join(format!("rung{rung}.raw.pdf"));
-                        // Each rung resamples the initial qpdf pass output —
-                        // already repaired — rather than the previous rung's
-                        // pixels, so JPEG artifacts never accumulate.
-                        let summary = resampler.resample_images(
-                            &out,
-                            &raw,
-                            *dpi,
-                            *quality,
-                            control,
-                        )?;
-                        let skipped = summary["imagesSkipped"].as_array().cloned().unwrap_or_default();
-                        if !skipped.is_empty() {
-                            warnings.push(json!({
-                                "code": "IMAGE_RESAMPLE_SKIPPED",
-                                "message": format!("{} images could not be safely resampled and were left unchanged.", skipped.len())
-                            }));
-                        }
-                        let processed = summary["imagesProcessed"].as_u64().unwrap_or(0);
-                        if processed == 0 {
-                            // No image exceeded this rung's DPI cap; deeper
-                            // rungs can still qualify lower-resolution images.
-                            continue 'ladder;
-                        }
-                        let finished = staging.path().join(format!("rung{rung}.pdf"));
-                        warnings.extend(plan.structural.compress(
-                            &raw,
-                            CompressMode::Lossy { jpeg_quality: *quality },
-                            &finished,
-                            control,
-                        )?);
-                        let finished_bytes = std::fs::metadata(&finished)?.len();
-                        if !techniques.contains(&"image-downsample") {
-                            techniques.push("image-downsample");
-                        }
-                        if finished_bytes < candidate_bytes {
-                            candidate = finished;
-                            candidate_bytes = finished_bytes;
-                        }
-                        // Stop only when the target is met; non-image bytes
-                        // still shrink under the qpdf finish, so no floor check.
-                        if spec.max_output_bytes.is_none_or(|t| candidate_bytes <= t) {
-                            break 'ladder;
-                        }
+                            // One worker pass covers the whole descent: every
+                            // image is decoded once, encoded at each remaining
+                            // rung for an exact byte total, and the gentlest
+                            // rung fitting the target is applied. Resampling
+                            // the staged input keeps original pixels — the
+                            // structural compress afterward adds no second
+                            // JPEG generation. When the estimate overshoots
+                            // the target, only the still-unmeasured deeper
+                            // rungs are retried. A deadline hit mid-descent
+                            // stops the search and publishes the best-so-far.
+                            let mut met: Option<(PathBuf, u64)> = None;
+                            let mut depth = 0usize; // first untried rung index
+                            loop {
+                                if control.check().is_err() || depth >= rungs.len() {
+                                    break;
+                                }
+                                let remaining = &rungs[depth..];
+                                let raw = staging.path().join(format!("rung{depth}.raw.pdf"));
+                                // Resample the original input for first-
+                                // generation pixels; a damaged document qpdf
+                                // already repaired may not parse there, so
+                                // fall back to the repaired candidate.
+                                let summary = match resampler.resample_images(
+                                    &paths[0], &raw, remaining, spec.max_output_bytes, control,
+                                ) {
+                                    Ok(s) => s,
+                                    Err(e) if e.0 == "INVALID_PDF" => {
+                                        match resampler.resample_images(
+                                            &out, &raw, remaining, spec.max_output_bytes, control,
+                                        ) {
+                                            Ok(s) => s,
+                                            Err(e) if e.0 == "TIMEOUT" => break,
+                                            Err(e) => return Err(e),
+                                        }
+                                    }
+                                    Err(e) if e.0 == "TIMEOUT" => break,
+                                    Err(e) => return Err(e),
+                                };
+                                let skipped =
+                                    summary["imagesSkipped"].as_array().cloned().unwrap_or_default();
+                                if !skipped.is_empty() {
+                                    warnings.push(json!({
+                                        "code": "IMAGE_RESAMPLE_SKIPPED",
+                                        "message": format!("{} images could not be safely resampled and were left unchanged.", skipped.len())
+                                    }));
+                                }
+                                let finished = staging.path().join(format!("rung{depth}.pdf"));
+                                // Lossless structural finish only: the worker
+                                // already encoded the images at the rung's
+                                // quality — re-encoding again would add JPEG
+                                // generations without shrinking bytes.
+                                match plan.structural.compress(
+                                    &raw,
+                                    CompressMode::Lossless,
+                                    &finished,
+                                    control,
+                                ) {
+                                    Ok(w) => warnings.extend(w),
+                                    Err(e) if e.0 == "TIMEOUT" => break,
+                                    Err(e) => return Err(e),
+                                }
+                                let finished_bytes = std::fs::metadata(&finished)?.len();
+                                if !techniques.contains(&"image-downsample") {
+                                    techniques.push("image-downsample");
+                                }
+                                if finished_bytes < candidate_bytes {
+                                    candidate = finished.clone();
+                                    candidate_bytes = finished_bytes;
+                                }
+                                let chosen = summary["chosenRung"].as_u64().unwrap_or(0) as usize;
+                                depth += chosen + 1;
+                                match spec.max_output_bytes {
+                                    Some(t) if finished_bytes <= t => {
+                                        met = Some((finished, finished_bytes));
+                                        break;
+                                    }
+                                    _ => continue, // overshot: retry deeper rungs
+                                }
+                            }
+                            // The gentlest rung meeting the target wins over a
+                            // harder, smaller probe: same contract, better
+                            // fidelity.
+                            if let Some((path, bytes)) = met {
+                                candidate = path;
+                                candidate_bytes = bytes;
                             }
                         }
                     }
                 }
-                let (report, w) = plan.structural.inspect(&candidate, control, false)?;
+                // Re-verifying the candidate and committing it is the
+                // publish path: a deadline spent mid-descent must not strand
+                // it. Verification runs under a short grace window bounded
+                // to the inspect; cancellation still aborts at commit.
+                let mut grace = control.clone();
+                grace.deadline = Instant::now() + Duration::from_secs(60);
+                let (report, w) = plan.structural.inspect(&candidate, &grace, false)?;
                 warnings.extend(w);
                 if report["pageCount"] != total_pages
                     || report["forms"] != "absent"
@@ -526,7 +605,7 @@ impl Dispatcher {
                     }
                     warnings.push(json!({
                         "code": "SIZE_TARGET_UNMET",
-                        "message": "Compressed output exceeds maxOutputBytes after descending the full ladder; smallest achieved bytes were published."
+                        "message": "Compressed output exceeds maxOutputBytes; smallest achieved bytes were published."
                     }));
                 }
                 let mut result = json!({
@@ -551,7 +630,12 @@ impl Dispatcher {
                     return Err(Error("INTERNAL", None));
                 }
                 self.workspace.unchanged(&mut inputs)?;
-                control.check()?;
+                // The descent stops at the deadline carrying its best
+                // candidate; committing that result is quick, so only an
+                // explicit cancel aborts here — not the spent deadline.
+                if control.cancelled.load(Ordering::Relaxed) {
+                    return Err(Error("TIMEOUT", None));
+                }
                 destination.commit(source, &inputs)?;
                 return Ok(envelope);
             }

@@ -94,7 +94,7 @@ pub fn discovery_with(registry: &BackendRegistry) -> Value {
         })
     }).collect();
     json!({"contractVersion":VERSION,"operations":ops,
-        "limits":{"inputBytes":104857600,"totalInputBytes":262144000,"outputBytes":262144000,"pages":2000,"files":20,"wallSeconds":60,"concurrency":2},
+        "limits":{"inputBytes":104857600,"totalInputBytes":262144000,"outputBytes":262144000,"pages":2000,"files":20,"wallSeconds":600,"concurrency":2},
         "unsupported":["reorderPages","fillForms","visualSigning","certificateSigning"],
         "excluded":["ocr","fullTextReplacement"]})
 }

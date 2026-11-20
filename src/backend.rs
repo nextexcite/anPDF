@@ -34,14 +34,32 @@ impl Control {
             Ok(())
         }
     }
+    /// Wall-clock budget left before the deadline; subprocess CPU limits
+    /// derive from it so a worker never outlives its job.
+    pub fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
 }
-#[cfg(target_os = "macos")]
-const RSS_LIMIT_BYTES: u64 = 768 * 1024 * 1024;
+/// Wall-clock budget for a compress job: a 60 s base plus a per-MiB
+/// allowance for image-resample passes, bounded at 10 minutes. Large
+/// scanned documents need several minutes of resampling work that the flat
+/// default deadline could never fit; the cap keeps the job bounded.
+/// `ANPDF_JOB_DEADLINE_MS` overrides the budget for integration tests.
+pub fn compress_deadline(input_bytes: u64) -> Duration {
+    if let Some(ms) = std::env::var("ANPDF_JOB_DEADLINE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+    {
+        return Duration::from_millis(ms);
+    }
+    Duration::from_secs(60 + input_bytes.div_ceil(1024 * 1024) * 20).min(Duration::from_secs(600))
+}
 const MAX_JSON_OBJECTS: usize = 200_000;
 const MAX_WALK_NODES: usize = 2_000_000;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn child_rss_exceeded(pid: i32) -> bool {
+pub(crate) fn child_rss_exceeded(pid: i32, limit: u64) -> bool {
     let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
     let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
     let rc = unsafe {
@@ -53,12 +71,21 @@ pub(crate) fn child_rss_exceeded(pid: i32) -> bool {
             size,
         )
     };
-    rc == size && info.pti_resident_size > RSS_LIMIT_BYTES
+    rc == size && info.pti_resident_size > limit
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn child_rss_exceeded(_pid: i32) -> bool {
-    false
+pub(crate) fn child_rss_exceeded(pid: i32, limit: u64) -> bool {
+    // Linux: read VmRSS from procfs so the RLIMIT_AS clamp's tolerated
+    // failure path still leaves the worker's memory bounded.
+    let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
+        return false;
+    };
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmRSS:"))
+        .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        .is_some_and(|kb| kb * 1024 > limit)
 }
 
 #[derive(Clone, Copy)]
@@ -85,16 +112,19 @@ pub trait Backend: Send + Sync {
     ) -> Result<Vec<Value>>;
 }
 
-/// Raster pass used by the compression size ladder: resamples oversized image
-/// XObjects to `dpi_cap` and re-encodes them as JPEG, leaving the structural
-/// finish to the `Backend::compress` pass that follows.
+/// Raster pass used by the compression size ladder. One call covers the
+/// whole search: the worker resamples oversized image XObjects at every
+/// `rungs` (dpi cap, JPEG quality) pair, measures exact per-rung byte totals,
+/// picks the gentlest rung fitting `target` (the hardest when none fits), and
+/// saves once — the `Backend::compress` pass that follows only applies the
+/// structural finish.
 pub trait ImageResampler: Send + Sync {
     fn resample_images(
         &self,
         input: &Path,
         output: &Path,
-        dpi_cap: u32,
-        jpeg_quality: u8,
+        rungs: &[(u32, u8)],
+        target: Option<u64>,
         control: &Control,
     ) -> Result<Value>;
 }
@@ -144,21 +174,26 @@ pub trait RenderPageBackend: Send + Sync {
 pub struct Qpdf {
     pub executable: PathBuf,
     pub exact: bool,
+    /// Address-space bound for spawned workers; the resample worker needs
+    /// more than qpdf since it holds decoded pixels and encoded rungs.
+    pub as_limit: libc::rlim_t,
+    /// CPU budget multiplier: parallel workers burn CPU across threads, so
+    /// the resample worker gets remaining × its thread count.
+    pub cpu_scale: u64,
 }
 
-pub(crate) fn limit_worker(cmd: &mut Command, file_limit: libc::rlim_t) {
+pub(crate) fn limit_worker_as(
+    cmd: &mut Command,
+    file_limit: libc::rlim_t,
+    cpu_secs: u64,
+    as_limit: libc::rlim_t,
+) {
     unsafe {
         cmd.pre_exec(move || {
             if libc::setsid() < 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            for (res, max) in [
-                (libc::RLIMIT_CPU, 60),
-                (libc::RLIMIT_FSIZE, file_limit),
-                (libc::RLIMIT_NOFILE, 64),
-                #[cfg(not(target_os = "macos"))]
-                (libc::RLIMIT_AS, 768 * 1024 * 1024),
-            ] {
+            for (res, max) in [(libc::RLIMIT_FSIZE, file_limit), (libc::RLIMIT_NOFILE, 64)] {
                 let r = libc::rlimit {
                     rlim_cur: max,
                     rlim_max: max,
@@ -167,6 +202,38 @@ pub(crate) fn limit_worker(cmd: &mut Command, file_limit: libc::rlim_t) {
                     return Err(std::io::Error::last_os_error());
                 }
             }
+            // A hard cap inherited from the parent cannot be raised; clamp
+            // address space and CPU to it (and tolerate failure) rather than
+            // fail the spawn — the parent's deadline/RSS poll still bounds
+            // the worker.
+            let mut cur: libc::rlimit = std::mem::zeroed();
+            #[cfg(not(target_os = "macos"))]
+            {
+                let mut as_cap = as_limit;
+                if libc::getrlimit(libc::RLIMIT_AS, &mut cur) == 0
+                    && cur.rlim_max != libc::RLIM_INFINITY
+                {
+                    as_cap = as_cap.min(cur.rlim_max);
+                }
+                let r = libc::rlimit {
+                    rlim_cur: as_cap,
+                    rlim_max: as_cap,
+                };
+                let _ = libc::setrlimit(libc::RLIMIT_AS, &r);
+            }
+            #[cfg(target_os = "macos")]
+            let _ = as_limit;
+            let mut cpu_cap = cpu_secs as libc::rlim_t;
+            if libc::getrlimit(libc::RLIMIT_CPU, &mut cur) == 0
+                && cur.rlim_max != libc::RLIM_INFINITY
+            {
+                cpu_cap = cpu_cap.min(cur.rlim_max);
+            }
+            let r = libc::rlimit {
+                rlim_cur: cpu_cap,
+                rlim_max: cpu_cap,
+            };
+            let _ = libc::setrlimit(libc::RLIMIT_CPU, &r);
             Ok(())
         });
     }
@@ -200,7 +267,16 @@ impl Qpdf {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        limit_worker(&mut cmd, 250 * 1024 * 1024);
+        // The worker's CPU budget tracks the job's remaining deadline: a
+        // resample pass on a large scan needs far more CPU than the old flat
+        // 60 s, and the parent still kills the process at the deadline.
+        let cpu_secs = control
+            .remaining()
+            .as_secs()
+            .saturating_mul(self.cpu_scale.max(1))
+            .saturating_add(30)
+            .clamp(30, 600);
+        limit_worker_as(&mut cmd, 250 * 1024 * 1024, cpu_secs, self.as_limit);
         let mut child = cmd
             .spawn()
             .map_err(|_| Error("BACKEND_UNAVAILABLE", None))?;
@@ -213,7 +289,7 @@ impl Qpdf {
         let f = overflow.clone();
         let err = std::thread::spawn(move || bounded(stderr, 65536, f));
         let status = loop {
-            let mem_exceeded = child_rss_exceeded(pid);
+            let mem_exceeded = child_rss_exceeded(pid, self.as_limit);
             if control.check().is_err() || overflow.load(Ordering::Relaxed) || mem_exceeded {
                 unsafe { libc::kill(-pid, libc::SIGKILL) };
                 let _ = child.wait();
@@ -754,6 +830,8 @@ mod tests {
         let qpdf = Qpdf {
             executable: executable.clone(),
             exact: false,
+            as_limit: 768 * 1024 * 1024,
+            cpu_scale: 1,
         };
         let report = json!({"outlines":[], "pages":[], "attachments":{"sample.txt":{"streams":{"/F":"1 0 R"}}}, "qpdf":[{},{}]});
         let (_, evidence) = qpdf
