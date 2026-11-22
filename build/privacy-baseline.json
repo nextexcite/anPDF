@@ -4,6 +4,11 @@
       "commit": "7948bf5bdafa28c6a34c7f4d27f44c7d60ec6dd0",
       "identitySha256": "d1facf4635e13ffafdef9fa903d8c0052c68779e5d5b79a192b02c72126aa5f4",
       "reason": "Reviewed historical web merge of the capability registry."
+    },
+    {
+      "commit": "63c966d14fca5d071e84996ff0536ccc71fb4a59",
+      "identitySha256": "ae2b7bc4f383e8666dc52517460a239c28fb385258fa2dd0f0a380b65b0c0acb",
+      "reason": "Reviewed immutable web merge of PR #23; exempts this exact commit only."
     }
   ],
   "webMergeIdentitySha256": [

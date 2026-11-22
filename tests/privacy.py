@@ -183,6 +183,29 @@ class PrivacyTests(unittest.TestCase):
         self.baseline([], [exception])
         self.check(1)
 
+    def test_bot_merge_exception_applies_to_one_commit_only(self):
+        identity = dict(self.env, GIT_AUTHOR_NAME='devin-ai-integration[bot]',
+                        GIT_AUTHOR_EMAIL='158243242+devin-ai-integration[bot]@users.noreply.github.com')
+        parent = self.git('rev-parse', 'HEAD').decode().strip()
+        other = self.synthetic_commit(self.env, [parent])
+        commit = self.synthetic_commit(identity, [parent, other])
+        exception = {'commit': commit, 'identitySha256': self.identity_hash(identity),
+                     'reason': 'Synthetic reviewed bot merge.'}
+        self.baseline([], [exception])
+        self.check(0)
+        (self.root / 'sample.txt').write_text('Changed synthetic fixture')
+        self.commit()
+        self.synthetic_commit(identity, [parent, other])
+        self.check(1)
+
+    def test_bot_merge_identity_fails_without_exception(self):
+        identity = dict(self.env, GIT_AUTHOR_NAME='devin-ai-integration[bot]',
+                        GIT_AUTHOR_EMAIL='158243242+devin-ai-integration[bot]@users.noreply.github.com')
+        parent = self.git('rev-parse', 'HEAD').decode().strip()
+        other = self.synthetic_commit(self.env, [parent])
+        self.synthetic_commit(identity, [parent, other])
+        self.check(1)
+
 
 if __name__ == '__main__':
     unittest.main()
