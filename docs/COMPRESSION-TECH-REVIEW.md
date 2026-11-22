@@ -7,40 +7,48 @@ gets its own entry under §4 using the template in §5. Companion to
 `COMPRESS-RESEARCH.md` (the pre-implementation survey; this file records
 decisions, that one lists possibilities).
 
-## 1. Shipped baseline (main)
+Versioning of claims below: **released v0.3.4** covers the scaled deadline,
+decode-once worker, exact rung bytes with interpolated midpoints, and
+best-effort publish on a miss. **On main, not yet released:** automatic page
+rasterization on a descent miss (technique `pageRasterization`). Unless a claim
+says otherwise, mechanisms listed as shipped are invoked code, not proposals.
 
-`compress --max-bytes <N>` (lossy) today runs two passes inside a bounded,
-isolated worker:
+## 1. What runs today
+
+`compress --max-bytes <N>` (lossy) invokes, inside a bounded, isolated worker:
 
 1. **Image descent.** Each embedded image is decoded once, resized and
    trial-encoded at every rung of a DPI/quality ladder plus interpolated
    midpoints (bounded parallelism); the gentlest rung fitting under target is
-   applied in a single JPEG generation. On a deadline or an unreachable target,
-   the smallest result measured is published as best effort with
-   `SIZE_TARGET_UNMET`.
-2. **Page rasterization on miss.** When the descent still exceeds target, pages
-   carrying **positive evidence of traced vector art** are re-rendered to a JPEG
-   and their `Contents`/`Resources` rebuilt in place at the gentlest fitting
-   rung; the technique is reported as `pageRasterization` with a
-   `PAGE_RASTERIZED` warning (fine zoom detail lost on rebuilt pages). Pages
-   without that evidence — or any uncertainty — retain their original objects
-   byte-identical.
+   applied in a single JPEG generation. RGB images whose channels never diverge
+   are detected achromatic and re-encoded as grayscale JPEG
+   (`achromatic_to_gray` in `src/resample.rs`). On a deadline or an unreachable
+   target, the smallest result measured is published with `SIZE_TARGET_UNMET`.
+2. **Page rasterization on miss (main only).** When the descent still exceeds
+   target, pages carrying **positive evidence of traced vector art** are
+   re-rendered to a JPEG and their `Contents`/`Resources` rebuilt in place at
+   the gentlest fitting rung; the technique is reported as
+   `pageRasterization` with a `PAGE_RASTERIZED` warning. The preceding lossless
+   passes (`--recompress-flate`, `--object-streams=generate`,
+   `--remove-unreferenced-resources`, lossy `--optimize-images --jpeg-quality`)
+   run unchanged around both worker passes.
 
-Both passes respect the job deadline, which scales with input size, and run
-under the same worker isolation (memory cap, CPU bound, deadline) as resample.
+Both passes respect the job deadline, which scales with input size
+(`compress_deadline_targeted` in `src/backend.rs`), and run under the worker's
+memory/CPU caps.
 
 ## 2. Decisions and counterexamples
 
 | Case | Evidence | Chosen mechanism | Rejected / deferred | Why |
 |---|---|---|---|---|
-| Scanned pages, large image payload | image bytes dominate; resample reaches target | image descent (per-image resample + re-encode) | — | dominant lever; shipped 0.3.x |
+| Scanned pages, large image payload | image bytes dominate; resample reaches target | image descent (per-image resample + JPEG re-encode) | — | dominant lever; shipped |
 | Traced-vector pages (text drawn as paths, ~1e3 paint ops/page) | dense path ops, no text ops, no annots, no layer/blend | whole-page rasterization in place | path simplification, stream recompression | non-image streams dominate → no image lever reaches target |
-| Page with live text/link + photo + line art | text ops / Annots present | photo resampled; text, link, line art untouched | whole-page rasterize | searchable content must not be discarded |
-| Tagged/structured document | `MarkInfo`/`StructTreeRoot`/`OCProperties` present | bail entirely | partial rasterize | semantics would be silently dropped |
-| Rotated / shifted / cropped page | `Rotate != 0`, nonzero `MediaBox` origin, `CropBox != MediaBox` | keep original objects | offset/transform math | correctness beats coverage — placement would clip or double-rotate |
+| Page with live text/link + photo + line art | text ops / Annots present | photo resampled by descent; raster pass retains the page untouched | whole-page rasterize | searchable content must not be discarded |
+| Tagged/structured document | `MarkInfo`/`StructTreeRoot`/`OCProperties` present | raster pass returns `protected-structure`; descent may still run | partial rasterize | semantics would be silently dropped |
+| Rotated / shifted / cropped page | `Rotate != 0`, nonzero `MediaBox` origin, `CropBox != MediaBox` | raster pass retains original objects | offset/transform math | correctness beats coverage — placement would clip or double-rotate |
 | `Do` to Image XObject | resolves to `/Subtype /Image` | eligible alongside path evidence | — | already pixels |
-| `Do` to Form XObject | nested content scanned | eligible only when no text/layered ops inside | blind rasterize | nested live text would be flattened |
-| Undecodable content | `Content::decode` fails | keep original objects | rasterize anyway | cannot prove no live text |
+| `Do` to Form XObject | nested content decoded and scanned | eligible only when no text/layered ops inside | blind rasterize | nested live text would be flattened |
+| Undecodable content | `Content::decode` fails | retained | rasterize anyway | cannot prove no live text |
 | Content stream shared by rasterized + retained pages | stream ref appears on both | stream survives removal | unconditional delete | dangling reference on retained page |
 | Indirect `Contents` array (reference → array of streams) | ref resolves to `Object::Array` | resolve into stream refs | treat as single ref | inner streams escaped tracking |
 
@@ -51,16 +59,20 @@ destroy**, not absence of evidence of what you want to keep.
 
 | Level | Mechanisms | State | Limits |
 |---|---|---|---|
-| Stream/object | flate recompress, object streams, drop unreferenced, dedup, zopfli | shipped (lossless tier) | bounded single-digit % on stream-dominated docs |
-| Image | DPI cap + JPEG re-encode, codec re-selection, gray conversion | shipped | only resamples what resample sees; ~10%-under-target landing; one JPEG generation keeps quality but bounds the ladder |
-| Region | recompress photo region / isolated traced group inside a mixed page | **not attempted** | unsafe separation: layering, clip/blend semantics, shared resources — retained instead (revisit per case) |
-| Page | render traced pages to raster at rung DPI/quality | shipped | zoom detail capped at render DPI; whole-page granularity — mixed pages are skipped, not split |
-| Document | strip metadata/tags/annots/attachments | not shipped | destructive to semantics; flag-gated only |
+| Stream/object | flate recompress, object streams, drop unreferenced resources | shipped (all builds; lossless tier) | bounded single-digit % on stream-dominated docs |
+| Stream/object | object/stream dedup, zopfli re-deflate | researched, **not shipped** | small gains; extra engine weight |
+| Image | DPI cap + JPEG re-encode; achromatic→grayscale | shipped | only resamples images the descent sees; one JPEG generation bounds quality floor |
+| Image | codec re-selection (JPX/JBIG2/CCITT), palette quantization | researched, **not shipped** | engine additions; JBIG2-lossy permanently excluded (silent glyph substitution) |
+| Region | recompress photo region or isolated traced group inside a mixed page | **not attempted** | unsafe separation: layering, clip/blend, shared resources — retained instead; revisit per case |
+| Page | render traced pages to raster at rung DPI/quality | on main | zoom detail capped at render DPI; whole-page granularity — mixed pages are skipped, not split |
+| Document | strip metadata/tags/annots/attachments | **not shipped** | destructive to semantics; would need an explicit opt-in |
 
-Document-level invariants that every path must respect: page count, page box
-geometry, annotations/links/forms/signatures, tagged structure, attachments,
-and extractable text survive untouched unless the page itself was positively
-classified and rebuilt — and rebuilt pages keep their box and page identity.
+Preservation scope, stated exactly: "bail entirely" and "retains original
+objects" describe the **rasterization pass** — a retained page's `Contents`
+and `Resources` objects are byte-identical after that pass. The lossless
+rewrite and image descent around it still recompress streams and resample
+images per their own existing behavior; the final file is never claimed
+byte-identical to the input.
 
 ## 4. Case log
 
@@ -69,16 +81,36 @@ One entry per document class or reported failure, using §5's template.
 ### Case 0 — traced-vector document misses a byte target (the trigger case)
 
 - **Class:** pages drawn as dense path ops; effectively no resamplable images.
-- **Baseline:** stock descent published ~input size with `SIZE_TARGET_UNMET` —
-  a correct best-effort, but useless to the user.
-- **Candidate:** page rasterization gated on traced evidence.
-- **Result (synthetic `traced.pdf` fixture):** 2 pages @ target 50,000B →
-  41,239B, `targetMet`, `pageRasterization` + `PAGE_RASTERIZED`.
-- **Preservation checks:** page count/box intact; mixed fixture's retained page
-  kept its annotation and extractable text anchor.
-- **Adopted:** yes, automatic on descent miss.
+- **Fixture:** synthetic `traced.pdf` — produced by `python3 fixtures/generate.py`
+  (`traced_pdf(2)`: two pages, ~900 painted path ops each, no text ops).
+- **Baseline recipe (executable):** `anpdf compress traced.pdf -o out.pdf
+  --max-bytes 50000` — pre-fix code published ~input size with
+  `SIZE_TARGET_UNMET` (correct best-effort, useless to the user).
+- **Candidate recipe:** same command on main → the raster pass rebuilds both
+  pages; asserted result 41,239B, `targetMet`, techniques include
+  `pageRasterization`, warning `PAGE_RASTERIZED` (see
+  `tests/integration.py`, corpus entry `traced.pdf`).
+- **Preservation checks:** page count/box intact; in `mixed-elements.pdf` the
+  retained page kept its link annotation and `LIVE-TEXT-ANCHOR` extractable
+  text while its photo was resampled by the descent.
+- **Adopted:** yes, automatic on descent miss (main).
 - **Known limits:** whole-page granularity; zoom fidelity bounded by rung DPI;
-  elapsed ~60 s on a large traced doc (deadline-bounded).
+  elapsed on the order of a minute for a large traced doc (deadline-bounded).
+
+### Untested classes — next entries needed
+
+From the original classification survey, still without a case:
+
+- **Degraded scans** — skew, bleed-through, shadows, noise (the "awful scan
+  quality" profile): resample quality/legibility thresholds unknown; bilevel
+  conversion flagged content-risk in the research.
+- **IDs/passports** — small-format scans where every glyph matters; rasterize
+  DPI floor and legibility checks need explicit thresholds.
+- **Text-dominant docs with TIFF/PS-derived bitmaps** — monochrome or CCITT
+  sources: codec re-selection (CCITT G4 / JBIG2 lossless) is the likely lever,
+  not shipped.
+- **Mixed traced + live content at the same page** — currently retained whole;
+  region granularity is the open question.
 
 ## 5. Case template (copy per new class)
 
@@ -87,8 +119,8 @@ One entry per document class or reported failure, using §5's template.
 
 - Class: <content profile; how you proved it (operator histogram, image bytes,
   stream inventory — never guesses from size alone)>
-- Fixture: <synthetic generator change; privacy-safe content only>
-- Baseline: <command>, <input bytes> → <bytes>, <time>, warnings, techniques
+- Fixture: <generator change in fixtures/generate.py; synthetic content only>
+- Baseline recipe: <exact command>, <input bytes> → <bytes>, <time>, warnings
 - Candidate(s): <mechanism + where in the granularity ladder>
 - Result: <bytes vs target>, <time per phase if relevant>
 - Legibility: <100% crop comparison — small text / photo / fine strokes>
@@ -101,7 +133,8 @@ One entry per document class or reported failure, using §5's template.
 Fixture rules: synthetic only (generator in `fixtures/generate.py`); never
 commit real documents, filenames, outputs or crops derived from them; keep
 cases small enough that the suite stays fast (rasterize work scales with page
-count).
+count). A fixture name alone is not a case — link the generator function and
+give the runnable command.
 
 ## 6. Standing criteria
 
