@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::{
     collections::HashSet,
     ffi::OsString,
-    io::{IsTerminal, Read},
+    io::{IsTerminal, Read, Write},
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     sync::{
@@ -73,6 +73,8 @@ struct Options {
     port: u16,
     token_file: Option<PathBuf>,
     schema: Option<String>,
+    password_file: Option<String>,
+    owner_password_file: Option<String>,
 }
 
 const TOP_AFTER_HELP: &str = "\
@@ -85,6 +87,8 @@ SHORTHAND (paths workspace-relative to --root, or absolute/~ adapting it):
   anpdf compress <doc.pdf> [<out.pdf>] [--mode lossy] [--level 1-3] [--max-bytes N]
   anpdf extract-text <doc.pdf> <pages> [--engine <id>]
   anpdf render-page <doc.pdf> <page> [-o <page.png>] [--dpi 36-300] [--engine <id>]
+  anpdf encrypt <doc.pdf> [<out.pdf>]   AES-256 + user password (+ optional owner)
+  anpdf decrypt <doc.pdf> [<out.pdf>]   strip password protection (password required)
 
 <pages> are 1-based numbers or ranges: \"1,3\", \"2-5\" (positional or --pages).
 The output is -o/--output, a trailing positional path, or <name>-compressed.pdf
@@ -93,7 +97,10 @@ overwritten. Shorthand paths may be absolute or start with ~: the workspace
 root adapts to the files' common directory (--root pins it); JSON requests
 stay relative to --root. A full JSON request may instead be passed via
 --request-json, --request-file or piped stdin; a bare operation on a
-terminal prints usage instead of blocking on stdin.
+terminal prints usage instead of blocking on stdin. encrypt/decrypt never
+take a password inline — argv is machine-readable — so a terminal prompts
+hidden on /dev/tty, and scripts use a private --password-file/--owner-
+-password-file, --request-file or piped stdin carrying the JSON fields.
 
 COMMON OPTIONS:
   -o, --output <path>  Output path
@@ -106,6 +113,8 @@ COMMON OPTIONS:
   --pdfium-lib <path>  Optional PDFium dynamic library (overrides ANPDF_PDFIUM_LIB)
   --request-json <str> Inline JSON request payload (or pass JSON on stdin)
   --request-file <f>   Read JSON request payload from file
+  --password-file <f>  Private (chmod 600) file with the user password — encrypt/decrypt
+  --owner-password-file <f> Private file with the optional owner password — encrypt
   --dry-run            Validate request and destination policy without processing the PDF
   --json               On a terminal, print the JSON result envelope instead of the summary
   --                   End of flags; following arguments are positional paths
@@ -386,6 +395,45 @@ struct CompressArgs {
     common: Common,
 }
 
+/// Password channels for encrypt/decrypt: private files only — never
+/// inline argv. With neither flag on a terminal, the dispatcher prompts
+/// hidden on /dev/tty.
+#[derive(clap::Args)]
+struct UserSecret {
+    #[arg(long, value_name = "file", allow_hyphen_values = true,
+        value_hint = clap::ValueHint::FilePath,
+        help = "Read the password from a private file (chmod 600); on a terminal, omit for a hidden prompt")]
+    password_file: Option<String>,
+}
+
+#[derive(clap::Args)]
+struct OwnerSecret {
+    #[arg(long, value_name = "file", allow_hyphen_values = true,
+        value_hint = clap::ValueHint::FilePath,
+        help = "Read the optional owner password from a private file; a blank prompt or omission generates a random owner")]
+    owner_password_file: Option<String>,
+}
+
+doc_args!(EncryptArgs {
+    #[arg(value_name = "DOC.pdf", value_hint = clap::ValueHint::FilePath,
+        required = true,
+        help = DOC_HELP)]
+    doc: Option<String>,
+    #[arg(value_name = "OUT.pdf", value_hint = clap::ValueHint::FilePath,
+        help = "Output PDF (or -o/--output; default: <name>-encrypted.pdf)")]
+    out_pos: Option<String>,
+}, out: Out, preserve: Preserve, user: UserSecret, owner: OwnerSecret);
+
+doc_args!(DecryptArgs {
+    #[arg(value_name = "DOC.pdf", value_hint = clap::ValueHint::FilePath,
+        required = true,
+        help = DOC_HELP)]
+    doc: Option<String>,
+    #[arg(value_name = "OUT.pdf", value_hint = clap::ValueHint::FilePath,
+        help = "Output PDF (or -o/--output; default: <name>-decrypted.pdf)")]
+    out_pos: Option<String>,
+}, out: Out, preserve: Preserve, user: UserSecret);
+
 #[derive(clap::Args)]
 struct ServeArgs {
     #[command(flatten)]
@@ -483,6 +531,14 @@ enum Cmd {
         help_template = SUB_HELP_TEMPLATE,
         after_help = "Operation: renderPage (optional rendering engine required)\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"page\":1,\"output\":{\"path\":\"page.png\"}}")]
     RenderPage(RenderArgs),
+    #[command(about = "Encrypt a PDF with AES-256 (user password, optional owner)",
+        help_template = SUB_HELP_TEMPLATE,
+        after_help = "Operation: encryptPdf; output defaults to <name>-encrypted.pdf.\nPasswords never go inline — omit --password-file on a terminal for a hidden\nprompt, or use a private file, --request-file or piped stdin JSON fields\n\"password\"/\"ownerPassword\"; an omitted or blank owner generates a random one.\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"locked.pdf\"}}")]
+    Encrypt(EncryptArgs),
+    #[command(about = "Decrypt a password-protected PDF (password required)",
+        help_template = SUB_HELP_TEMPLATE,
+        after_help = "Operation: decryptPdf; output defaults to <name>-decrypted.pdf.\nThe password never goes inline — omit --password-file on a terminal for a\nhidden prompt, or use a private file, --request-file or piped stdin carrying\n\"password\".\nRequest: {\"input\":{\"path\":\"locked.pdf\"},\"password\":\"…\",\"output\":{\"path\":\"open.pdf\"}}")]
+    Decrypt(DecryptArgs),
     #[command(about = "Run authenticated loopback HTTP server (127.0.0.1)",
         help_template = SUB_HELP_TEMPLATE,
         after_help = "--token-file is required: a private file holding >=32 ASCII graphic characters.")]
@@ -545,6 +601,8 @@ const VALUE_FLAGS: &[&str] = &[
     "--dpi",
     "--port",
     "--token-file",
+    "--password-file",
+    "--owner-password-file",
 ];
 
 const KNOWN_FLAGS: &[&str] = &[
@@ -572,6 +630,8 @@ const KNOWN_FLAGS: &[&str] = &[
     "--deep-check",
     "--port",
     "--token-file",
+    "--password-file",
+    "--owner-password-file",
     "--help",
 ];
 
@@ -589,6 +649,8 @@ const SUBCOMMANDS: &[&str] = &[
     "compress",
     "extract-text",
     "render-page",
+    "encrypt",
+    "decrypt",
     "serve",
     "mcp",
     "operations",
@@ -729,9 +791,15 @@ fn clap_error(command: &str, e: clap::Error) -> Error {
             if arg.starts_with('-') {
                 let hint = suggestion(&text, arg);
                 if KNOWN_FLAGS.contains(&arg) {
-                    bad(format!(
-                        "{arg} is not valid for '{command}' — see 'anpdf help {command}'{hint}"
-                    ))
+                    if matches!(arg, "--password-file" | "--owner-password-file") {
+                        bad(format!(
+                            "{arg} is only valid for encrypt and decrypt — see 'anpdf help {command}'"
+                        ))
+                    } else {
+                        bad(format!(
+                            "{arg} is not valid for '{command}' — see 'anpdf help {command}'{hint}"
+                        ))
+                    }
                 } else {
                     bad(format!(
                         "{arg} is not a recognized option for '{command}' — see 'anpdf help {command}'{hint}"
@@ -906,6 +974,8 @@ const KNOWN_COMMANDS: &[&str] = &[
     "compress",
     "extract-text",
     "render-page",
+    "encrypt",
+    "decrypt",
     "serve",
     "mcp",
     "operations",
@@ -1261,14 +1331,18 @@ fn normalize_shorthand(
 }
 
 /// Derived compress output: "dir/name.pdf" -> "dir/name-compressed.pdf".
-fn derived_compress_output(input: &str) -> String {
+fn derived_output(input: &str, suffix: &str) -> String {
     let basename_start = input.rfind('/').map_or(0, |i| i + 1);
     match input.rfind('.') {
         Some(dot) if dot > basename_start => {
-            format!("{}-compressed{}", &input[..dot], &input[dot..])
+            format!("{}-{suffix}{}", &input[..dot], &input[dot..])
         }
-        _ => format!("{input}-compressed"),
+        _ => format!("{input}-{suffix}"),
     }
+}
+
+fn derived_compress_output(input: &str) -> String {
+    derived_output(input, "compressed")
 }
 
 /// Build the operation request from positional shorthand arguments.
@@ -1428,6 +1502,24 @@ fn request_from_positionals(command: &str, positionals: &[String], cli: &CliArgs
             }
             request
         }
+        "encrypt" | "decrypt" => {
+            if !(1..=2).contains(&positionals.len()) {
+                return Err(arity("<doc.pdf> [<out.pdf>]"));
+            }
+            let output = match (&cli.output, positionals.get(1)) {
+                (Some(_), Some(_)) => {
+                    return Err(bad(
+                        "output given twice: -o/--output and a positional output are exclusive",
+                    ));
+                }
+                (Some(output), None) => output_value(output, cli.replace),
+                (None, Some(path)) => output_value(path, cli.replace),
+                (None, None) => {
+                    output_value(&derived_output(&positionals[0], command), cli.replace)
+                }
+            };
+            serde_json::json!({"input": {"path": positionals[0]}, "output": output})
+        }
         "render-page" => {
             if !(2..=3).contains(&positionals.len()) {
                 return Err(arity("<doc.pdf> <page> [<out.png>]"));
@@ -1514,6 +1606,8 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                     port: 8787,
                     token_file: None,
                     schema: None,
+                    password_file: None,
+                    owner_password_file: None,
                 };
                 let mut positional_seen = false;
                 let mut shaping: Vec<String> = Vec::new();
@@ -1555,11 +1649,16 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                         }
                     });
                     match name.as_str() {
-                        "--request-json" => opt.request = value,
+                        "--request-json" => {
+                            reject_inline_secrets(value.as_deref().unwrap_or_default())?;
+                            opt.request = value;
+                        }
                         "--request-file" => req_file = value,
                         "--root" => opt.root = PathBuf::from(value.unwrap_or_default()),
                         "--qpdf" => qpdf_flag = value.map(PathBuf::from),
                         "--pdfium-lib" => pdfium_flag = value.map(PathBuf::from),
+                        "--password-file" => opt.password_file = value,
+                        "--owner-password-file" => opt.owner_password_file = value,
                         "--dry-run" => opt.dry = true,
                         "--json" => opt.json = true,
                         "--qpdf-exact" => opt.qpdf_exact = true,
@@ -1629,6 +1728,8 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
         port: 8787,
         token_file: None,
         schema: None,
+        password_file: None,
+        owner_password_file: None,
     };
     let mut cli = CliArgs::default();
     let mut positionals: Vec<String> = Vec::new();
@@ -1655,6 +1756,7 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                 seen.insert("--pdfium-lib");
             }
             if let Some(v) = c.request_json {
+                reject_inline_secrets(&v)?;
                 o.request = Some(v);
                 seen.insert("--request-json");
             }
@@ -1805,6 +1907,21 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
             cli.dpi = parse_u64(a.dpi.dpi, "--dpi expects 36..300")?;
             common!(a.common);
         }
+        Cmd::Encrypt(a) => {
+            positionals = [a.doc, a.out_pos].into_iter().flatten().collect();
+            out!(a.out);
+            preserve!(a.preserve);
+            o.password_file = a.user.password_file;
+            o.owner_password_file = a.owner.owner_password_file;
+            common!(a.common);
+        }
+        Cmd::Decrypt(a) => {
+            positionals = [a.doc, a.out_pos].into_iter().flatten().collect();
+            out!(a.out);
+            preserve!(a.preserve);
+            o.password_file = a.user.password_file;
+            common!(a.common);
+        }
         Cmd::Compress(a) => {
             positionals = [a.doc, a.out_pos].into_iter().flatten().collect();
             out!(a.flags.out);
@@ -1889,6 +2006,8 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                 | "compress"
                 | "extract-text"
                 | "render-page"
+                | "encrypt"
+                | "decrypt"
         )
         && std::io::stdin().is_terminal()
     {
@@ -1910,6 +2029,171 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
         )?;
     }
     Ok(Action::Run(o))
+}
+
+/// `--request-json` puts its payload on argv, which every process on the
+/// machine can list — secrets must arrive through the hidden prompt, a
+/// private --password-file/--owner-password-file, --request-file or piped
+/// stdin instead. Never echoes the rejected payload.
+fn reject_inline_secrets(raw: &str) -> Result<()> {
+    let Ok(v) = serde_json::from_str::<Value>(raw) else {
+        return Ok(());
+    };
+    if v.get("password").is_some() || v.get("ownerPassword").is_some() {
+        return Err(bad(
+            "--request-json cannot carry \"password\"/\"ownerPassword\" — argv is machine-readable; use a hidden prompt, --password-file/--owner-password-file, --request-file or piped stdin",
+        ));
+    }
+    Ok(())
+}
+
+/// First line of a private (chmod 600) secret file; bounded read, trailing
+/// newline stripped.
+fn read_secret_file(flag: &str, path: &str) -> Result<String> {
+    let file = std::fs::File::open(path).map_err(|e| Error::io(&e, format!("{flag} '{path}'")))?;
+    let meta = file.metadata().map_err(|e| Error::io(&e, path))?;
+    if meta.mode() & 0o077 != 0 {
+        return Err(bad(format!(
+            "{flag} '{path}' is readable beyond its owner — chmod 600 it first"
+        )));
+    }
+    let mut bytes = Vec::new();
+    file.take(1025).read_to_end(&mut bytes)?;
+    if bytes.len() > 1024 {
+        return Err(bad(format!("{flag} '{path}' exceeds 1 KiB")));
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let line = text.lines().next().unwrap_or_default();
+    if line.is_empty() {
+        return Err(bad(format!("{flag} '{path}' is empty")));
+    }
+    Ok(line.to_string())
+}
+
+/// Hidden prompt on /dev/tty: termios echo off for the entry, restored
+/// before returning. Bounded at 1 KiB.
+#[cfg(unix)]
+fn prompt_secret(prompt: &str) -> Result<String> {
+    use std::os::unix::io::AsRawFd;
+    let mut tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|_| {
+            bad(format!(
+                "{prompt} — no terminal for a hidden prompt; use --password-file, --request-file or piped stdin"
+            ))
+        })?;
+    let fd = tty.as_raw_fd();
+    let mut saved: libc::termios = unsafe { std::mem::zeroed() };
+    let masked = unsafe { libc::tcgetattr(fd, &mut saved) } == 0;
+    if masked {
+        let mut silent = saved;
+        silent.c_lflag &= !libc::ECHO;
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &silent) };
+    }
+    let read_result = (|| -> Result<String> {
+        tty.write_all(prompt.as_bytes())?;
+        tty.flush()?;
+        let mut line = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            let n = tty.read(&mut byte)?;
+            if n == 0 || byte[0] == b'\n' {
+                break;
+            }
+            line.push(byte[0]);
+            if line.len() > 1024 {
+                return Err(bad("password entry too long"));
+            }
+        }
+        Ok(String::from_utf8_lossy(&line)
+            .trim_end_matches('\r')
+            .to_string())
+    })();
+    if masked {
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &saved) };
+        let _ = tty.write_all(b"\n");
+    }
+    read_result
+}
+
+#[cfg(not(unix))]
+fn prompt_secret(prompt: &str) -> Result<String> {
+    Err(bad(format!(
+        "{prompt} — hidden prompts need a Unix terminal; use --password-file, --request-file or piped stdin"
+    )))
+}
+
+/// Fill `password` (required) and `ownerPassword` (encrypt only) on
+/// encrypt/decrypt requests: a request field, else a private
+/// --password-file/--owner-password-file, else a hidden /dev/tty prompt.
+/// A blank owner prompt omits the field — the dispatcher generates a
+/// random owner, so no blank-password backdoor exists.
+fn fill_protect_secrets(
+    command: &str,
+    dry: bool,
+    password_file: Option<&str>,
+    owner_password_file: Option<&str>,
+    request: &mut Value,
+) -> Result<()> {
+    if !matches!(command, "encrypt" | "decrypt") {
+        if password_file.is_some() || owner_password_file.is_some() {
+            return Err(bad(
+                "--password-file/--owner-password-file apply to encrypt and decrypt",
+            ));
+        }
+        return Ok(());
+    }
+    let encrypting = command == "encrypt";
+    let mut prompted = false;
+    if request.get("password").is_none() {
+        if dry {
+            // Dry runs validate but never reach the backend — a placeholder
+            // satisfies the required field without inventing a real secret.
+            request["password"] = "x".into();
+        } else {
+            request["password"] = match password_file {
+                Some(f) => read_secret_file("--password-file", f)?,
+                None => {
+                    prompted = true;
+                    prompt_secret("Password: ")?
+                }
+            }
+            .into();
+        }
+    } else if password_file.is_some() {
+        return Err(bad(
+            "password given twice: request field and --password-file are exclusive",
+        ));
+    }
+    if !encrypting || request.get("ownerPassword").is_some() {
+        if owner_password_file.is_some() {
+            return Err(bad(
+                "ownerPassword given twice: request field and --owner-password-file are exclusive",
+            ));
+        }
+        return Ok(());
+    }
+    if dry {
+        request["ownerPassword"] = "x".into();
+        return Ok(());
+    }
+    // Scripted channels (request JSON, --password-file, piped stdin) omit the
+    // owner deliberately — it is generated. Only an interactive session is
+    // offered the prompt for it.
+    let owner = match owner_password_file {
+        Some(f) => Some(read_secret_file("--owner-password-file", f)?),
+        None if prompted => match prompt_secret("Owner password (blank to generate): ")? {
+            s if s.is_empty() => None,
+            s => Some(s),
+        },
+        None => None,
+    };
+    if let Some(owner) = owner {
+        request["ownerPassword"] = owner.into();
+    }
+    Ok(())
 }
 
 fn read(r: impl Read) -> Result<String> {
@@ -1934,6 +2218,8 @@ fn id(command: &str) -> &'static str {
         "compress" => "compressPdf",
         "extract-text" => "extractText",
         "render-page" => "renderPage",
+        "encrypt" => "encryptPdf",
+        "decrypt" => "decryptPdf",
         _ => "unknown",
     }
 }
@@ -2106,7 +2392,7 @@ fn human_result(v: &Value, root: Option<&Path>) -> Option<String> {
             ));
             lines.push(flags.join(" · "));
         }
-        "mergePdf" | "extractPdf" | "removePages" => {
+        "mergePdf" | "extractPdf" | "removePages" | "encryptPdf" | "decryptPdf" => {
             lines.push(format!(
                 "wrote '{}' — {} pages, {}",
                 tty_path(root, str_field(result, "path")),
@@ -2290,7 +2576,7 @@ async fn async_main() {
                 clap_complete::generate(shell.clap(), &mut Cli::command(), "anpdf", &mut out);
                 Ok(None)
             }
-            Action::Run(o) => {
+            Action::Run(mut o) => {
                 if o.command == "operations" {
                     return Ok(Some(contract::discovery_with(&configured_registry(
                         o.qpdf,
@@ -2316,6 +2602,10 @@ async fn async_main() {
                             )),
                         ));
                 }
+                // configured_registry takes ownership of the backend paths;
+                // lift the secret-channel flags first for the fill below.
+                let password_file = o.password_file.take();
+                let owner_password_file = o.owner_password_file.take();
                 let d = Arc::new(Dispatcher::with_registry(
                     &o.root,
                     configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib)?,
@@ -2344,11 +2634,18 @@ async fn async_main() {
                         }
                     }
                     _ => {
-                        let request: Value = serde_json::from_str(&match o.request {
+                        let mut request: Value = serde_json::from_str(&match o.request {
                             Some(s) => s,
                             None => read(std::io::stdin())?,
                         })
                         .map_err(|e| bad(format!("request is not valid JSON: {e}")))?;
+                        fill_protect_secrets(
+                            &o.command,
+                            o.dry,
+                            password_file.as_deref(),
+                            owner_password_file.as_deref(),
+                            &mut request,
+                        )?;
                         let mut control = Control::default();
                         // Progress goes on stderr only when every stream is a
                         // terminal and --json is off — pipes stay byte-exact.

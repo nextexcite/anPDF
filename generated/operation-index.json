@@ -1,5 +1,7 @@
 [
   "compressPdf",
+  "decryptPdf",
+  "encryptPdf",
   "extractPdf",
   "extractText",
   "inspectPdf",

@@ -111,6 +111,16 @@ impl Dispatcher {
         }
         control.check()?;
         let plan = self.registry.plan(id, request)?;
+        // Only decryptPdf opens an encrypted input; the contract already
+        // bound `password` to its UTF-8 127-byte specification maximum.
+        let open_password = match plan.job {
+            Job::Decrypt => Some(
+                request["password"]
+                    .as_str()
+                    .ok_or(Error("INVALID_REQUEST", None))?,
+            ),
+            _ => None,
+        };
         let specs = if id == "mergePdf" {
             request["inputs"].as_array().unwrap().clone()
         } else {
@@ -294,7 +304,9 @@ impl Dispatcher {
                 format!("checking structure of input {} of {}", n + 1, total_inputs),
                 Some((n as u64 + 1, total_inputs)),
             );
-            let (mut report, mut w) = plan.structural.inspect(&path, control, deep)?;
+            let (mut report, mut w) =
+                plan.structural
+                    .inspect(&path, open_password, control, deep)?;
             if matches!(plan.job, Job::Inspect) && !deep {
                 w.push(json!({"code":"STREAM_DECODE_UNCHECKED","message":"Stream payloads were parsed but not decoded; set deepCheck to true for complete qpdf structural validation."}));
             }
@@ -315,7 +327,16 @@ impl Dispatcher {
                 return Err(Error("LIMIT_EXCEEDED", None));
             }
             if !matches!(plan.job, Job::Inspect) {
-                if report["encrypted"] == true {
+                if matches!(plan.job, Job::Decrypt) {
+                    if report["encrypted"] != true {
+                        return Err(Error(
+                            "INVALID_REQUEST",
+                            Some("decryptPdf requires an encrypted input".into()),
+                        ));
+                    }
+                } else if report["encrypted"] == true {
+                    // encryptPdf also rejects encrypted input, reaching this
+                    // gate only via ENCRYPTED_UNSUPPORTED at inspect anyway.
                     return Err(Error("ENCRYPTED_UNSUPPORTED", None));
                 }
                 if report["pageCount"] == 0 {
@@ -326,10 +347,14 @@ impl Dispatcher {
                 if report["signatures"] == "present" {
                     return Err(Error("SIGNED_UNSUPPORTED", None));
                 }
-                if report["forms"] == "present" {
+                // Encrypt/decrypt rewrite nothing else: forms ride through
+                // intact (verified), signatures stay rejected since any
+                // rewrite invalidates their ByteRange.
+                let protect = matches!(plan.job, Job::Encrypt | Job::Decrypt);
+                if report["forms"] == "present" && !protect {
                     return Err(Error("FORM_UNSUPPORTED", None));
                 }
-                if report["forms"] != "absent" || report["signatures"] != "absent" {
+                if report["signatures"] != "absent" || (!protect && report["forms"] != "absent") {
                     return Err(Error("PRESERVATION_UNKNOWN", None));
                 }
             }
@@ -689,7 +714,7 @@ impl Dispatcher {
                 control.report("verify", "checking output structure", None);
                 let mut grace = control.clone();
                 grace.deadline = Instant::now() + Duration::from_secs(60);
-                let (report, w) = plan.structural.inspect(&candidate, &grace, false)?;
+                let (report, w) = plan.structural.inspect(&candidate, None, &grace, false)?;
                 warnings.extend(w);
                 if report["pageCount"] != total_pages
                     || report["forms"] != "absent"
@@ -778,6 +803,94 @@ impl Dispatcher {
                 }
                 control.report("write", "writing output", None);
                 destination.commit(source, &inputs)?;
+                return Ok(envelope);
+            }
+            if matches!(plan.job, Job::Encrypt | Job::Decrypt) {
+                let encrypting = matches!(plan.job, Job::Encrypt);
+                control.report(
+                    "protect",
+                    if encrypting {
+                        "encrypting document (AES-256 revision 6)"
+                    } else {
+                        "removing password protection"
+                    },
+                    None,
+                );
+                let out = staging.path().join("output.pdf");
+                let password = request["password"]
+                    .as_str()
+                    .ok_or(Error("INVALID_REQUEST", None))?;
+                // An omitted owner password generates a random unguessable
+                // one — never an empty owner backdoor — so the document
+                // still opens with the user password alone.
+                let generated;
+                let owner = match request["ownerPassword"].as_str() {
+                    Some(owner) => owner,
+                    None => {
+                        generated = backend::generated_owner()?;
+                        generated.as_str()
+                    }
+                };
+                if encrypting {
+                    warnings.extend(
+                        plan.structural
+                            .encrypt(&paths[0], &out, password, owner, control)?,
+                    );
+                } else {
+                    warnings.extend(
+                        plan.structural
+                            .decrypt(&paths[0], &out, password, control)?,
+                    );
+                }
+                // Re-verification opens the fresh output: encrypt supplies
+                // the user password it just set; decrypt opens plainly.
+                let (report, w) = plan.structural.inspect(
+                    &out,
+                    encrypting.then_some(password),
+                    control,
+                    false,
+                )?;
+                warnings.extend(w);
+                if report["pageCount"] != total_pages
+                    || (report["encrypted"] == true) != encrypting
+                    || report["forms"] != reports[0]["forms"]
+                    || report["signatures"] != reports[0]["signatures"]
+                {
+                    return Err(Error("PRESERVATION_UNKNOWN", None));
+                }
+                let mut file = std::fs::File::open(&out)?;
+                let bytes = file.metadata()?.len();
+                if bytes > TOTAL_LIMIT {
+                    return Err(Error("LIMIT_EXCEEDED", None));
+                }
+                let preservation = preservation_status(&reports, &report, None);
+                for aspect in ["metadata", "bookmarks", "annotations", "attachments"] {
+                    if request["preserve"][aspect] == true && preservation[aspect] == "omitted" {
+                        return Err(Error("PRESERVATION_UNMET", None));
+                    }
+                }
+                let omitted = ["metadata", "bookmarks", "annotations", "attachments"]
+                    .into_iter()
+                    .filter(|a| preservation[*a] == "omitted")
+                    .collect::<Vec<_>>();
+                if !omitted.is_empty() {
+                    warnings.push(json!({"code":"PRESERVATION_OMITTED","message":format!("Document aspects omitted or not verified: {}.", omitted.join(", "))}));
+                }
+                let result = json!({
+                    "path":request["output"]["path"],
+                    "sha256":filesystem::hash(&mut file)?,
+                    "bytes":bytes,
+                    "pageCount":total_pages,
+                    "preservation":preservation,
+                });
+                dedupe_warnings(&mut warnings);
+                let envelope = json!({"contractVersion":contract::VERSION,"operationId":id,"result":result,"warnings":warnings});
+                if !contract::valid_output(id, &envelope) {
+                    return Err(Error("INTERNAL", None));
+                }
+                self.workspace.unchanged(&mut inputs)?;
+                control.check()?;
+                destination.commit(&out, &inputs)?;
                 return Ok(envelope);
             }
             if pages
@@ -873,7 +986,7 @@ fn transform_artifact(
     preserve: &Value,
 ) -> Result<(Value, u64)> {
     warnings.extend(backend.transform(paths, pages, out, control)?);
-    let (report, w) = backend.inspect(out, control, false)?;
+    let (report, w) = backend.inspect(out, None, control, false)?;
     warnings.extend(w);
     let expected = pages.map_or(total_input_pages, |p| p.len() as u64);
     if report["pageCount"] != expected

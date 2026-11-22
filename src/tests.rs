@@ -52,7 +52,13 @@ mod content_operations {
 
     struct Inspect;
     impl Backend for Inspect {
-        fn inspect(&self, path: &Path, _: &Control, _: bool) -> Result<(Value, Vec<Value>)> {
+        fn inspect(
+            &self,
+            path: &Path,
+            _: Option<&str>,
+            _: &Control,
+            _: bool,
+        ) -> Result<(Value, Vec<Value>)> {
             let encrypted = fs::read(path)? == b"encrypted";
             Ok((
                 json!({
@@ -78,6 +84,12 @@ mod content_operations {
         }
 
         fn compress(&self, _: &Path, _: CompressMode, _: &Path, _: &Control) -> Result<Vec<Value>> {
+            unreachable!()
+        }
+        fn encrypt(&self, _: &Path, _: &Path, _: &str, _: &str, _: &Control) -> Result<Vec<Value>> {
+            unreachable!()
+        }
+        fn decrypt(&self, _: &Path, _: &Path, _: &str, _: &Control) -> Result<Vec<Value>> {
             unreachable!()
         }
     }
@@ -262,6 +274,7 @@ impl crate::backend::Backend for PreservationBackend {
     fn inspect(
         &self,
         path: &std::path::Path,
+        _: Option<&str>,
         _: &crate::backend::Control,
         _: bool,
     ) -> crate::error::Result<(serde_json::Value, Vec<serde_json::Value>)> {
@@ -298,6 +311,25 @@ impl crate::backend::Backend for PreservationBackend {
     ) -> crate::error::Result<Vec<serde_json::Value>> {
         fs::write(out, &self.bytes)?;
         Ok(vec![])
+    }
+    fn encrypt(
+        &self,
+        _: &std::path::Path,
+        _: &std::path::Path,
+        _: &str,
+        _: &str,
+        _: &crate::backend::Control,
+    ) -> crate::error::Result<Vec<serde_json::Value>> {
+        unreachable!()
+    }
+    fn decrypt(
+        &self,
+        _: &std::path::Path,
+        _: &std::path::Path,
+        _: &str,
+        _: &crate::backend::Control,
+    ) -> crate::error::Result<Vec<serde_json::Value>> {
+        unreachable!()
     }
 }
 
@@ -592,6 +624,7 @@ fn backend_output_is_validated() {
         fn inspect(
             &self,
             _: &std::path::Path,
+            _: Option<&str>,
             _: &crate::backend::Control,
             _: bool,
         ) -> crate::error::Result<(serde_json::Value, Vec<serde_json::Value>)> {
@@ -611,6 +644,25 @@ fn backend_output_is_validated() {
             _: &std::path::Path,
             _: crate::backend::CompressMode,
             _: &std::path::Path,
+            _: &crate::backend::Control,
+        ) -> crate::error::Result<Vec<serde_json::Value>> {
+            unreachable!()
+        }
+        fn encrypt(
+            &self,
+            _: &std::path::Path,
+            _: &std::path::Path,
+            _: &str,
+            _: &str,
+            _: &crate::backend::Control,
+        ) -> crate::error::Result<Vec<serde_json::Value>> {
+            unreachable!()
+        }
+        fn decrypt(
+            &self,
+            _: &std::path::Path,
+            _: &std::path::Path,
+            _: &str,
             _: &crate::backend::Control,
         ) -> crate::error::Result<Vec<serde_json::Value>> {
             unreachable!()
@@ -651,7 +703,7 @@ fn process_timeout_and_output_limits() {
         ..Control::default()
     };
     let start = Instant::now();
-    assert_eq!(q.inspect(&exe, &c, true).unwrap_err().0, "TIMEOUT");
+    assert_eq!(q.inspect(&exe, None, &c, true).unwrap_err().0, "TIMEOUT");
     assert!(start.elapsed() < Duration::from_secs(2));
     fs::write(
         &exe,
@@ -659,7 +711,9 @@ fn process_timeout_and_output_limits() {
     )
     .unwrap();
     assert_eq!(
-        q.inspect(&exe, &Control::default(), true).unwrap_err().0,
+        q.inspect(&exe, None, &Control::default(), true)
+            .unwrap_err()
+            .0,
         "LIMIT_EXCEEDED"
     );
     fs::write(
@@ -668,7 +722,9 @@ fn process_timeout_and_output_limits() {
     )
     .unwrap();
     assert_eq!(
-        q.inspect(&exe, &Control::default(), true).unwrap_err().0,
+        q.inspect(&exe, None, &Control::default(), true)
+            .unwrap_err()
+            .0,
         "LIMIT_EXCEEDED"
     );
 }
@@ -715,6 +771,7 @@ fn split_destination_collision_and_rollback() {
         fn inspect(
             &self,
             path: &std::path::Path,
+            _: Option<&str>,
             _: &crate::backend::Control,
             _: bool,
         ) -> crate::error::Result<(serde_json::Value, Vec<serde_json::Value>)> {
@@ -761,6 +818,25 @@ fn split_destination_collision_and_rollback() {
             _: &std::path::Path,
             _: crate::backend::CompressMode,
             _: &std::path::Path,
+            _: &crate::backend::Control,
+        ) -> crate::error::Result<Vec<serde_json::Value>> {
+            unreachable!()
+        }
+        fn encrypt(
+            &self,
+            _: &std::path::Path,
+            _: &std::path::Path,
+            _: &str,
+            _: &str,
+            _: &crate::backend::Control,
+        ) -> crate::error::Result<Vec<serde_json::Value>> {
+            unreachable!()
+        }
+        fn decrypt(
+            &self,
+            _: &std::path::Path,
+            _: &std::path::Path,
+            _: &str,
             _: &crate::backend::Control,
         ) -> crate::error::Result<Vec<serde_json::Value>> {
             unreachable!()
@@ -868,5 +944,198 @@ fn split_destination_collision_and_rollback() {
         .unwrap_err()
         .0,
         "INVALID_REQUEST"
+    );
+}
+
+#[test]
+fn protect_dispatch_paths() {
+    use crate::backend::{Backend, Control};
+    use serde_json::Value;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+    use tempfile::tempdir;
+    struct Protect {
+        secrets: Mutex<Vec<(String, String)>>,
+        seen_passwords: Mutex<Vec<Option<String>>>,
+    }
+    impl Protect {
+        // Inputs are staged under generated names, so marker bytes identify
+        // the document: "locked-marker"/"sealed-output" read as encrypted.
+        fn report(&self, path: &Path) -> (Value, bool) {
+            let data = fs::read(path).unwrap_or_default();
+            let sealed = data == b"sealed-output" || data == b"locked-marker";
+            let mut r = json!({
+                "sha256":"0".repeat(64),"bytes":1,"pageCount":1,
+                "pdfVersion":"1.7","structuralStatus":"valid",
+                "encrypted":sealed,"forms":"absent","signatures":"absent",
+                "signatureValidity":"notChecked","actions":"absent",
+                "hasOutline":false,"hasAttachments":false,
+                "hasMetadata":false,"metadata":{},
+                "pages":[{"pageNumber":1,"rotation":0,"annotationCount":0}]
+            });
+            if data == b"signed-marker" {
+                r["signatures"] = "present".into();
+            }
+            (r, sealed)
+        }
+    }
+    impl Backend for Protect {
+        fn inspect(
+            &self,
+            path: &Path,
+            password: Option<&str>,
+            _: &Control,
+            _: bool,
+        ) -> crate::error::Result<(Value, Vec<Value>)> {
+            self.seen_passwords
+                .lock()
+                .unwrap()
+                .push(password.map(str::to_string));
+            let (report, sealed) = self.report(path);
+            if sealed && password.is_none() {
+                return Err(crate::error::Error("ENCRYPTED_UNSUPPORTED", None));
+            }
+            Ok((report, vec![]))
+        }
+        fn transform(
+            &self,
+            _: &[PathBuf],
+            _: Option<&[u64]>,
+            _: &Path,
+            _: &Control,
+        ) -> crate::error::Result<Vec<Value>> {
+            unreachable!()
+        }
+        fn compress(
+            &self,
+            _: &Path,
+            _: crate::backend::CompressMode,
+            _: &Path,
+            _: &Control,
+        ) -> crate::error::Result<Vec<Value>> {
+            unreachable!()
+        }
+        fn encrypt(
+            &self,
+            _: &Path,
+            out: &Path,
+            user: &str,
+            owner: &str,
+            _: &Control,
+        ) -> crate::error::Result<Vec<Value>> {
+            self.secrets
+                .lock()
+                .unwrap()
+                .push((user.to_string(), owner.to_string()));
+            fs::write(out, b"sealed-output").unwrap();
+            Ok(vec![])
+        }
+        fn decrypt(
+            &self,
+            _: &Path,
+            out: &Path,
+            password: &str,
+            _: &Control,
+        ) -> crate::error::Result<Vec<Value>> {
+            if password != "synthetic-user-secret" {
+                return Err(crate::error::Error("INVALID_PASSWORD", None));
+            }
+            fs::write(out, b"opened-output").unwrap();
+            Ok(vec![])
+        }
+    }
+    let root = tempdir().unwrap();
+    fs::write(root.path().join("plain.pdf"), b"plain-marker").unwrap();
+    fs::write(root.path().join("locked.pdf"), b"locked-marker").unwrap();
+    fs::write(root.path().join("signed.pdf"), b"signed-marker").unwrap();
+    let backend = Arc::new(Protect {
+        secrets: Mutex::new(vec![]),
+        seen_passwords: Mutex::new(vec![]),
+    });
+    let d = crate::Dispatcher::with_backend(root.path(), backend.clone()).unwrap();
+    let c = Control::default();
+    let encrypt = |extra: Value| {
+        let mut r = json!({"input":{"path":"plain.pdf"},"password":"synthetic-user-secret","output":{"path":"sealed.pdf","replaceExisting":true}});
+        for (k, v) in extra.as_object().unwrap() {
+            r[k] = v.clone();
+        }
+        r
+    };
+    // encryptPdf: user password rides to the backend; an omitted owner is
+    // generated, never blank.
+    let out = d
+        .dispatch("encryptPdf", &encrypt(json!({})), false, &c)
+        .unwrap();
+    assert_eq!(out["result"]["path"], "sealed.pdf");
+    let secrets = backend.secrets.lock().unwrap();
+    assert_eq!(secrets[0].0, "synthetic-user-secret");
+    assert!(!secrets[0].1.is_empty() && secrets[0].1 != secrets[0].0);
+    // The post-write re-inspect opens the fresh output with the new password.
+    let seen = backend.seen_passwords.lock().unwrap();
+    assert_eq!(*seen, vec![None, Some("synthetic-user-secret".to_string())]);
+    drop(seen);
+    drop(secrets);
+    // An explicit owner password is passed through verbatim.
+    d.dispatch(
+        "encryptPdf",
+        &encrypt(json!({"ownerPassword":"synthetic-owner-secret"})),
+        false,
+        &c,
+    )
+    .unwrap();
+    assert_eq!(
+        backend.secrets.lock().unwrap()[1],
+        (
+            "synthetic-user-secret".into(),
+            "synthetic-owner-secret".into()
+        )
+    );
+    // decryptPdf opens the input with the supplied password only.
+    let out = d
+        .dispatch(
+            "decryptPdf",
+            &json!({"input":{"path":"locked.pdf"},"password":"synthetic-user-secret","output":{"path":"opened.pdf"}}),
+            false,
+            &c,
+        )
+        .unwrap();
+    assert_eq!(out["result"]["path"], "opened.pdf");
+    // A plain document is not a decrypt input.
+    assert_eq!(
+        d.dispatch(
+            "decryptPdf",
+            &json!({"input":{"path":"plain.pdf"},"password":"synthetic-user-secret","output":{"path":"no.pdf"}}),
+            false,
+            &c,
+        )
+        .unwrap_err()
+        .0,
+        "INVALID_REQUEST"
+    );
+    // An encrypted document is not an encrypt input.
+    assert_eq!(
+        d.dispatch("encryptPdf", &json!({"input":{"path":"locked.pdf"},"password":"synthetic-user-secret","output":{"path":"twice.pdf"}}), false, &c)
+            .unwrap_err()
+            .0,
+        "ENCRYPTED_UNSUPPORTED"
+    );
+    // A signed document is never rewritten.
+    let mut signed = encrypt(json!({}));
+    signed["input"]["path"] = "signed.pdf".into();
+    assert_eq!(
+        d.dispatch("encryptPdf", &signed, false, &c).unwrap_err().0,
+        "SIGNED_UNSUPPORTED"
+    );
+    // A wrong password surfaces as INVALID_PASSWORD, not a generic failure.
+    assert_eq!(
+        d.dispatch(
+            "decryptPdf",
+            &json!({"input":{"path":"locked.pdf"},"password":"not-it","output":{"path":"no2.pdf"}}),
+            false,
+            &c,
+        )
+        .unwrap_err()
+        .0,
+        "INVALID_PASSWORD"
     );
 }

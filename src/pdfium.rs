@@ -25,7 +25,7 @@ pub struct PdfiumProvider {
 
 impl PdfiumProvider {
     fn run(&self, request: Value, control: &Control) -> Result<Value> {
-        let (code, bytes) = Qpdf {
+        let (code, bytes, _) = Qpdf {
             executable: self.worker_executable.clone(),
             exact: false,
             as_limit: 768 * 1024 * 1024,

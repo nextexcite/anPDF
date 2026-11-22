@@ -1039,6 +1039,264 @@
         },
         "description": "Requires a configured rendering engine. Render the visible page (effective crop and rotation) on an opaque white background, without annotations. The output is limited to 16,777,216 pixels, 8192 pixels per side, and 64 MiB. The source PDF is not modified."
       }
+    },
+    "/v1/encrypt": {
+      "post": {
+        "operationId": "encryptPdf",
+        "summary": "Encrypt a PDF with AES-256 (revision 6)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EncryptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validated domain result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/encryptPdfSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid HTTP bearer credential; transport-level failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Encrypt the input with AES-256 (revision 6), the standard protection of the current PDF specification. `password` is the user password required to open the output; `ownerPassword` optionally holds the owner (permissions) password — when omitted, a random unguessable owner password is generated so the document still opens with `password` and no empty-owner backdoor exists. Passwords are never accepted on a command line, echoed in errors, or written to logs: the CLI takes them from an interactive prompt, piped stdin, --request-file or --password-file. The input must not already be encrypted; form content is preserved, while signature-bearing documents stay rejected because a rewrite invalidates them."
+      }
+    },
+    "/v1/decrypt": {
+      "post": {
+        "operationId": "decryptPdf",
+        "summary": "Remove password protection from a PDF",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecryptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validated domain result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/decryptPdfSuccess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "Canonical operation error; see V0 acceptance mapping",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid HTTP bearer credential; transport-level failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "description": "Remove encryption from the input, producing a fully readable copy. `password` must be the document's user or owner password — the operation fails INVALID_PASSWORD (403) when it does not open the file. The input must be encrypted; form content is preserved, while signature-bearing documents stay rejected because a rewrite invalidates them."
+      }
     }
   },
   "components": {
@@ -1076,6 +1334,64 @@
         },
         "required": [
           "path"
+        ]
+      },
+      "EncryptRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "output": {
+            "$ref": "#/components/schemas/Output"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 127,
+            "description": "User password required to open the encrypted output. UTF-8 and at most 127 bytes, the PDF specification bound; non-empty."
+          },
+          "ownerPassword": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 127,
+            "description": "Optional owner (permissions) password with the same constraints. When omitted, a random unguessable owner password is generated; an empty owner password is never written."
+          },
+          "preserve": {
+            "$ref": "#/components/schemas/Preserve"
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "password"
+        ]
+      },
+      "DecryptRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "output": {
+            "$ref": "#/components/schemas/Output"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 127,
+            "description": "The document's user or owner password. UTF-8 and at most 127 bytes, the PDF specification bound; non-empty."
+          },
+          "preserve": {
+            "$ref": "#/components/schemas/Preserve"
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "password"
         ]
       },
       "InspectRequest": {
@@ -1770,6 +2086,72 @@
           "warnings"
         ]
       },
+      "encryptPdfSuccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "1.0.0"
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "enum": [
+              "encryptPdf"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Warning"
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "operationId",
+          "result",
+          "warnings"
+        ]
+      },
+      "decryptPdfSuccess": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "1.0.0"
+            ]
+          },
+          "operationId": {
+            "type": "string",
+            "enum": [
+              "decryptPdf"
+            ]
+          },
+          "result": {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Warning"
+            }
+          }
+        },
+        "required": [
+          "contractVersion",
+          "operationId",
+          "result",
+          "warnings"
+        ]
+      },
       "compressPdfSuccess": {
         "type": "object",
         "additionalProperties": false,
@@ -1830,6 +2212,7 @@
                   "OUTPUT_EXISTS",
                   "INPUT_CHANGED",
                   "INVALID_PDF",
+                  "INVALID_PASSWORD",
                   "ENCRYPTED_UNSUPPORTED",
                   "SIGNED_UNSUPPORTED",
                   "FORM_UNSUPPORTED",
