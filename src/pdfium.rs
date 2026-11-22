@@ -143,11 +143,35 @@ fn traced_evidence(doc: &Document, page: &Dictionary, contents: &[u8]) -> Option
     if page.get(b"Annots").is_ok() {
         return Some("annotations");
     }
+    // The rebuilt page draws the rendered bitmap over the full box at its
+    // origin; a rotated page would rotate it twice and a shifted or cropped
+    // box would misplace it, so those keep original objects.
+    let box_origin = |k: &[u8]| {
+        resample_lookup(doc, page, k)
+            .and_then(|b| b.as_array().ok().cloned())
+            .map(|a| {
+                (
+                    a.first().and_then(|v| v.as_float().ok()).unwrap_or(0.0),
+                    a.get(1).and_then(|v| v.as_float().ok()).unwrap_or(0.0),
+                )
+            })
+    };
+    if page
+        .get(b"Rotate")
+        .ok()
+        .is_some_and(|r| r.as_i64().ok().unwrap_or(0) != 0)
+        || box_origin(b"MediaBox").is_some_and(|o| o != (0.0, 0.0))
+        || box_origin(b"CropBox")
+            .zip(box_origin(b"MediaBox"))
+            .is_some_and(|(c, m)| c != m)
+    {
+        return Some("page-geometry");
+    }
     let resources =
         resample_lookup(doc, page, b"Resources").and_then(|r| r.as_dict().ok().cloned());
-    if resources.is_some_and(|r| {
+    if resources.as_ref().is_some_and(|r| {
         r.get(b"Properties").is_ok()
-            || resample_lookup(doc, &r, b"ExtGState").is_some_and(|gs| {
+            || resample_lookup(doc, r, b"ExtGState").is_some_and(|gs| {
                 gs.as_dict().ok().is_some_and(|d| {
                     d.iter().any(|(_, v)| {
                         v.as_dict().ok().is_some_and(|g| {
@@ -162,7 +186,12 @@ fn traced_evidence(doc: &Document, page: &Dictionary, contents: &[u8]) -> Option
     }) {
         return Some("layers-or-blend");
     }
-    let parsed = lopdf::content::Content::decode(contents).ok()?;
+    let parsed = match lopdf::content::Content::decode(contents) {
+        Ok(p) => p,
+        // Undecodable content cannot be classified: keep the original
+        // objects rather than risk rasterizing live text.
+        Err(_) => return Some("unreadable"),
+    };
     let mut paths = 0usize;
     for op in parsed.operations {
         if PATH_BUILD_OPS.contains(&op.operator.as_bytes())
@@ -173,6 +202,57 @@ fn traced_evidence(doc: &Document, page: &Dictionary, contents: &[u8]) -> Option
             return Some("text");
         } else if UNCLEAR_OPS.contains(&op.operator.as_bytes()) {
             return Some("layered-content");
+        } else if op.operator == "Do" {
+            // A Do invocation may paint a Form XObject carrying its own
+            // text or layered content — only evidence that it holds none
+            // keeps the page eligible.
+            let name = op
+                .operands
+                .first()
+                .and_then(|o| o.as_name().ok().map(|n| n.to_vec()));
+            let nested = name.and_then(|n| {
+                resources
+                    .as_ref()
+                    .and_then(|r| resample_lookup(doc, r, b"XObject"))
+                    .and_then(|x| x.as_dict().ok().cloned())
+                    .and_then(|x| resample_lookup(doc, &x, &n))
+                    .and_then(|o| match o {
+                        Object::Stream(s) => Some(s),
+                        _ => None,
+                    })
+            });
+            match nested {
+                Some(stream) => {
+                    // Only a Form can carry operators; images are already
+                    // pixels. Undecodable or layered form content keeps the
+                    // page's original objects.
+                    if stream
+                        .dict
+                        .get(b"Subtype")
+                        .ok()
+                        .is_some_and(|s| s.as_name().ok() == Some(&b"Form"[..]))
+                    {
+                        let bytes = stream
+                            .decompressed_content()
+                            .unwrap_or_else(|_| stream.content.clone());
+                        match lopdf::content::Content::decode(&bytes) {
+                            Err(_) => return Some("unreadable"),
+                            Ok(inner) => {
+                                for iop in inner.operations {
+                                    if TEXT_OPS.contains(&iop.operator.as_bytes()) {
+                                        return Some("text");
+                                    }
+                                    if UNCLEAR_OPS.contains(&iop.operator.as_bytes()) {
+                                        return Some("layered-content");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Unresolvable XObject: cannot prove it carries no text.
+                None => return Some("layered-content"),
+            }
         }
     }
     if paths < TRACED_PATH_FLOOR {
@@ -291,6 +371,20 @@ fn rasterize(document: &PdfDocument, request: &Value) -> Result<Value> {
     // bytes are exact. Only one bitmap is held at a time — a whole document
     // of rendered pages would exceed the worker's memory cap.
     let page_ids = doc.get_pages();
+    // Content streams may be shared between pages: only streams no other
+    // page references may be dropped on rebuild.
+    let mut ref_counts: std::collections::HashMap<lopdf::ObjectId, usize> =
+        std::collections::HashMap::new();
+    for page_id in page_ids.values() {
+        if let Ok(dict) = doc.get_dictionary(*page_id) {
+            let (_, refs, _) = page_contents(&doc, dict);
+            for r in refs {
+                if let Object::Reference(id) = r {
+                    *ref_counts.entry(id).or_insert(0) += 1;
+                }
+            }
+        }
+    }
     let mut eligible: Vec<(lopdf::ObjectId, i32, f64, f64, Vec<Object>, u64)> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
     let mut rung_bytes = vec![0u64; ladder.len()];
@@ -475,7 +569,10 @@ fn rasterize(document: &PdfDocument, request: &Value) -> Result<Value> {
             }
             for item in old_refs {
                 if let Object::Reference(id) = item {
-                    doc.objects.remove(id);
+                    // A stream another page also paints must stay.
+                    if ref_counts.get(id).copied().unwrap_or(0) <= 1 {
+                        doc.objects.remove(id);
+                    }
                 }
             }
             rasterized_pages.push(page_id.0);
