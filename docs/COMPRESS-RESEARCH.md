@@ -2,6 +2,8 @@
 
 Scope: a `maxOutputBytes`-style option (e.g. "below 5 MB") for `compress` on the 0.3.x line (next release: 0.3.1 per repo versioning). Research only — no code changes or PR.
 
+What was decided and shipped, with per-case evidence and limits, is tracked in [COMPRESSION-TECH-REVIEW.md](COMPRESSION-TECH-REVIEW.md) — the living record; new document classes get a case entry there.
+
 ## 1. Where `compress` stands today
 
 `src/backend.rs` → `Qpdf::compress` runs:
