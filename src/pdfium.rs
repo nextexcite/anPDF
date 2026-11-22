@@ -281,15 +281,29 @@ fn page_contents(doc: &Document, page: &Dictionary) -> (Vec<u8>, Vec<Object>, u6
         Object::Array(list) => items.extend(list.iter().cloned()),
         single => items.push(single.clone()),
     }
-    for item in items {
+    let mut i = 0usize;
+    let mut seen_arrays = std::collections::HashSet::new();
+    while i < items.len() {
+        let item = items[i].clone();
         if let Object::Reference(id) = item {
-            refs.push(item.clone());
-            if let Ok(Object::Stream(s)) = doc.get_object(id) {
-                stored += s.content.len() as u64;
-                bytes.extend(
-                    s.decompressed_content()
-                        .unwrap_or_else(|_| s.content.clone()),
-                );
+            // An indirect Contents may hold the stream list itself: resolve
+            // array references so the streams inside reach refs.
+            match doc.get_object(id) {
+                Ok(Object::Array(list)) => {
+                    if seen_arrays.insert(id) {
+                        items.extend(list.iter().cloned());
+                    }
+                }
+                Ok(Object::Stream(s)) => {
+                    refs.push(item);
+                    stored += s.content.len() as u64;
+                    bytes.extend(
+                        s.decompressed_content()
+                            .unwrap_or_else(|_| s.content.clone()),
+                    );
+                }
+                // Only stream references are tracked for removal.
+                _ => {}
             }
         } else if let Object::Stream(s) = &item {
             stored += s.content.len() as u64;
@@ -298,6 +312,7 @@ fn page_contents(doc: &Document, page: &Dictionary) -> (Vec<u8>, Vec<Object>, u6
                     .unwrap_or_else(|_| s.content.clone()),
             );
         }
+        i += 1;
     }
     (bytes, refs, stored)
 }
