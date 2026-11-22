@@ -1000,6 +1000,121 @@
       "decision": "permissive alternative inventoried; release artifact review pending"
     },
     {
+      "component": "clap",
+      "version": "4.6.9",
+      "artifactSha256": "844c5c0b65be192cb68d570cca1b21a6444431d24e39c084dc0336177015337c",
+      "source": "https://crates.io/crates/clap/4.6.9",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
+      "component": "clap_builder",
+      "version": "4.6.7",
+      "artifactSha256": "ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d",
+      "source": "https://crates.io/crates/clap_builder/4.6.7",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
+      "component": "clap_complete",
+      "version": "4.6.12",
+      "artifactSha256": "6a35200383f20018d41c14d1ab19c1727c697f544492143f7d93aa39f0187848",
+      "source": "https://crates.io/crates/clap_complete/4.6.12",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
+      "component": "clap_derive",
+      "version": "4.6.9",
+      "artifactSha256": "b4c174f11f949b9ca8c60580925e282b9cbd5454750e506f08648b2038080cd7",
+      "source": "https://crates.io/crates/clap_derive/4.6.9",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
+      "component": "clap_lex",
+      "version": "1.1.2",
+      "artifactSha256": "e0921b3876b3a1df8a1c9f912e7f94342458022c2e84288015893d83c4d62a79",
+      "source": "https://crates.io/crates/clap_lex/1.1.2",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "249fdb6694467dd615b259f7ddde07be3f8ae5a72cecebb0e24f6629af4215fe"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "6efb0476a1cc085077ed49357026d8c173bf33017278ef440f222fb9cbcb66e6"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
       "component": "colorchoice",
       "version": "1.0.5",
       "artifactSha256": "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570",
@@ -2212,6 +2327,29 @@
           "file": "THIRD_PARTY_LICENSES/51b50e6120c344dcc146bbd6375ca1c78e079d97c8bea76e67a53d6ff0efebac.txt",
           "originalName": "LICENSE-MIT",
           "sha256": "51b50e6120c344dcc146bbd6375ca1c78e079d97c8bea76e67a53d6ff0efebac"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
+      "component": "heck",
+      "version": "0.5.0",
+      "artifactSha256": "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea",
+      "source": "https://crates.io/crates/heck/0.5.0",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "7b63ecd5f1902af1b63729947373683c32745c16a10e8e6292e2e2dcd7e90ae0"
         }
       ],
       "decision": "permissive alternative inventoried; release artifact review pending"
@@ -3819,9 +3957,9 @@
     },
     {
       "component": "pin-project-lite",
-      "version": "0.2.17",
-      "artifactSha256": "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd",
-      "source": "https://crates.io/crates/pin-project-lite/0.2.17",
+      "version": "0.2.18",
+      "artifactSha256": "c938015719552d665fd0553b90d96cd7ff58e83e4c061ca99e6bb78865a72752",
+      "source": "https://crates.io/crates/pin-project-lite/0.2.18",
       "spdxExpression": "Apache-2.0 OR MIT",
       "selectedAlternative": "MIT",
       "scope": "native Rust dependency graph; build and runtime",
@@ -4948,6 +5086,24 @@
       "decision": "permissive alternative inventoried; release artifact review pending"
     },
     {
+      "component": "strsim",
+      "version": "0.11.1",
+      "artifactSha256": "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f",
+      "source": "https://crates.io/crates/strsim/0.11.1",
+      "spdxExpression": "MIT",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/1e697ce8d21401fbf1bddd9b5c3fd4c4c79ae1e3bdf51f81761c85e11d5a89cd.txt",
+          "originalName": "LICENSE",
+          "sha256": "1e697ce8d21401fbf1bddd9b5c3fd4c4c79ae1e3bdf51f81761c85e11d5a89cd"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
       "component": "subsetter",
       "version": "0.2.6",
       "artifactSha256": "38803281d1c23166c5ebcb455439a5d2afe711cc909cf88af72448c297756ad6",
@@ -5094,6 +5250,29 @@
           "file": "THIRD_PARTY_LICENSES/8b427f5bc501764575e52ba4f9d95673cf8f6d80a86d0d06599852e1a9a20a36.txt",
           "originalName": "LICENSE-MIT",
           "sha256": "8b427f5bc501764575e52ba4f9d95673cf8f6d80a86d0d06599852e1a9a20a36"
+        }
+      ],
+      "decision": "permissive alternative inventoried; release artifact review pending"
+    },
+    {
+      "component": "terminal_size",
+      "version": "0.4.4",
+      "artifactSha256": "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874",
+      "source": "https://crates.io/crates/terminal_size/0.4.4",
+      "spdxExpression": "MIT OR Apache-2.0",
+      "selectedAlternative": "MIT",
+      "scope": "native Rust dependency graph; build and runtime",
+      "modifications": "none",
+      "notices": [
+        {
+          "file": "THIRD_PARTY_LICENSES/c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08.txt",
+          "originalName": "LICENSE-APACHE",
+          "sha256": "c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08"
+        },
+        {
+          "file": "THIRD_PARTY_LICENSES/bc8dcbbd559a61b8a8c0c89d5c3e15d0dc47c6fae94e78ac428d6a7b7da3c4f9.txt",
+          "originalName": "LICENSE-MIT",
+          "sha256": "bc8dcbbd559a61b8a8c0c89d5c3e15d0dc47c6fae94e78ac428d6a7b7da3c4f9"
         }
       ],
       "decision": "permissive alternative inventoried; release artifact review pending"
@@ -6103,9 +6282,9 @@
     },
     {
       "component": "zip",
-      "version": "9.8.0",
-      "artifactSha256": "721c8158b9503b2660291ad3056a20f722deaeed21bb908a9a363d7e17b34f0e",
-      "source": "https://crates.io/crates/zip/9.8.0",
+      "version": "9.8.1",
+      "artifactSha256": "a9534624d547e3f516ecde0ed9a70d37788f01d340efcfdd03bf3ea8e163c1d0",
+      "source": "https://crates.io/crates/zip/9.8.1",
       "spdxExpression": "MIT",
       "selectedAlternative": "MIT",
       "scope": "native Rust dependency graph; build and runtime",

@@ -13,16 +13,37 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// One coarse progress event emitted through [`Control::report`]. Engines
+/// and the dispatcher report named phases with an optional position within
+/// a bounded series; front-ends (the CLI's stderr spinner) may render them
+/// and agents may ignore them entirely.
+#[derive(Debug, Clone)]
+pub struct Progress {
+    /// Operation phase, e.g. "staging", "inspect", "compress", "resample".
+    pub phase: &'static str,
+    /// Human detail line, e.g. "resampling images to 150 dpi".
+    pub detail: String,
+    /// Position within a bounded series (rung i of n) when known.
+    pub step: Option<(u64, u64)>,
+}
+
+/// Front-end progress sink installed on [`Control`].
+pub type ProgressSink = Arc<dyn Fn(&Progress) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct Control {
     pub cancelled: Arc<AtomicBool>,
     pub deadline: Instant,
+    /// Optional progress sink. Backends call `report()`; transports install
+    /// it (or leave None — reporting is then a no-op).
+    pub progress: Option<ProgressSink>,
 }
 impl Default for Control {
     fn default() -> Self {
         Self {
             cancelled: Arc::new(AtomicBool::new(false)),
             deadline: Instant::now() + Duration::from_secs(60),
+            progress: None,
         }
     }
 }
@@ -38,6 +59,17 @@ impl Control {
     /// derive from it so a worker never outlives its job.
     pub fn remaining(&self) -> Duration {
         self.deadline.saturating_duration_since(Instant::now())
+    }
+    /// Emit a coarse progress event to the optional sink installed by the
+    /// calling front-end. Cheap no-op when no sink is installed.
+    pub fn report(&self, phase: &'static str, detail: impl Into<String>, step: Option<(u64, u64)>) {
+        if let Some(progress) = &self.progress {
+            progress(&Progress {
+                phase,
+                detail: detail.into(),
+                step,
+            });
+        }
     }
 }
 /// Wall-clock budget for a compress job: a 60 s base plus a per-MiB
