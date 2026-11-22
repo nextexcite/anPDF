@@ -371,26 +371,17 @@ fn rasterize(document: &PdfDocument, request: &Value) -> Result<Value> {
     // bytes are exact. Only one bitmap is held at a time — a whole document
     // of rendered pages would exceed the worker's memory cap.
     let page_ids = doc.get_pages();
-    // Content streams may be shared between pages: only streams no other
-    // page references may be dropped on rebuild.
-    let mut ref_counts: std::collections::HashMap<lopdf::ObjectId, usize> =
-        std::collections::HashMap::new();
-    for page_id in page_ids.values() {
-        if let Ok(dict) = doc.get_dictionary(*page_id) {
-            let (_, refs, _) = page_contents(&doc, dict);
-            for r in refs {
-                if let Object::Reference(id) = r {
-                    *ref_counts.entry(id).or_insert(0) += 1;
-                }
-            }
-        }
-    }
+
     let mut eligible: Vec<(lopdf::ObjectId, i32, f64, f64, Vec<Object>, u64)> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
     let mut rung_bytes = vec![0u64; ladder.len()];
     let mut usable_rungs = vec![true; ladder.len()];
     let mut measured = true;
     let mut replaced_total = 0u64;
+    // Streams referenced by a page that keeps its original objects must
+    // survive rebuild; every other content stream is dropped with its page.
+    let mut kept_refs: std::collections::HashSet<lopdf::ObjectId> =
+        std::collections::HashSet::new();
     for (index, page_id) in &page_ids {
         let page_dict = match doc.get_dictionary(*page_id) {
             Ok(d) => d.clone(),
@@ -401,11 +392,24 @@ fn rasterize(document: &PdfDocument, request: &Value) -> Result<Value> {
         };
         let (contents, old_refs, stored) = page_contents(&doc, &page_dict);
         match traced_evidence(&doc, &page_dict, &contents) {
-            Some(reason) => skipped.push(json!({"page": index, "reason": reason})),
+            Some(reason) => {
+                skipped.push(json!({"page": index, "reason": reason}));
+                for r in old_refs {
+                    if let Object::Reference(id) = r {
+                        kept_refs.insert(id);
+                    }
+                }
+            }
             None => {
                 if spent(Instant::now()) {
                     measured = false;
-                    break;
+                    skipped.push(json!({"page": index, "reason": "deadline"}));
+                    for r in old_refs {
+                        if let Object::Reference(id) = r {
+                            kept_refs.insert(id);
+                        }
+                    }
+                    continue;
                 }
                 let page = document
                     .pages()
@@ -569,8 +573,8 @@ fn rasterize(document: &PdfDocument, request: &Value) -> Result<Value> {
             }
             for item in old_refs {
                 if let Object::Reference(id) = item {
-                    // A stream another page also paints must stay.
-                    if ref_counts.get(id).copied().unwrap_or(0) <= 1 {
+                    // A stream a skipped page also paints must stay.
+                    if !kept_refs.contains(id) {
                         doc.objects.remove(id);
                     }
                 }
