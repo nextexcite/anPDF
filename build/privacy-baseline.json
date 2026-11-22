@@ -8,7 +8,7 @@
     {
       "commit": "63c966d14fca5d071e84996ff0536ccc71fb4a59",
       "identitySha256": "ae2b7bc4f383e8666dc52517460a239c28fb385258fa2dd0f0a380b65b0c0acb",
-      "reason": "Reviewed immutable web merge of PR #23 authored by devin-ai-integration[bot]; exempts this exact commit only."
+      "reason": "Reviewed immutable web merge of PR #23; exempts this exact commit only."
     }
   ],
   "webMergeIdentitySha256": [
