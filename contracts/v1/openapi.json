@@ -1354,7 +1354,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Compression passes applied to the published candidate: flate-recompress, object-streams, resource-drop, jpeg-recompress, image-downsample; empty when original bytes were published."
+            "description": "Compression passes applied to the published candidate: flate-recompress, object-streams, resource-drop, jpeg-recompress, image-downsample, pageRasterization; empty when original bytes were published. pageRasterization rebuilds dense traced-graphics pages as raster images: those pages become images, fine zoom detail is lost, and pages holding text, annotations, layers or tagged structure keep their original objects rather than being silently discarded."
           },
           "targetBytes": {
             "type": "integer",

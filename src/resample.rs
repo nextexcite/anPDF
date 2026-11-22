@@ -37,7 +37,7 @@ const MAX_IMAGE_PIXELS: u64 = 64_000_000;
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 const MAX_CONTENT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PALETTE_RAW_BYTES: usize = 4 * 1024 * 1024;
-const MAX_RUNGS: usize = 16;
+pub(crate) const MAX_RUNGS: usize = 16;
 const RESAMPLE_MARGIN: f64 = 1.10; // images within 10% of the cap are left alone
 /// Decoded pixels held at once across worker threads (~256 MiB).
 /// Decoded pixels in flight stay under this bound so the worker's address
@@ -513,14 +513,14 @@ fn samples_image(
     }
 }
 
-fn required_pixels(placed_pt: (f64, f64), dpi_cap: u32) -> (u32, u32) {
+pub(crate) fn required_pixels(placed_pt: (f64, f64), dpi_cap: u32) -> (u32, u32) {
     (
         ((placed_pt.0 / 72.0) * dpi_cap as f64).ceil().max(1.0) as u32,
         ((placed_pt.1 / 72.0) * dpi_cap as f64).ceil().max(1.0) as u32,
     )
 }
 
-fn resampled(image: &image::DynamicImage, w: u32, h: u32) -> image::DynamicImage {
+pub(crate) fn resampled(image: &image::DynamicImage, w: u32, h: u32) -> image::DynamicImage {
     match image {
         image::DynamicImage::ImageLuma8(l) => image::DynamicImage::ImageLuma8(
             image::imageops::resize(l, w, h, image::imageops::FilterType::Lanczos3),
@@ -538,7 +538,7 @@ fn resampled(image: &image::DynamicImage, w: u32, h: u32) -> image::DynamicImage
 /// grayscale so the JPEG drops its chroma planes and the rewritten ColorSpace
 /// stays honest. Scanned pages are often stored RGB despite holding
 /// monochrome content.
-fn achromatic_to_gray(resized: image::DynamicImage) -> image::DynamicImage {
+pub(crate) fn achromatic_to_gray(resized: image::DynamicImage) -> image::DynamicImage {
     if let image::DynamicImage::ImageRgb8(rgb) = &resized {
         let achromatic = rgb.pixels().all(|p| {
             let [r, g, b] = p.0;
@@ -551,7 +551,7 @@ fn achromatic_to_gray(resized: image::DynamicImage) -> image::DynamicImage {
     resized
 }
 
-fn encode_jpeg(resized: &image::DynamicImage, jpeg_quality: u8) -> Option<Vec<u8>> {
+pub(crate) fn encode_jpeg(resized: &image::DynamicImage, jpeg_quality: u8) -> Option<Vec<u8>> {
     let mut jpeg = Vec::new();
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, jpeg_quality);
     // Encode the concrete buffer, not the DynamicImage: a DynamicImage

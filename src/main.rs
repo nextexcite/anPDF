@@ -1958,8 +1958,11 @@ fn configured_registry(
                 .register_text("pdfium", provider.clone())
                 .expect("unique engine");
             registry
-                .register_renderer("pdfium", provider)
+                .register_renderer("pdfium", provider.clone())
                 .expect("unique engine");
+            // The same isolated worker rasterizes traced pages for
+            // size-targeted compression when image resampling misses.
+            registry.register_rasterizer(provider);
         }
         registry
     };

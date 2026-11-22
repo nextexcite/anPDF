@@ -319,6 +319,16 @@ def run():
               ('render-page',{'input':{'path':'blank.pdf'},'page':1,'dpi':72,'output':{'path':'blank-render.png'}},None),
               ('render-page',{'input':{'path':'annotated.pdf'},'page':1,'dpi':72,'output':{'path':'annotation.png'}},None),
               ('extract-text',{'input':{'path':'three.pdf'},'pages':[1],'engine':'absent'},'BACKEND_UNAVAILABLE'),
+              # A tight target on traced-graphics pages resampling cannot
+              # reach: positive-evidence rasterization rebuilds them.
+              ('compress',{'input':{'path':'traced.pdf'},'output':{'path':'traced-target.pdf'},'maxOutputBytes':50000},None),
+              ('inspect',{'input':{'path':'traced-target.pdf'}},None),
+              # Same-page conservatism: photo+text+link+line-art page keeps its
+              # objects; only the isolated traced page is rebuilt.
+              ('compress',{'input':{'path':'mixed-elements.pdf'},'output':{'path':'mixed-target.pdf'},'maxOutputBytes':30000},None),
+              ('inspect',{'input':{'path':'mixed-target.pdf'}},None),
+              # Tagged structure is document-level protection: rasterize bails.
+              ('compress',{'input':{'path':'tagged.pdf'},'output':{'path':'tagged-target.pdf'},'maxOutputBytes':200},None),
             ])
             if os.environ.get('ANPDF_TEST_FONT'):
                 corpus.append(('extract-text',{'input':{'path':'provider-cjk.pdf'},'pages':[1]},None))
@@ -333,7 +343,7 @@ def run():
             cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps(request)],capture_output=True,text=True)
             assert bool(cli.returncode)==bool(error),(n,command,cli.returncode,cli.stderr,cli.stdout);a=json.loads(cli.stderr if error else cli.stdout)
             assert not (cli.stdout if error else cli.stderr),(n,'framing')
-            try:status,b=http(port,token,'/v1/'+command,request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else (30 if command=='compress' else 15))
+            try:status,b=http(port,token,'/v1/'+command,request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else (90 if command=='compress' and request.get('maxOutputBytes') else 30 if command=='compress' else 15))
             except TimeoutError as e:raise AssertionError((n,command,request.get('input'),'HTTP timeout')) from e
             mcp_send(mcp,{'jsonrpc':'2.0','id':n,'method':'tools/call','params':{'name':op,'arguments':request}})
             result=mcp_read(mcp)['result'];c=json.loads(result['content'][0]['text'])
@@ -451,6 +461,30 @@ def run():
         assert tight['result']['targetMet'] is False and 'image-downsample' in tight['result']['techniques'] and any(w['code']=='SIZE_TARGET_UNMET' for w in tight['warnings'])
         assert 'image-downsample' in responses['level-two.pdf']['result']['techniques']
         assert 'image-downsample' in responses['bitonal-l3.pdf']['result']['techniques']
+        if pdfium:
+            # Traced-graphics pages resampling cannot shrink: rasterize
+            # rebuilds them and the tight target is met.
+            traced=responses['traced-target.pdf']['result']
+            assert traced['targetMet'] is True and 'pageRasterization' in traced['techniques'],traced
+            assert any(w['code']=='PAGE_RASTERIZED' for w in responses['traced-target.pdf']['warnings'])
+            ins=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'traced-target.pdf'}})]))
+            assert ins['result']['pageCount']==2 and all(p['widthPoints']==595.0 and p['heightPoints']==842.0 for p in ins['result']['pages'])
+            # The mixed page's photo, live text, link and line art survive;
+            # only the isolated traced page was rebuilt.
+            mixed=responses['mixed-target.pdf']['result']
+            assert mixed['pageCount']==2 and 'pageRasterization' in mixed['techniques'],mixed
+            mw=[w['code'] for w in responses['mixed-target.pdf']['warnings']]
+            assert 'PAGE_RASTERIZED' in mw and 'PAGE_RASTERIZATION_SKIPPED' in mw and 'SIZE_TARGET_UNMET' in mw,mw
+            mi=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'mixed-target.pdf'}})]))
+            assert mi['result']['pages'][1]['annotationCount']==1,(mi['result'])
+            text_r=json.loads(subprocess.check_output([str(BIN),'extract-text','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'mixed-target.pdf'},'pages':[2]})]))
+            assert 'LIVE-TEXT-ANCHOR' in text_r['result']['pages'][0]['text'],text_r
+            # Tagged structure is protected: rasterize bails and the document
+            # is preserved.
+            tagged=responses['tagged-target.pdf']['result']
+            assert 'pageRasterization' not in tagged['techniques'],tagged
+            ti2=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'tagged-target.pdf'}})]))
+            assert ti2['result']['pageCount']==1
         for root in roots.values():
             assert not (root/'resampled-err.pdf').exists()
             assert digest(root/'resampled.pdf')!=digest(root/'oversampled.pdf')
