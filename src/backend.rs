@@ -78,6 +78,12 @@ impl Control {
 /// default deadline could never fit; the cap keeps the job bounded.
 /// `ANPDF_JOB_DEADLINE_MS` overrides the budget for integration tests.
 pub fn compress_deadline(input_bytes: u64) -> Duration {
+    compress_deadline_targeted(input_bytes, false)
+}
+/// A size-targeted compress may run a second optimization phase — adaptive
+/// page rasterization — after image resampling misses the target, so its
+/// budget carries an extra bounded slice.
+pub fn compress_deadline_targeted(input_bytes: u64, targeted: bool) -> Duration {
     if let Some(ms) = std::env::var("ANPDF_JOB_DEADLINE_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -85,7 +91,9 @@ pub fn compress_deadline(input_bytes: u64) -> Duration {
     {
         return Duration::from_millis(ms);
     }
-    Duration::from_secs(60 + input_bytes.div_ceil(1024 * 1024) * 20).min(Duration::from_secs(600))
+    let extra = if targeted { 60 } else { 0 };
+    Duration::from_secs(60 + input_bytes.div_ceil(1024 * 1024) * 20 + extra)
+        .min(Duration::from_secs(600))
 }
 const MAX_JSON_OBJECTS: usize = 200_000;
 const MAX_WALK_NODES: usize = 2_000_000;
@@ -201,6 +209,22 @@ pub trait RenderPageBackend: Send + Sync {
         output: &Path,
         control: &Control,
     ) -> Result<Vec<Value>>;
+}
+
+/// Rebuild eligible pages as raster JPEGs at the gentlest rung fitting
+/// `target`, editing the input document in place into `output`. Same isolation
+/// rules as the resample worker: one bounded subprocess, staging-only paths,
+/// summary JSON on stdout. Pages carrying text, annotations, layers or other
+/// protected content keep their original objects.
+pub trait PageRasterizer: Send + Sync {
+    fn rasterize_document(
+        &self,
+        input: &Path,
+        output: &Path,
+        rungs: &[(u32, u8)],
+        target: Option<u64>,
+        control: &Control,
+    ) -> Result<Value>;
 }
 
 pub struct Qpdf {

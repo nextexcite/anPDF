@@ -1,5 +1,7 @@
 use crate::{
-    backend::{Backend, ExtractTextBackend, ImageResampler, Qpdf, RenderPageBackend},
+    backend::{
+        Backend, ExtractTextBackend, ImageResampler, PageRasterizer, Qpdf, RenderPageBackend,
+    },
     error::{Error, Result},
     parse_pages,
 };
@@ -12,6 +14,9 @@ pub struct BackendRegistry {
     text: Providers<dyn ExtractTextBackend>,
     render: Providers<dyn RenderPageBackend>,
     resampler: Option<Arc<dyn ImageResampler>>,
+    /// One rasterizer per registry; the pageRasterization path uses it
+    /// when image resampling cannot reach a byte target.
+    rasterizer: Option<Arc<dyn PageRasterizer>>,
 }
 
 type Providers<T> = Vec<(&'static str, Arc<T>)>;
@@ -36,12 +41,18 @@ impl BackendRegistry {
             text: Vec::new(),
             render: Vec::new(),
             resampler: None,
+            rasterizer: None,
         }
     }
 
     /// One resampler per registry; the compression ladder uses it when present.
     pub fn register_resampler(&mut self, provider: Arc<dyn ImageResampler>) {
         self.resampler = Some(provider);
+    }
+
+    /// One rasterizer per registry; pageRasterization uses it when present.
+    pub fn register_rasterizer(&mut self, provider: Arc<dyn PageRasterizer>) {
+        self.rasterizer = Some(provider);
     }
 
     pub fn register_text(
@@ -103,6 +114,7 @@ impl BackendRegistry {
         Ok(Plan {
             structural: self.structural.as_ref(),
             resampler: self.resampler.as_deref(),
+            rasterizer: self.rasterizer.as_deref(),
             job,
         })
     }
@@ -158,6 +170,7 @@ fn capability(id: &str) -> Result<Capability> {
 pub(crate) struct Plan<'a> {
     pub(crate) structural: &'a dyn Backend,
     pub(crate) resampler: Option<&'a dyn ImageResampler>,
+    pub(crate) rasterizer: Option<&'a dyn PageRasterizer>,
     pub(crate) job: Job<'a>,
 }
 
