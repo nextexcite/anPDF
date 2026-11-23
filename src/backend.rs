@@ -482,6 +482,21 @@ impl Qpdf {
         }
         Ok((status.code().unwrap(), bytes, err_bytes))
     }
+    /// Run one qpdf invocation described by a job JSON document. The
+    /// document — which may carry passwords — reaches the worker through
+    /// an inherited descriptor or private staging file; argv stays clean
+    /// and secrets survive line breaks (a `--password-file` reads only
+    /// its first line).
+    fn run_job(
+        &self,
+        dir: &Path,
+        job: &Value,
+        control: &Control,
+    ) -> Result<(i32, Vec<u8>, Vec<u8>)> {
+        let bytes = serde_json::to_vec(job).map_err(|_| Error("INTERNAL", None))?;
+        let channel = SecretChannel::new(dir, &bytes)?;
+        self.run(&[format!("--job-json-file={}", channel.arg())], control)
+    }
     fn qualified(&self, control: &Control) -> Result<Vec<Value>> {
         let (code, bytes, _) = self.run(&["--version".into()], control)?;
         let exact = self.exact || std::env::var_os("ANPDF_QPDF_EXACT").is_some_and(|v| v == "1");
@@ -501,9 +516,12 @@ impl Qpdf {
         &self,
         v: &Value,
         path: &str,
-        password_arg: Option<String>,
+        password: Option<&str>,
         control: &Control,
     ) -> Result<(bool, Value)> {
+        let dir = Path::new(path)
+            .parent()
+            .ok_or(Error("ACCESS_DENIED", None))?;
         let objs = &v["qpdf"][1];
         let trailer = &objs["trailer"]["value"];
         let info = trailer
@@ -521,13 +539,15 @@ impl Qpdf {
         })?;
         if let Some(xmp) = xmp {
             if let Some(reference) = xmp.as_str().and_then(|r| r.strip_suffix(" R")) {
-                let mut args = password_arg.clone().map_or(Vec::new(), |a| vec![a]);
-                args.extend([
-                    format!("--show-object={}", reference.replace(' ', ",")),
-                    "--filtered-stream-data".into(),
-                    path.into(),
-                ]);
-                let (code, bytes, _) = self.run(&args, control)?;
+                let mut job = json!({
+                    "inputFile": path,
+                    "showObject": reference.replace(' ', ","),
+                    "filteredStreamData": "",
+                });
+                if let Some(p) = password {
+                    job["password"] = p.into();
+                }
+                let (code, bytes, _) = self.run_job(dir, &job, control)?;
                 if code == 0 {
                     metadata.push(json!(hex_hash(&bytes)));
                 } else {
@@ -557,9 +577,11 @@ impl Qpdf {
                     known = false;
                     break;
                 }
-                let mut args = password_arg.clone().map_or(Vec::new(), |a| vec![a]);
-                args.extend([format!("--show-attachment={key}"), path.into()]);
-                let extracted = self.run(&args, control);
+                let mut job = json!({"inputFile": path, "showAttachment": key});
+                if let Some(p) = password {
+                    job["password"] = p.into();
+                }
+                let extracted = self.run_job(dir, &job, control);
                 control.check()?;
                 let Ok((0, bytes, _)) = extracted else {
                     known = false;
@@ -860,27 +882,22 @@ impl Backend for Qpdf {
             .to_str()
             .ok_or(Error("ACCESS_DENIED", None))?
             .to_string();
-        // The password reaches qpdf only through an inherited descriptor or
-        // a private staging file — argv carries just the reference.
-        let channel = match password {
-            Some(password) => Some(SecretChannel::new(
-                Path::new(&path)
-                    .parent()
-                    .ok_or(Error("ACCESS_DENIED", None))?,
-                password.as_bytes(),
-            )?),
-            None => None,
-        };
-        let mut args = channel
-            .iter()
-            .map(|c| format!("--password-file={}", c.arg()))
-            .collect::<Vec<_>>();
-        args.extend([
-            "--json=2".into(),
-            "--json-stream-data=none".into(),
-            path.clone(),
-        ]);
-        let (code, data, stderr) = self.run(&args, control)?;
+        // The password reaches qpdf inside a job JSON document carried on
+        // an inherited descriptor or private staging file — argv stays
+        // clean and line breaks in the password survive (a password file
+        // would carry only the first line).
+        let dir = Path::new(&path)
+            .parent()
+            .ok_or(Error("ACCESS_DENIED", None))?;
+        let mut job = json!({
+            "inputFile": path,
+            "json": "latest",
+            "jsonStreamData": "none",
+        });
+        if let Some(p) = password {
+            job["password"] = p.into();
+        }
+        let (code, data, stderr) = self.run_job(dir, &job, control)?;
         if code != 0 && code != 3 {
             if invalid_password(&stderr) {
                 // No password supplied means the document is protected, not
@@ -916,12 +933,11 @@ impl Backend for Qpdf {
         // scope to callers.
         let mut warn_code = if code == 3 { 3 } else { 0 };
         if deep {
-            let mut check_args = channel
-                .iter()
-                .map(|c| format!("--password-file={}", c.arg()))
-                .collect::<Vec<_>>();
-            check_args.extend(["--check".into(), path.clone()]);
-            let (check, _, check_err) = self.run(&check_args, control)?;
+            let mut check_job = json!({"inputFile": path, "check": ""});
+            if let Some(p) = password {
+                check_job["password"] = p.into();
+            }
+            let (check, _, check_err) = self.run_job(dir, &check_job, control)?;
             if check != 0 && check != 3 {
                 return Err(Error(
                     if invalid_password(&check_err) {
@@ -942,9 +958,7 @@ impl Backend for Qpdf {
         if report["pageCount"].as_u64() == Some(0) {
             return Err(Error("INVALID_PDF", None));
         }
-        let password_arg = channel.map(|c| format!("--password-file={}", c.arg()));
-        let (has_metadata, evidence) =
-            self.preservation_evidence(&v, &path, password_arg, control)?;
+        let (has_metadata, evidence) = self.preservation_evidence(&v, &path, password, control)?;
         report["hasMetadata"] = json!(has_metadata);
         report["preservationEvidence"] = evidence;
         warnings.extend(w);
@@ -1023,19 +1037,19 @@ impl Backend for Qpdf {
         let dir = out.parent().ok_or(Error("ACCESS_DENIED", None))?;
         // The job JSON carries both passwords; it reaches qpdf as an
         // inherited descriptor or private staging file — argv stays clean.
-        let job = serde_json::to_vec(&json!({
-            "inputFile": input.to_str().ok_or(Error("ACCESS_DENIED", None))?,
-            "outputFile": out.to_str().ok_or(Error("ACCESS_DENIED", None))?,
-            "encrypt": {
-                "userPassword": user,
-                "ownerPassword": owner,
-                "256bit": {}
-            }
-        }))
-        .map_err(|_| Error("INTERNAL", None))?;
-        let channel = SecretChannel::new(dir, &job)?;
-        let (code, _, stderr) =
-            self.run(&[format!("--job-json-file={}", channel.arg())], control)?;
+        let (code, _, stderr) = self.run_job(
+            dir,
+            &json!({
+                "inputFile": input.to_str().ok_or(Error("ACCESS_DENIED", None))?,
+                "outputFile": out.to_str().ok_or(Error("ACCESS_DENIED", None))?,
+                "encrypt": {
+                    "userPassword": user,
+                    "ownerPassword": owner,
+                    "256bit": {}
+                }
+            }),
+            control,
+        )?;
         if code != 0 && code != 3 {
             return Err(Error(
                 if invalid_password(&stderr) {
@@ -1058,15 +1072,14 @@ impl Backend for Qpdf {
     ) -> Result<Vec<Value>> {
         let mut warnings = self.qualified(control)?;
         let dir = out.parent().ok_or(Error("ACCESS_DENIED", None))?;
-        let channel = SecretChannel::new(dir, password.as_bytes())?;
-        let (code, _, stderr) = self.run(
-            &[
-                format!("--password-file={}", channel.arg()),
-                "--decrypt".into(),
-                "--".into(),
-                input.to_str().ok_or(Error("ACCESS_DENIED", None))?.into(),
-                out.to_str().ok_or(Error("ACCESS_DENIED", None))?.into(),
-            ],
+        let (code, _, stderr) = self.run_job(
+            dir,
+            &json!({
+                "inputFile": input.to_str().ok_or(Error("ACCESS_DENIED", None))?,
+                "outputFile": out.to_str().ok_or(Error("ACCESS_DENIED", None))?,
+                "password": password,
+                "decrypt": "",
+            }),
             control,
         )?;
         if code != 0 && code != 3 {
