@@ -113,10 +113,10 @@ providers can implement this protocol without changing the harness.
 
 ### anPDF capability-registry adapter (PDFium / PDFOxide)
 
-`bench/providers/anpdf` targets the unmerged capability-registry contract in
-PR #1 (`devin/1795141714-capability-registry`, inspected at `3c2248d`), without
-rebasing this corpus branch onto it. Set `ANPDF_BIN` to a binary built from that
-branch or a provider branch based on it, and select the content engine explicitly:
+`bench/providers/anpdf` targets the capability-registry contract (merged in
+PR #1; this adapter section was originally written against the pre-merge branch
+inspected at `3c2248d`). Set `ANPDF_BIN` to a build of the current tree and
+select the content engine explicitly:
 
 ```sh
 ANPDF_BIN=target/debug/anpdf ANPDF_ENGINE=pdfium \

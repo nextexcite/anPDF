@@ -1,8 +1,44 @@
 # Preliminary qualification evidence
 
-## 0.3.0
+Only the newest section describes the current baseline; older sections are
+historical evidence kept for audit. Status and the prioritized queue live in
+[HANDOFF.md](HANDOFF.md).
 
-The current baseline adds a capability registry, PDFium as the default embedded-text
+## 0.4.x
+
+The current baseline adds AES-256 R6 `encryptPdf`/`decryptPdf` with protected
+secret channels (prompts, `chmod 600` files, stdin, request bodies — never
+argv/env/logs), automatic page rasterization when a compression byte target is
+missed (`pageRasterization`, PDFium-backed, evidence-gated to traced-graphics
+pages), miss-outcome reporting inside `IMAGE_RESAMPLE_LIMITED`, measured
+terminal progress, and the clap-built CLI. PDFium remains the default
+text/render engine; qpdf stays structural; PDFOxide ships only as its own
+preview tag. Fixes stay on the 0.4.x line; no 0.5.0 without explicit approval.
+
+[v0.4.0](https://github.com/nextexcite/anPDF/releases/tag/v0.4.0) was published
+by the tag workflow as a development prerelease (all jobs green: prepare,
+linux/amd64 + linux/arm64 OCI images with restricted smoke + SBOM/Grype/license
+audits before push, image-index verification, macOS arm64 tarball, GitHub
+release, Homebrew tap notify). Its assets carry per-arch SPDX SBOMs, Grype
+reports, license audits and digests; the `nextexcite/homebrew-anpdf` formula
+(updated via repository_dispatch) installs the bundled `libpdfium.dylib`, with
+a revision bump so the v0.4.0 packaging miss (library omitted) forces
+reinstall. Installed-binary CI checks a rasterize-backed `compress --max-bytes`
+run, but that evidence is synthetic — simulated absence on Linux, not a literal
+macOS arm64 install; `brew install anpdf && brew test anpdf` on real hardware
+remains open.
+
+`0.4.1` is staged on `main` and unpublished: raster-pass outcome reporting and
+measured terminal progress on a `--max-bytes` miss. PR CI (native Ubuntu/macOS,
+structural-only leg, bundled-PDFium legs, OCI smoke, Forge output, privacy)
+passed on the merged commits.
+
+Remaining gates are unchanged from the 0.3.0 list below, plus external MCP/HTTP
+client conformance and formal OS/backend license sign-off.
+
+## Historical 0.3.0 evidence
+
+The 0.3.0 baseline added a capability registry, PDFium as the default embedded-text
 and PNG engine, qpdf per-artifact preservation reporting, and the synthetic benchmark
 corpus/harness. PDFOxide remains a separate preview tag. v0.3.0 was published by the
 tag release workflow (linux/amd64 + linux/arm64 images, macOS arm64 tarball); it is not

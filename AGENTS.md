@@ -1,6 +1,6 @@
 # AGENTS.md — working guide for coding agents
 
-Applies to this entire repository. Read `README.md`, `docs/ADR-002.md`, `docs/FORGE.md`, `docs/PROTOCOLS.md`, `docs/QUALIFICATION.md`, and `SECURITY.md` before changing an interface or a safety property.
+Applies to this entire repository. Read `README.md`, `docs/HANDOFF.md` (current status and queue), `docs/ADR-002.md`, `docs/FORGE.md`, `docs/PROTOCOLS.md`, `docs/QUALIFICATION.md`, and `SECURITY.md` before changing an interface or a safety property.
 
 ## Mission and intended users
 
@@ -12,7 +12,7 @@ Examples and fixtures must be entirely generic: synthetic reports, blank forms, 
 
 ## Current baseline (do not overclaim)
 
-- `0.3.2` (`< 0.5.0` dev milestone; SemVer prerelease suffixes start at `>= 0.5.0`): Rust 1.100.0 runtime; capability registry; qpdf **12.x >=12.4.2** adapter (only **12.4.2** qualified; other accepted versions warn; CI/OCI require exact via `ANPDF_QPDF_EXACT=1`); inspect/validate with annotation counts, primary-document merge/extract/split/removal with per-artifact preservation reporting and optional required aspects, compression with original-byte fallback unless `allowLargerOutput:true`, plus size-targeted compression (`maxOutputBytes`, `compressionLevel` 1–3, `onTargetMiss`) via a subprocess-isolated native resample worker (lopdf + image + flate2); positional CLI shorthand with terminal-aware usage output (piped stdin still accepts JSON requests); and `bash`/`zsh`/`fish` shell completions. The synthetic benchmark corpus/harness compares external engines without extending the product contract.
+- `0.4.1` staged on `main` (`< 0.5.0` dev milestone; SemVer prerelease suffixes start at `>= 0.5.0`; latest published build `v0.4.0`): Rust 1.100.0 runtime; capability registry; qpdf **12.x >=12.4.2** adapter (only **12.4.2** qualified; other accepted versions warn; CI/OCI require exact via `ANPDF_QPDF_EXACT=1`); inspect/validate with annotation counts, primary-document merge/extract/split/removal with per-artifact preservation reporting and optional required aspects, compression with original-byte fallback unless `allowLargerOutput:true`, plus size-targeted compression (`maxOutputBytes`, `compressionLevel` 1–3, `onTargetMiss`) via a subprocess-isolated native resample worker (lopdf + image + flate2) and automatic page rasterization on a descent miss (`pageRasterization`); AES-256 R6 `encryptPdf`/`decryptPdf` with secrets confined to prompts, `chmod 600` files, stdin and request bodies (never argv/env/logs); clap-built CLI with positional shorthand, terminal-aware usage/progress output (piped stdin still accepts JSON requests); and `bash`/`zsh`/`fish` shell completions. The synthetic benchmark corpus/harness compares external engines without extending the product contract. Current status, roadmap and the prioritized queue live in `docs/HANDOFF.md`.
 - CLI JSON, optional authenticated **loopback-only** HTTP, and local MCP stdio use the same validated dispatcher.
 - Standard builds/releases use dynamically loaded PDFium for `extractText` and `renderPage`; qpdf remains structural. `--no-default-features` disables PDFium. Standard release recipes bundle the pinned library and notices; source builds must configure or install it. PDFOxide is a separate preview tag, not part of the standard release.
 - `contracts/v1/openapi.json` is canonical. Pinned upstream Cloudflare **Forge 0.2.0** generates qualified TypeScript/MCP/Cap'n Web artifacts at build time. The Rust runtime adapters are **handwritten**, not Forge-generated Rust.
@@ -25,6 +25,10 @@ Examples and fixtures must be entirely generic: synthetic reports, blank forms, 
 - `src/contract.rs`, `src/lib.rs`, `src/error.rs`: contract validation, shared dispatcher, canonical errors.
 - `src/main.rs`, `src/http.rs`, `src/mcp.rs`: CLI and transport adapters.
 - `src/backend.rs`, `src/filesystem.rs`: qpdf adapter, process controls, path and output policy.
+- `src/planner.rs`: capability registry and engine selection.
+- `src/pdfium.rs`, `src/content.rs`: PDFium worker adapter and content bounds (text/PNG).
+- `src/pdfoxide.rs`: PDFOxide preview worker (feature-gated, non-default).
+- `src/resample.rs`: subprocess-isolated image resample worker for targeted compression.
 - `generated/`, `build/forge-pin.json`, `build/generate.py`: pinned Forge outputs, provenance and regeneration.
 - `fixtures/`, `tests/integration.py`, `src/tests.rs`: synthetic corpus and cross-surface tests.
 - `containers/`, `.github/workflows/`, `docs/BUILD.md`: pending and preliminary OCI/CI qualification.

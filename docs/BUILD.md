@@ -6,9 +6,11 @@ Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on 
 tag pushes except PDFOxide preview tags, and on `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
 tag alignment on tag pushes), so untrusted PRs never receive package or release write permissions.
 
-Current release: **0.3.0** ([v0.3.0](https://github.com/nextexcite/anPDF/releases/tag/v0.3.0)). Its baseline includes the
+Current published release: **0.4.0** ([v0.4.0](https://github.com/nextexcite/anPDF/releases/tag/v0.4.0)); `0.4.1` is staged on `main`, unpublished. Its baseline includes the
 capability registry, default PDFium content operations, qpdf preservation reporting,
-and the synthetic comparison harness in `docs/BENCHMARK.md`.
+size-targeted compression with automatic page rasterization, AES-256 encrypt/decrypt,
+and the synthetic comparison harness in `docs/BENCHMARK.md`. Status and the
+prioritized queue live in `docs/HANDOFF.md`.
 
 Versioning convention: `< 0.5.0` tags use clean milestone versions (`0.3.0`, `v0.3.0`); SemVer prerelease identifiers (`-alpha.N`, `-rc.N`) start at `>= 0.5.0`.
 
@@ -26,10 +28,10 @@ Library precedence is `--pdfium-lib` > `ANPDF_PDFIUM_LIB` >
 `<canonical-executable-dir>/libpdfium.{so,dylib}`. Missing libraries leave content
 operations unavailable. The native tarball contains `anpdf`, `libpdfium.dylib`,
 and `PDFIUM_LICENSES/` (upstream LICENSE plus licenses directory). Homebrew installs
-the dylib in `lib/anpdf/` and notices under its documentation directory. Its formula
-URL targets v0.3.0; its all-zero SHA-256 is a deliberate pre-release placeholder,
-not an installable checksum. Replace it after publication as described below;
-the old v0.2.0 tarball lacks PDFium.
+the dylib in `lib/anpdf/` and notices under its documentation directory. The formula
+in the `nextexcite/homebrew-anpdf` tap targets the latest published tarball with its
+real SHA-256 — the release workflow notifies the tap, which updates url/checksum
+itself (formula revision bumps force reinstall when bundled content changes).
 OCI installs `/usr/local/lib/anpdf/libpdfium.so`, sets `ANPDF_PDFIUM_LIB`, and
 carries `/usr/share/licenses/pdfium/`. Binary acquisition is SHA-256 pinned for
 Linux x64/arm64 and macOS arm64; the dynamic library is not statically linked.
@@ -111,8 +113,8 @@ describe that amd64 run, not a cross-platform guarantee. Arm64 requires hosted
 qualification; changing base pins or package versions requires remeasurement.
 
 ```sh
-docker build -f containers/Dockerfile -t anpdf:0.3.0-local .
-sh containers/smoke.sh anpdf:0.3.0-local
+docker build -f containers/Dockerfile -t anpdf:0.4.1-local .
+sh containers/smoke.sh anpdf:0.4.1-local
 ```
 
 The smoke test uses numeric non-root UID `65532`, read-only rootfs, `--network=none`,
@@ -168,7 +170,7 @@ claim that property.
 
 ## Release checklist
 
-For **v0.3.0**, release preparation must not push tags, dispatch publication workflows,
+For the next release (`v<Cargo.toml version>`), release preparation must not push tags, dispatch publication workflows,
 or publish images/assets. Review `CHANGELOG.md`, the version in Cargo.toml/Cargo.lock,
 the Dockerfile `APP_VERSION`, baseline documentation and regenerated contract outputs.
 Keep Forge **0.2.0** and third-party dependency pins unchanged.
@@ -176,7 +178,7 @@ Keep Forge **0.2.0** and third-party dependency pins unchanged.
 Before separately authorizing publication:
 
 1. Dry-run the `prepare` job's version/tag validation with `GITHUB_REF_TYPE=tag`
-   and `GITHUB_REF_NAME=v0.3.0`; reject mismatched tags. Do not execute publish jobs.
+   and `GITHUB_REF_NAME=v<Cargo.toml version>`; reject mismatched tags. Do not execute publish jobs.
 2. Run format, Clippy, tests and builds with default features and
    `--no-default-features`; run the qpdf/PDFium cross-surface suite using a bundled
    library layout without `ANPDF_PDFIUM_LIB`. Regenerate licenses without drift,
