@@ -8,7 +8,8 @@ leave only the link.
 
 ## 1. Where the project stands
 
-**Baseline:** `0.4.2` adds opt-in layered compression to the 0.4.x line. See
+**Baseline:** `0.4.3` fixes layered compression target misses and clarifies
+the CLI help. See
 [GitHub Releases](https://github.com/nextexcite/anPDF/releases) for published
 development builds; they are not production-qualified. The PDFOxide engine ships separately as
 [v0.3.0-pdfoxide-preview.1](https://github.com/nextexcite/anPDF/releases/tag/v0.3.0-pdfoxide-preview.1);

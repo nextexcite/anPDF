@@ -4,6 +4,16 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
+## [0.4.3] - 2026-11-23
+
+### Fixed
+- Layered compression no longer falls through to image downsampling on a size
+  target miss. The warning explains that layered mode stays at 400 DPI.
+
+### Changed
+- `anpdf compress --help` explains the compression modes, defaults, target
+  units, and option combinations, with runnable examples.
+
 ## [0.4.2] - 2026-11-23
 
 ### Added
@@ -214,6 +224,7 @@ SemVer prerelease suffixes, not production-qualified releases.
 ### Changed
 - Development milestone versioning without prerelease suffixes below 0.5.0.
 
+[0.4.3]: https://github.com/nextexcite/anPDF/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/nextexcite/anPDF/compare/v0.4.1...v0.4.2
 [0.5.0-alpha.1]: https://github.com/nextexcite/anPDF/compare/v0.4.1...v0.5.0-alpha.1
 [0.4.1]: https://github.com/nextexcite/anPDF/compare/v0.4.0...v0.4.1

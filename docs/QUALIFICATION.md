@@ -4,6 +4,11 @@ Only the newest section describes the current baseline; older sections are
 historical evidence kept for audit. Status and the prioritized queue live in
 [HANDOFF.md](HANDOFF.md).
 
+## 0.4.3
+
+Adds cross-surface coverage for a layered compression target miss: the
+fixed-resolution result is returned without an image-downsampling pass.
+
 ## 0.4.2
 
 Brings opt-in layered compression to the 0.4.x line. The tag workflow runs full

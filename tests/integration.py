@@ -372,7 +372,7 @@ def run(routine=False):
         ])
         if pdfium:
             corpus.extend([
-              ('compress',{'input':{'path':'layered-fixture.pdf'},'output':{'path':'layered-result.pdf'},'mode':'layered'},None),
+              ('compress',{'input':{'path':'layered-fixture.pdf'},'output':{'path':'layered-result.pdf'},'mode':'layered','maxOutputBytes':1},None),
               ('compress',{'input':{'path':'one.pdf'},'output':{'path':'layered-miss.pdf'},'mode':'layered','maxOutputBytes':1,'onTargetMiss':'error'},'SIZE_TARGET_UNMET'),
               ('compress',{'input':{'path':'traced-rotated.pdf'},'output':{'path':'rotated-target.pdf'},'maxOutputBytes':10000},None),
               ('compress',{'input':{'path':'traced-cropped.pdf'},'output':{'path':'cropped-target.pdf'},'maxOutputBytes':10000},None),
@@ -584,6 +584,9 @@ def run(routine=False):
             assert all(len(page.images)==1 for page in rebuilt.pages)
             layered=responses['layered-result.pdf']['result']
             assert layered['mode']=='layered' and 'layeredRasterization' in layered['techniques'],layered
+            assert layered['targetMet'] is False and 'image-downsample' not in layered['techniques'],layered
+            warnings=[w for w in responses['layered-result.pdf']['warnings'] if w['code'] in ('SIZE_TARGET_UNMET','IMAGE_RESAMPLE_LIMITED')]
+            assert len(warnings)==1 and warnings[0]['code']=='SIZE_TARGET_UNMET' and '400 DPI' in warnings[0]['message'],warnings
             layered_path=roots['cli']/'layered-result.pdf'
             doc=PdfReader(layered_path)
             xobjects=doc.pages[0]['/Resources']['/XObject']

@@ -355,29 +355,29 @@ struct CompressFlags {
     out: Out,
     #[arg(long, value_name = "mode", allow_hyphen_values = true,
         value_parser = clap::builder::PossibleValuesParser::new(["lossless", "lossy", "layered"]),
-        help = "Compression mode: lossless (streams) | lossy (images) | layered (eligible traced pages)")]
+        help = "Compression strategy (see Modes below)")]
     mode: Option<String>,
     #[arg(
         long,
         value_name = "0-100",
         allow_hyphen_values = true,
-        help = "JPEG quality 0-100 (lossy mode)"
+        help = "Initial JPEG quality (lossy mode only; default: 80)"
     )]
     jpeg_quality: Option<String>,
     #[arg(long, value_name = "1-3", allow_hyphen_values = true,
         value_parser = clap::builder::PossibleValuesParser::new(["1", "2", "3"]),
-        help = "Resample floor: 1 lossless, 2 ≈200dpi, 3 ≈120dpi")]
+        help = "Resampling level: 1 keeps pixels, 2 ≈200 DPI, 3 ≈120 DPI")]
     level: Option<String>,
     #[arg(
         long,
         value_name = "N",
         allow_hyphen_values = true,
-        help = "Output size ceiling; SI units decimal (300000, 300kB, 3MB, 500k), IEC binary (3MiB, 512KiB)"
+        help = "Target size in bytes, decimal (3MB), or binary (3MiB)"
     )]
     max_bytes: Option<String>,
     #[arg(long, value_name = "behavior", allow_hyphen_values = true,
         value_parser = clap::builder::PossibleValuesParser::new(["bestEffort", "error"]),
-        help = "Size-target miss behavior: bestEffort|error")]
+        help = "If over target: write the smallest result (default) or fail without writing")]
     on_target_miss: Option<String>,
     #[arg(long, help = "Keep compressed bytes even when not smaller")]
     allow_larger: bool,
@@ -524,7 +524,24 @@ enum Cmd {
     RemovePages(RemoveArgs),
     #[command(about = "Compress PDF streams, images, or eligible traced pages",
         help_template = SUB_HELP_TEMPLATE,
-        after_help = "Operation: compressPdf; output defaults to <name>-compressed.pdf.\nLayered mode requires PDFium, tries eligible traced pages at 400 DPI, and\nchecks --max-bytes without lowering DPI. It does not accept --level or\n--jpeg-quality. Otherwise --level sets the descent floor (1 lossless,\n2 ≈200dpi, 3 ≈120dpi). --on-target-miss picks bestEffort|error.\n--max-bytes accepts human sizes: SI units (300kB, 3MB, 500k) are decimal;\nKiB, MiB, GiB are binary.\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"compressed.pdf\"},\"mode\":\"lossless\"}")]
+        after_help = "Modes:
+  lossless  Recompress streams without degrading images (default without a
+            size target or --level 2/3). With --max-bytes, use --level 1
+            to guarantee lossless output.
+  lossy     Recompress images. With a target, try lower resolutions and, if
+            needed, rasterize eligible traced pages. Levels 2 and 3 limit
+            how far image resolution can drop.
+  layered   With PDFium, rebuild eligible traced pages at 400 DPI using
+            separate ink, grayscale, and color layers. Rebuilt pages lose
+            vector detail. No lower-resolution retries; --level and
+            --jpeg-quality are not accepted.
+
+Examples:
+  anpdf compress input.pdf
+  anpdf compress input.pdf output.pdf --mode layered --max-bytes 3MB
+  anpdf compress input.pdf output.pdf --level 1 --max-bytes 3MiB
+
+JSON schema: anpdf schema compressPdf")]
     Compress(CompressArgs),
     #[command(about = "Extract embedded text and bounding boxes (optional engine)",
         help_template = SUB_HELP_TEMPLATE,

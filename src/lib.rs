@@ -562,10 +562,11 @@ impl Dispatcher {
                         None,
                     );
                 }
-                // Rungs the ladder may touch: a bare target descends to the
-                // level floor (default 120dpi); a level without a target pins
-                // exactly its rung; level 1 never resamples.
+                // Layered mode has its own fixed-resolution pass. Otherwise a
+                // target can descend to the level floor (72 DPI by default),
+                // and a level without a target pins exactly its rung.
                 let rungs_base: &[(u32, u8)] = match (spec.max_output_bytes.is_some(), spec.level) {
+                    _ if spec.layered => &[],
                     (_, Some(1)) => &[],
                     (true, Some(2)) => &LADDER[..2],
                     (true, Some(3)) => &LADDER[..4],
@@ -910,7 +911,11 @@ impl Dispatcher {
                     }
                     warnings.push(json!({
                         "code": "SIZE_TARGET_UNMET",
-                        "message": "Compressed output exceeds maxOutputBytes; smallest achieved bytes were published."
+                        "message": if spec.layered {
+                            "Layered compression uses a fixed 400 DPI for rebuilt pages. The smallest result exceeded the size target and was written without trying lower resolutions."
+                        } else {
+                            "Compressed output exceeds maxOutputBytes; smallest achieved bytes were published."
+                        }
                     }));
                     // Image resampling only shrinks embedded image bytes; when
                     // most bytes are non-image content (page drawing
