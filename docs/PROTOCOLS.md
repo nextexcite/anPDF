@@ -162,25 +162,35 @@ exercised by that harness, not by an external client certification suite.
 ## Password protection
 
 `encryptPdf` applies standard AES-256 encryption (PDF revision 6) through the
-qualified qpdf backend: a required non-empty `password` becomes the document's
-user password and an optional `ownerPassword` the permissions password — when
-omitted a random unguessable owner is generated, never an empty backdoor.
-`decryptPdf` removes protection with either password; both operations re-inspect
-the output (encrypt re-opens it with the new password) so page count, encryption
-state and forms/signatures status are verified post-rewrite, and preservation
-evidence hashing runs through encryption. Passwords are bounded to the PDF
-specification's 127 UTF-8 bytes.
+qualified qpdf backend: `password` becomes the document's user password and an
+optional `ownerPassword` the permissions password — when omitted a random
+unguessable owner is generated, never an empty backdoor. An intentional empty
+`password` produces an owner-only document that opens without a password; it is
+accepted (with an `EMPTY_OPEN_PASSWORD` warning that discloses the loss of
+confidentiality), while an omitted or cancelled password fails closed.
+`decryptPdf` removes protection with either password, including the empty one
+an owner-only file carries; both operations re-inspect the output (encrypt
+re-opens it with the new password) so page count, encryption state and
+forms/signatures status are verified post-rewrite, and preservation evidence
+hashing runs through encryption. Passwords are bounded to the PDF
+specification's 127 UTF-8 *bytes* — multi-byte characters count several bytes
+each — and a NUL byte is rejected outright: the backend's C-string handling
+would silently truncate it and could encrypt to a password shorter than
+supplied.
 
-Secrets never appear in argv — including `--request-json`, which refuses literal
-`password`/`ownerPassword` fields — environment, logs, errors or telemetry. The
-backend hands them to qpdf through an inherited anonymous descriptor (`memfd`
-on Linux) or a private `0600` staging file created before write and cleaned on
-every exit path. Interactive CLI sessions get echo-disabled prompts; scripts use
-`--password-file`/`--owner-password-file` (files must be `chmod 600`),
-`--request-file` or piped stdin. HTTP and MCP requests carry the secret fields in
-the request body; the contract intentionally defines no secret file-path fields,
-so a remote caller cannot name a local filesystem path to read. Signed inputs are
-rejected; forms/XFA ride through intact.
+Secrets never appear in subprocess argv — `--request-json` refuses literal
+`password`/`ownerPassword` fields — environment, logs, errors or telemetry.
+argv is exposed to the operating system at launch, so that refusal cannot undo
+an inline exposure; it is a guardrail toward the safe channels, not a secrecy
+guarantee. The backend hands them to qpdf through an inherited anonymous
+descriptor (`memfd` on Linux) or a private `0600` staging file created before
+write and cleaned on every exit path, inside a job JSON document so passwords
+with line breaks reach qpdf intact. Interactive CLI sessions get echo-disabled
+prompts; scripts use `--password-file`/`--owner-password-file` (files must be
+`chmod 600`), `--request-file` or piped stdin. HTTP and MCP requests carry the
+secret fields in the request body; the contract intentionally defines no secret
+file-path fields, so a remote caller cannot name a local filesystem path to
+read. Signed inputs are rejected; forms/XFA ride through intact.
 
 ## Preservation and compression
 

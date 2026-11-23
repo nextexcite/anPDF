@@ -44,10 +44,15 @@ Encrypted inputs fail explicitly except under `encryptPdf`/`decryptPdf`, which
 apply and remove standard AES-256 (revision 6) passwords. Supplied secrets stay
 out of process arguments, environment, logs and errors: CLI prompts disable
 terminal echo, `--password-file`/`--owner-password-file` require `chmod 600`
-files, `--request-json` refuses literal password fields, and qpdf receives
-secrets only through an inherited anonymous descriptor or a private staging
-file deleted on every exit path. HTTP/MCP requests carry password fields in the
-body only; no request field names a filesystem path for a secret.
+files, `--request-json` refuses literal password fields (argv was already
+exposed at launch — the refusal steers toward safe channels, it cannot undo
+that exposure), and qpdf receives secrets only inside a job JSON carried on an
+inherited anonymous descriptor or a private staging file deleted on every exit
+path. Passwords are bounded at 127 UTF-8 bytes; NUL bytes are rejected because
+the transport would truncate them silently. An empty user password is valid
+(owner-only files open with no password) and disclosed via
+`EMPTY_OPEN_PASSWORD`. HTTP/MCP requests carry password fields in the body
+only; no request field names a filesystem path for a secret.
 Transformations refuse detected signatures,
 AcroForms/XFA, or unknown preservation status. Signature presence detection is
 conservative structural detection, not certificate trust evaluation. qpdf's warning
