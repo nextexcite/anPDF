@@ -4,6 +4,21 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
+## [0.4.1] - Unreleased
+
+### Changed
+- A `--max-bytes` miss now reports what page rasterization actually did:
+  `IMAGE_RESAMPLE_LIMITED` states whether the pass ran, was skipped because
+  no PDFium renderer is available (e.g. a package that omits the shared
+  library), exceeded the deadline, found no eligible traced-graphics pages,
+  or was skipped because the document carries attachments. Raster-pass
+  worker errors degrade to best-effort output plus a named reason instead
+  of aborting the compression.
+- Terminal progress during `compress` reports measured work, not
+  predictions: lossless-pass bytes vs the target, each applied rung's
+  finished bytes, rasterize eligibility and rebuilt-byte totals, and the
+  verified final size.
+
 ## [0.4.0] - 2026-11-23
 
 ### Added

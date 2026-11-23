@@ -9,9 +9,11 @@ decisions, that one lists possibilities).
 
 Versioning of claims below: **released v0.3.4** covers the scaled deadline,
 decode-once worker, exact rung bytes with interpolated midpoints, and
-best-effort publish on a miss. **On main, not yet released:** automatic page
-rasterization on a descent miss (technique `pageRasterization`). Unless a claim
-says otherwise, mechanisms listed as shipped are invoked code, not proposals.
+best-effort publish on a miss. **Released v0.4.0:** automatic page
+rasterization on a descent miss (technique `pageRasterization`).
+**Staged 0.4.1 (this branch, unreleased):** raster-pass outcome reporting and
+measured terminal progress. Unless a claim says otherwise, mechanisms listed
+as shipped are invoked code, not proposals.
 
 ## 1. What runs today
 
@@ -96,6 +98,32 @@ One entry per document class or reported failure, using §5's template.
 - **Adopted:** yes, automatic on descent miss (main).
 - **Known limits:** whole-page granularity; zoom fidelity bounded by rung DPI;
   elapsed on the order of a minute for a large traced doc (deadline-bounded).
+
+### Case 1 — distributed package without the renderer silently skips rasterization
+
+- **Class:** environment regression, not a content class — the macOS package
+  installed without `libpdfium` (the v0.4.0 Homebrew formula omitted the
+  bundled `libpdfium.dylib`).
+- **Observed:** `compress --max-bytes` on traced content missed the target
+  with `SIZE_TARGET_UNMET` + `IMAGE_RESAMPLE_LIMITED` claiming
+  `pageRasterization` "reduces them further" — the pass never ran because
+  `resolve_pdfium` found no library, so `plan.rasterizer` was `None` and the
+  gate skipped it silently. A rasterize worker error would likewise have been
+  invisible: `TIMEOUT` was swallowed and other codes aborted the whole job.
+- **Verified builds:** reproduced on the local release build with
+  `ANPDF_PDFIUM_LIB` unset — identical miss warnings, rasterize never
+  attempted; with the library present, the same fixture rasterizes and meets
+  target. Not yet proven: the literal macOS arm64 tarball (this environment
+  is Linux; the package regression test simulates absence via env).
+- **Adopted fix (0.4.1):** a miss now names what the pass did —
+  `skipped: no PDFium renderer is available` / `exceeded the processing
+  deadline` / `the renderer failed (<code>)` / `no eligible traced-graphics
+  pages` / `document carries attachments` — inside `IMAGE_RESAMPLE_LIMITED`,
+  and raster worker errors degrade to best-effort + the named reason instead
+  of aborting. Terminal progress shows measured candidate bytes per step.
+- **Lesson:** gating a pass on an optional capability must surface the gate's
+  outcome; a suggestion that reads like an available action is a bug report
+  waiting to happen.
 
 ### Untested classes — next entries needed
 

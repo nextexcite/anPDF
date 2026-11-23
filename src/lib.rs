@@ -486,6 +486,13 @@ impl Dispatcher {
                 }
                 let mut candidate = out.clone();
                 let mut candidate_bytes = std::fs::metadata(&out)?.len();
+                if let Some(target) = spec.max_output_bytes {
+                    control.report(
+                        "compress",
+                        format!("lossless pass measured {candidate_bytes} bytes (target {target})"),
+                        None,
+                    );
+                }
                 // Rungs the ladder may touch: a bare target descends to the
                 // level floor (default 120dpi); a level without a target pins
                 // exactly its rung; level 1 never resamples.
@@ -601,6 +608,20 @@ impl Dispatcher {
                                     Err(e) => return Err(e),
                                 }
                                 let finished_bytes = std::fs::metadata(&finished)?.len();
+                                control.report(
+                                    "resample",
+                                    format!(
+                                        "rung applied: {finished_bytes} bytes{}",
+                                        match spec.max_output_bytes {
+                                            Some(t) if finished_bytes <= t => {
+                                                format!(" — meets the {t}-byte target")
+                                            }
+                                            Some(t) => format!(" — above the {t}-byte target"),
+                                            None => String::new(),
+                                        }
+                                    ),
+                                    None,
+                                );
                                 if !techniques.contains(&"image-downsample") {
                                     techniques.push("image-downsample");
                                 }
@@ -636,72 +657,132 @@ impl Dispatcher {
                 // eligible pages as JPEGs in place; MediaBox, page dicts and
                 // all other objects stay untouched. Lossless level 1 and
                 // documents with attachments keep original bytes.
+                // A miss without the pass says why: no renderer, a spent
+                // deadline, a worker error, or no eligible pages.
+                let mut raster_outcome: Option<String> = None;
                 if spec.lossy
                     && spec.max_output_bytes.is_some_and(|t| candidate_bytes > t)
                     && !rungs.is_empty()
-                    && reports[0]["hasAttachments"] != true
-                    && let Some(rasterizer) = plan.rasterizer
                 {
-                    let raw = staging.path().join("raster.raw.pdf");
-                    control.report(
-                        "rasterize",
-                        format!("classifying {total_pages} pages and rasterizing traced content"),
-                        None,
-                    );
-                    // Rasterize measures one render per rung; the
-                    // interpolated descent rungs double the trial encodes
-                    // for little selection gain, so stride the ladder.
-                    let mut raster_rungs: Vec<(u32, u8)> =
-                        rungs.iter().step_by(2).copied().collect();
-                    if raster_rungs.last() != rungs.last() {
-                        raster_rungs.push(*rungs.last().unwrap());
-                    }
-                    match rasterizer.rasterize_document(
-                        &candidate,
-                        &raw,
-                        &raster_rungs,
-                        spec.max_output_bytes,
-                        control,
-                    ) {
-                        Err(e) if e.0 == "TIMEOUT" => {}
-                        Err(e) => return Err(e),
-                        Ok(summary) => {
-                            let rasterized = summary["rasterizedPages"]
-                                .as_array()
-                                .cloned()
-                                .unwrap_or_default();
-                            let skipped = summary["skippedPages"]
-                                .as_array()
-                                .cloned()
-                                .unwrap_or_default();
-                            if !skipped.is_empty() {
-                                warnings.push(json!({
-                                    "code": "PAGE_RASTERIZATION_SKIPPED",
-                                    "message": format!("{} pages kept original bytes (interactive, text or uncertain content preserved).", skipped.len())
-                                }));
+                    if reports[0]["hasAttachments"] == true {
+                        raster_outcome = Some("skipped: the document carries attachments".into());
+                    } else {
+                        match plan.rasterizer {
+                            None => {
+                                raster_outcome =
+                                    Some("skipped: no PDFium renderer is available".into());
+                                control.report(
+                                    "rasterize",
+                                    "skipped: no PDFium renderer is available",
+                                    None,
+                                );
                             }
-                            if !rasterized.is_empty() {
-                                let finished = staging.path().join("raster.pdf");
-                                control.report("compress", "applying structural finish", None);
-                                match plan.structural.compress(
+                            Some(rasterizer) => {
+                                let raw = staging.path().join("raster.raw.pdf");
+                                control.report(
+                                    "rasterize",
+                                    format!(
+                                        "classifying {total_pages} pages and rasterizing traced content"
+                                    ),
+                                    None,
+                                );
+                                // Rasterize measures one render per rung; the
+                                // interpolated descent rungs double the trial encodes
+                                // for little selection gain, so stride the ladder.
+                                let mut raster_rungs: Vec<(u32, u8)> =
+                                    rungs.iter().step_by(2).copied().collect();
+                                if raster_rungs.last() != rungs.last() {
+                                    raster_rungs.push(*rungs.last().unwrap());
+                                }
+                                match rasterizer.rasterize_document(
+                                    &candidate,
                                     &raw,
-                                    CompressMode::Lossless,
-                                    &finished,
+                                    &raster_rungs,
+                                    spec.max_output_bytes,
                                     control,
                                 ) {
-                                    Ok(w) => warnings.extend(w),
-                                    Err(e) if e.0 == "TIMEOUT" => {}
-                                    Err(e) => return Err(e),
-                                }
-                                let finished_bytes = std::fs::metadata(&finished)?.len();
-                                if finished_bytes < candidate_bytes {
-                                    candidate = finished;
-                                    candidate_bytes = finished_bytes;
-                                    techniques.push("pageRasterization");
-                                    warnings.push(json!({
-                                        "code": "PAGE_RASTERIZED",
-                                        "message": format!("{} traced-graphics pages were rebuilt as raster images; fine zoom detail on them is lost.", rasterized.len())
-                                    }));
+                                    Err(e) if e.0 == "TIMEOUT" => {
+                                        raster_outcome = Some(
+                                            "skipped: it exceeded the processing deadline".into(),
+                                        );
+                                        control.report(
+                                            "rasterize",
+                                            "skipped: exceeded the processing deadline",
+                                            None,
+                                        );
+                                    }
+                                    Err(e) => {
+                                        raster_outcome =
+                                            Some(format!("skipped: the renderer failed ({})", e.0));
+                                        control.report(
+                                            "rasterize",
+                                            format!("skipped: renderer failed ({})", e.0),
+                                            None,
+                                        );
+                                    }
+                                    Ok(summary) => {
+                                        let rasterized = summary["rasterizedPages"]
+                                            .as_array()
+                                            .cloned()
+                                            .unwrap_or_default();
+                                        let skipped = summary["skippedPages"]
+                                            .as_array()
+                                            .cloned()
+                                            .unwrap_or_default();
+                                        if !skipped.is_empty() {
+                                            warnings.push(json!({
+                                            "code": "PAGE_RASTERIZATION_SKIPPED",
+                                            "message": format!("{} pages kept original bytes (interactive, text or uncertain content preserved).", skipped.len())
+                                        }));
+                                        }
+                                        if !rasterized.is_empty() {
+                                            let finished = staging.path().join("raster.pdf");
+                                            control.report(
+                                                "compress",
+                                                "applying structural finish",
+                                                None,
+                                            );
+                                            match plan.structural.compress(
+                                                &raw,
+                                                CompressMode::Lossless,
+                                                &finished,
+                                                control,
+                                            ) {
+                                                Ok(w) => warnings.extend(w),
+                                                Err(e) if e.0 == "TIMEOUT" => {}
+                                                Err(e) => return Err(e),
+                                            }
+                                            let finished_bytes =
+                                                std::fs::metadata(&finished)?.len();
+                                            if finished_bytes < candidate_bytes {
+                                                candidate = finished;
+                                                candidate_bytes = finished_bytes;
+                                                control.report(
+                                                    "rasterize",
+                                                    format!(
+                                                        "{} pages rebuilt: {finished_bytes} bytes",
+                                                        rasterized.len()
+                                                    ),
+                                                    None,
+                                                );
+                                                techniques.push("pageRasterization");
+                                                warnings.push(json!({
+                                                "code": "PAGE_RASTERIZED",
+                                                "message": format!("{} traced-graphics pages were rebuilt as raster images; fine zoom detail on them is lost.", rasterized.len())
+                                            }));
+                                            }
+                                        } else {
+                                            raster_outcome = Some(
+                                                "ran: no eligible traced-graphics pages were found"
+                                                    .into(),
+                                            );
+                                            control.report(
+                                                "rasterize",
+                                                "no eligible traced-graphics pages found",
+                                                None,
+                                            );
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -711,7 +792,11 @@ impl Dispatcher {
                 // publish path: a deadline spent mid-descent must not strand
                 // it. Verification runs under a short grace window bounded
                 // to the inspect; cancellation still aborts at commit.
-                control.report("verify", "checking output structure", None);
+                control.report(
+                    "verify",
+                    format!("checking output structure ({candidate_bytes} bytes)"),
+                    None,
+                );
                 let mut grace = control.clone();
                 grace.deadline = Instant::now() + Duration::from_secs(60);
                 let (report, w) = plan.structural.inspect(&candidate, None, &grace, false)?;
@@ -761,14 +846,18 @@ impl Dispatcher {
                     // Image resampling only shrinks embedded image bytes; when
                     // most bytes are non-image content (page drawing
                     // instructions, fonts or other streams), name that limiter
-                    // and the opt-in rasterization route.
+                    // and what the raster pass actually did — a miss must
+                    // explain the skip, not advertise a route that never ran.
                     if let Some(summary) = &last_summary {
                         let image_bytes = summary["imageBytesIn"].as_u64().unwrap_or(0);
                         let non_image = summary["nonImageBytes"].as_u64().unwrap_or(0);
                         if non_image > image_bytes.max(1) * 3 {
+                            let outcome = raster_outcome.unwrap_or_else(|| {
+                                "ran: traced-graphics pages were rebuilt but the output still exceeds the target".into()
+                            });
                             warnings.push(json!({
                                 "code": "IMAGE_RESAMPLE_LIMITED",
-                                "message": "Image resampling leaves most bytes unchanged: the document is mostly non-image content (drawing instructions, fonts or other streams). Rebuilding traced-graphics pages as images (pageRasterization) reduces them further."
+                                "message": format!("Image resampling leaves most bytes unchanged: the document is mostly non-image content (drawing instructions, fonts or other streams). Page rasterization {outcome}.")
                             }));
                         }
                     }

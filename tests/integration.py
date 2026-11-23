@@ -544,6 +544,16 @@ def run():
             assert 'pageRasterization' not in tagged['techniques'],tagged
             ti2=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'tagged-target.pdf'}})]))
             assert ti2['result']['pageCount']==1
+            # A build without the PDFium renderer (e.g. a package that omits
+            # the shared library) still explains why page rasterization did
+            # not run instead of advertising it.
+            env=dict(os.environ);env['ANPDF_PDFIUM_LIB']='/nonexistent/libpdfium.so'
+            norend=subprocess.run([str(BIN),'compress','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'traced.pdf'},'output':{'path':'traced-norend.pdf'},'maxOutputBytes':50000})],capture_output=True,text=True,env=env)
+            assert norend.returncode==0,(norend.returncode,norend.stderr)
+            nr=json.loads(norend.stdout)
+            assert nr['result']['targetMet'] is False and 'pageRasterization' not in nr['result']['techniques'],nr
+            limited=[w for w in nr['warnings'] if w['code']=='IMAGE_RESAMPLE_LIMITED']
+            assert limited and 'no PDFium renderer' in limited[0]['message'],nr['warnings']
         for root in roots.values():
             assert not (root/'resampled-err.pdf').exists()
             assert digest(root/'resampled.pdf')!=digest(root/'oversampled.pdf')
