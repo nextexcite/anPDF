@@ -98,9 +98,11 @@ root adapts to the files' common directory (--root pins it); JSON requests
 stay relative to --root. A full JSON request may instead be passed via
 --request-json, --request-file or piped stdin; a bare operation on a
 terminal prints usage instead of blocking on stdin. encrypt/decrypt never
-take a password inline — argv is machine-readable — so a terminal prompts
-hidden on /dev/tty, and scripts use a private --password-file/--owner-
--password-file, --request-file or piped stdin carrying the JSON fields.
+take a password inline — argv is already exposed to the OS at launch and
+--request-json refuses password fields (without echoing them) — so a
+terminal prompts hidden on /dev/tty, and scripts use a private
+--password-file/--owner-password-file, --request-file or piped stdin
+carrying the JSON fields.
 
 COMMON OPTIONS:
   -o, --output <path>  Output path
@@ -113,7 +115,8 @@ COMMON OPTIONS:
   --pdfium-lib <path>  Optional PDFium dynamic library (overrides ANPDF_PDFIUM_LIB)
   --request-json <str> Inline JSON request payload (or pass JSON on stdin)
   --request-file <f>   Read JSON request payload from file
-  --password-file <f>  Private (chmod 600) file with the user password — encrypt/decrypt
+  --password-file <f>  Private (chmod 600) file; first line is the user password —
+                       encrypt/decrypt (a lone newline supplies an empty password)
   --owner-password-file <f> Private file with the optional owner password — encrypt
   --dry-run            Validate request and destination policy without processing the PDF
   --json               On a terminal, print the JSON result envelope instead of the summary
@@ -533,7 +536,7 @@ enum Cmd {
     RenderPage(RenderArgs),
     #[command(about = "Encrypt a PDF with AES-256 (user password, optional owner)",
         help_template = SUB_HELP_TEMPLATE,
-        after_help = "Operation: encryptPdf; output defaults to <name>-encrypted.pdf.\nPasswords never go inline — omit --password-file on a terminal for a hidden\nprompt, or use a private file, --request-file or piped stdin JSON fields\n\"password\"/\"ownerPassword\"; an omitted or blank owner generates a random one.\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"locked.pdf\"}}")]
+        after_help = "Operation: encryptPdf; output defaults to <name>-encrypted.pdf.\nPasswords never go inline — omit --password-file on a terminal for a hidden\nprompt (a bare Enter sets an intentionally empty password), or use a\nprivate file, --request-file or piped stdin JSON fields \"password\"/\n\"ownerPassword\"; an omitted owner — or a blank prompt answer — generates\na random one.\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"locked.pdf\"}}")]
     Encrypt(EncryptArgs),
     #[command(about = "Decrypt a password-protected PDF (password required)",
         help_template = SUB_HELP_TEMPLATE,
@@ -791,7 +794,11 @@ fn clap_error(command: &str, e: clap::Error) -> Error {
             if arg.starts_with('-') {
                 let hint = suggestion(&text, arg);
                 if KNOWN_FLAGS.contains(&arg) {
-                    if matches!(arg, "--password-file" | "--owner-password-file") {
+                    if arg == "--owner-password-file" {
+                        bad(format!(
+                            "{arg} applies to encrypt only — see 'anpdf help {command}'"
+                        ))
+                    } else if arg == "--password-file" {
                         bad(format!(
                             "{arg} is only valid for encrypt and decrypt — see 'anpdf help {command}'"
                         ))
@@ -1514,9 +1521,17 @@ fn request_from_positionals(command: &str, positionals: &[String], cli: &CliArgs
                 }
                 (Some(output), None) => output_value(output, cli.replace),
                 (None, Some(path)) => output_value(path, cli.replace),
-                (None, None) => {
-                    output_value(&derived_output(&positionals[0], command), cli.replace)
-                }
+                (None, None) => output_value(
+                    &derived_output(
+                        &positionals[0],
+                        if command == "encrypt" {
+                            "encrypted"
+                        } else {
+                            "decrypted"
+                        },
+                    ),
+                    cli.replace,
+                ),
             };
             serde_json::json!({"input": {"path": positionals[0]}, "output": output})
         }
@@ -2031,24 +2046,26 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
     Ok(Action::Run(o))
 }
 
-/// `--request-json` puts its payload on argv, which every process on the
-/// machine can list — secrets must arrive through the hidden prompt, a
-/// private --password-file/--owner-password-file, --request-file or piped
-/// stdin instead. Never echoes the rejected payload.
+/// `--request-json` puts its payload on argv: the OS and shell record it
+/// when the process launches, so anPDF refuses literal secrets there —
+/// without echoing them — while being honest that refusal cannot undo
+/// the exposure. Secrets arrive through the hidden prompt, a private
+/// --password-file/--owner-password-file, --request-file or piped stdin.
 fn reject_inline_secrets(raw: &str) -> Result<()> {
     let Ok(v) = serde_json::from_str::<Value>(raw) else {
         return Ok(());
     };
     if v.get("password").is_some() || v.get("ownerPassword").is_some() {
         return Err(bad(
-            "--request-json cannot carry \"password\"/\"ownerPassword\" — argv is machine-readable; use a hidden prompt, --password-file/--owner-password-file, --request-file or piped stdin",
+            "--request-json cannot carry \"password\"/\"ownerPassword\" — argv was already visible when the process launched; use a hidden prompt, --password-file/--owner-password-file, --request-file or piped stdin",
         ));
     }
     Ok(())
 }
 
 /// First line of a private (chmod 600) secret file; bounded read, trailing
-/// newline stripped.
+/// newline stripped. A lone newline supplies an intentionally empty
+/// password; a zero-byte file supplies nothing and is refused.
 fn read_secret_file(flag: &str, path: &str) -> Result<String> {
     let file = std::fs::File::open(path).map_err(|e| Error::io(&e, format!("{flag} '{path}'")))?;
     let meta = file.metadata().map_err(|e| Error::io(&e, path))?;
@@ -2062,12 +2079,11 @@ fn read_secret_file(flag: &str, path: &str) -> Result<String> {
     if bytes.len() > 1024 {
         return Err(bad(format!("{flag} '{path}' exceeds 1 KiB")));
     }
-    let text = String::from_utf8_lossy(&bytes);
-    let line = text.lines().next().unwrap_or_default();
-    if line.is_empty() {
+    if bytes.is_empty() {
         return Err(bad(format!("{flag} '{path}' is empty")));
     }
-    Ok(line.to_string())
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(text.lines().next().unwrap_or_default().to_string())
 }
 
 /// Hidden prompt on /dev/tty: termios echo off for the entry, restored
@@ -2097,15 +2113,26 @@ fn prompt_secret(prompt: &str) -> Result<String> {
         tty.flush()?;
         let mut line = Vec::new();
         let mut byte = [0u8; 1];
+        let mut terminated = false;
         loop {
             let n = tty.read(&mut byte)?;
-            if n == 0 || byte[0] == b'\n' {
+            if n == 0 {
+                break;
+            }
+            if byte[0] == b'\n' {
+                terminated = true;
                 break;
             }
             line.push(byte[0]);
             if line.len() > 1024 {
                 return Err(bad("password entry too long"));
             }
+        }
+        // A bare Enter is an intentionally empty password (an owner-only
+        // file); EOF without a newline is a cancelled entry, which is
+        // different.
+        if !terminated {
+            return Err(bad("password entry cancelled"));
         }
         Ok(String::from_utf8_lossy(&line)
             .trim_end_matches('\r')
@@ -2145,6 +2172,11 @@ fn fill_protect_secrets(
         }
         return Ok(());
     }
+    // A request body that is not a JSON object fails schema validation in
+    // the dispatcher; indexing a non-object Value would panic instead.
+    if !request.is_object() {
+        return Ok(());
+    }
     let encrypting = command == "encrypt";
     let mut prompted = false;
     if request.get("password").is_none() {
@@ -2167,7 +2199,13 @@ fn fill_protect_secrets(
             "password given twice: request field and --password-file are exclusive",
         ));
     }
-    if !encrypting || request.get("ownerPassword").is_some() {
+    if !encrypting {
+        if owner_password_file.is_some() {
+            return Err(bad("--owner-password-file applies to encrypt only"));
+        }
+        return Ok(());
+    }
+    if request.get("ownerPassword").is_some() {
         if owner_password_file.is_some() {
             return Err(bad(
                 "ownerPassword given twice: request field and --owner-password-file are exclusive",
