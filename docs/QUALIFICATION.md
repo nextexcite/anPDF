@@ -4,6 +4,12 @@ Only the newest section describes the current baseline; older sections are
 historical evidence kept for audit. Status and the prioritized queue live in
 [HANDOFF.md](HANDOFF.md).
 
+## 0.4.2
+
+Brings opt-in layered compression to the 0.4.x line. The tag workflow runs full
+automated qualification and notifies the regular Homebrew tap after publication.
+This remains a development milestone, not a production-qualified release.
+
 ## 0.5.0-alpha.1
 
 Adds opt-in layered PDF compression. The tag workflow runs full CI and

@@ -8,7 +8,7 @@ leave only the link.
 
 ## 1. Where the project stands
 
-**Baseline:** `0.5.0-alpha.1` adds opt-in layered compression. See
+**Baseline:** `0.4.2` adds opt-in layered compression to the 0.4.x line. See
 [GitHub Releases](https://github.com/nextexcite/anPDF/releases) for published
 development builds; they are not production-qualified. The PDFOxide engine ships separately as
 [v0.3.0-pdfoxide-preview.1](https://github.com/nextexcite/anPDF/releases/tag/v0.3.0-pdfoxide-preview.1);
@@ -54,8 +54,8 @@ Read these as dated records, not current claims:
 Intention ordering, not commitments. Each phase ships only with the gates in
 [QUALIFICATION.md](QUALIFICATION.md).
 
-1. **Qualify compression.** Close the compression untested-class log as the
-   0.5.0 prerelease line develops.
+1. **Consolidate 0.4.x.** Close the compression untested-class log. Stay on
+   0.4.x until the owner explicitly approves moving to 0.5.0.
 2. **Qualification debt.** linux/arm64 native test run, macOS RSS-limit
    strategy, malformed/fuzz corpus growth, external MCP/HTTP client conformance,
    Forge fidelity gaps, formal OS/backend license sign-off.

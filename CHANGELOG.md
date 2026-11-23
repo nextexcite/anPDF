@@ -4,6 +4,15 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
+## [0.4.2] - 2026-11-23
+
+### Added
+- Brings opt-in `compress --mode layered` to the 0.4.x line, including the
+  regular Homebrew formula. Eligible traced pages use separate bilevel,
+  grayscale, and color layers at 400 DPI; rebuilt pages lose vector detail.
+  If the layered pass times out, best-effort compression keeps the lossless
+  candidate. Cancellation and strict size targets still apply.
+
 ## [0.5.0-alpha.1] - 2026-11-23
 
 ### Added
@@ -205,6 +214,7 @@ SemVer prerelease suffixes, not production-qualified releases.
 ### Changed
 - Development milestone versioning without prerelease suffixes below 0.5.0.
 
+[0.4.2]: https://github.com/nextexcite/anPDF/compare/v0.4.1...v0.4.2
 [0.5.0-alpha.1]: https://github.com/nextexcite/anPDF/compare/v0.4.1...v0.5.0-alpha.1
 [0.4.1]: https://github.com/nextexcite/anPDF/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nextexcite/anPDF/compare/v0.3.4...v0.4.0
