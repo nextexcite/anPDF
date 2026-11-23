@@ -17,6 +17,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod layered;
+
 /// Isolated adapter whose worker executable must handle the `pdfium-worker` subcommand.
 pub struct PdfiumProvider {
     pub library: PathBuf,
@@ -96,6 +98,13 @@ impl RenderPageBackend for PdfiumProvider {
 }
 
 impl PageRasterizer for PdfiumProvider {
+    fn layered_document(&self, input: &Path, output: &Path, control: &Control) -> Result<Value> {
+        self.run(
+            json!({"layered": true, "input": input, "output": output}),
+            control,
+        )
+    }
+
     fn rasterize_document(
         &self,
         input: &Path,
@@ -199,7 +208,12 @@ fn raster_geometry_supported<'a>(doc: &'a Document, mut page: &'a Dictionary) ->
 /// with no text operators, no annotations, and no layer/blend/clip content
 /// that makes region separation uncertain. Returns a skip reason when the
 /// page keeps its original objects.
-fn traced_evidence(doc: &Document, page: &Dictionary, contents: &[u8]) -> Option<&'static str> {
+fn traced_evidence(
+    doc: &Document,
+    page: &Dictionary,
+    contents: &[u8],
+    layered: bool,
+) -> Option<&'static str> {
     if page.get(b"Annots").is_ok() {
         return Some("annotations");
     }
@@ -235,6 +249,7 @@ fn traced_evidence(doc: &Document, page: &Dictionary, contents: &[u8]) -> Option
     for op in parsed.operations {
         if PATH_BUILD_OPS.contains(&op.operator.as_bytes())
             || PATH_PAINT_OPS.contains(&op.operator.as_bytes())
+            || (layered && op.operator == "re")
         {
             paths += 1;
         } else if TEXT_OPS.contains(&op.operator.as_bytes()) {
@@ -445,7 +460,7 @@ fn rasterize(document: &PdfDocument, request: &Value) -> Result<Value> {
             }
         };
         let (contents, old_refs, stored) = page_contents(&doc, &page_dict);
-        match traced_evidence(&doc, &page_dict, &contents) {
+        match traced_evidence(&doc, &page_dict, &contents, false) {
             Some(reason) => {
                 skipped.push(json!({"page": index, "reason": reason}));
                 for r in old_refs {
@@ -718,6 +733,9 @@ fn process(library: &Path, request: &Value) -> Result<Value> {
             None,
         )
         .map_err(|_| Error("INVALID_PDF", None))?;
+    if request["layered"] == true {
+        return layered::rebuild(&document, request);
+    }
     if request.get("rasterize").and_then(Value::as_bool) == Some(true) {
         return rasterize(&document, request);
     }

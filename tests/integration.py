@@ -92,6 +92,15 @@ def run(routine=False):
  with tempfile.TemporaryDirectory(prefix='anpdf-tests-') as t:
     base=pathlib.Path(t);roots={s:base/s for s in ['cli','http','mcp']}
     if PDFOXIDE:check_license_regeneration(base/'license-inventory')
+    # Fine outlined rules, a dark anchor, and a separate color patch. Split
+    # each rule into uneven collinear segments to exercise dense path input.
+    rules=['0.8 G 0.55 w']
+    for row in range(24):
+        y=230-row*8
+        rules.append(f'22 {y} m '+' '.join(f'{22+i/3+((i*37+row*23)%97)/1000:.3f} {y} l' for i in range(1,300))+' S')
+    rules.append('0 g 24 257 40 4 re f .15 .4 .85 rg 167 201 34 38 re f')
+    rules.append('0.95 G 1 w 24 18 m 195 18 l S 1 .85 .8 rg 210 21 1 .3 re f')
+    layered_fixture=gen.mixed_page_pdf('\n'.join(rules).encode())
     geometry_objects=[b'<< /Type /Catalog /Pages 2 0 R >>',b'<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>']
     for box,rotation,x,y in [('[500 600 800 800]',0,540,720),('[0 0 300 200]',90,240,120),('[0 0 300 200]',270,240,120)]:
         stream=f'BT /F1 12 Tf {x} {y} Td (PAGE-A) Tj ET'.encode();number=len(geometry_objects)+1
@@ -118,6 +127,7 @@ def run(routine=False):
     for root in roots.values():
         gen.generate(root)
         (root/'traced-rotated.pdf').write_bytes(gen.traced_pdf(1,parent_entries='/Rotate 90'))
+        (root/'layered-fixture.pdf').write_bytes(layered_fixture)
         (root/'traced-cropped.pdf').write_bytes(gen.traced_pdf(1,parent_entries='/CropBox [0 0 160 270]'))
         (root/'render-geometry.pdf').write_bytes(render_fixture())
         if PDFOXIDE:
@@ -362,6 +372,8 @@ def run(routine=False):
         ])
         if pdfium:
             corpus.extend([
+              ('compress',{'input':{'path':'layered-fixture.pdf'},'output':{'path':'layered-result.pdf'},'mode':'layered'},None),
+              ('compress',{'input':{'path':'one.pdf'},'output':{'path':'layered-miss.pdf'},'mode':'layered','maxOutputBytes':1,'onTargetMiss':'error'},'SIZE_TARGET_UNMET'),
               ('compress',{'input':{'path':'traced-rotated.pdf'},'output':{'path':'rotated-target.pdf'},'maxOutputBytes':10000},None),
               ('compress',{'input':{'path':'traced-cropped.pdf'},'output':{'path':'cropped-target.pdf'},'maxOutputBytes':10000},None),
               ('extract-text',{'input':{'path':'text-geometry.pdf'},'pages':[1,2,3]},None),
@@ -387,6 +399,9 @@ def run(routine=False):
             ])
             if os.environ.get('ANPDF_TEST_FONT'):
                 corpus.append(('extract-text',{'input':{'path':'provider-cjk.pdf'},'pages':[1]},None))
+        else:
+            corpus.append(('compress',{'input':{'path':'layered-fixture.pdf'},'output':{'path':'layered-result.pdf'},'mode':'layered'},'BACKEND_UNAVAILABLE'))
+        corpus.append(('compress',{'input':{'path':'one.pdf'},'output':{'path':'bad-layered.pdf'},'mode':'layered','compressionLevel':2},'INVALID_REQUEST'))
         shallow=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'three.pdf'}})]))
         deep=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'three.pdf'},'deepCheck':True})]))
         assert any(w['code']=='STREAM_DECODE_UNCHECKED' for w in shallow['warnings'])
@@ -567,6 +582,25 @@ def run(routine=False):
             assert ins['result']['pageCount']==2 and all(p['widthPoints']==238 and p['heightPoints']==337 for p in ins['result']['pages'])
             rebuilt=PdfReader(roots['cli']/'traced-target.pdf')
             assert all(len(page.images)==1 for page in rebuilt.pages)
+            layered=responses['layered-result.pdf']['result']
+            assert layered['mode']=='layered' and 'layeredRasterization' in layered['techniques'],layered
+            layered_path=roots['cli']/'layered-result.pdf'
+            doc=PdfReader(layered_path)
+            xobjects=doc.pages[0]['/Resources']['/XObject']
+            layers={(x.get_object()['/BitsPerComponent'],x.get_object()['/ColorSpace']) for x in xobjects.values()}
+            assert layers=={(1,'/DeviceGray'),(8,'/DeviceGray'),(8,'/DeviceRGB')},layers
+            assert not (roots['cli']/'layered-miss.pdf').exists()
+            assert 'LIVE-TEXT-ANCHOR' in doc.pages[1].extract_text() and len(doc.pages[1]['/Annots'])==1
+            png=subprocess.check_output(['pdftoppm','-f','1','-l','1','-r','144','-png','-singlefile',str(layered_path)])
+            with Image.open(io.BytesIO(png)) as image:
+                assert max(image.getpixel((60,156)))<30 # dark anchor
+                assert 180<image.convert('L').crop((100,211,101,216)).getextrema()[0]<230 # faint rule, not white or black
+                r,g,b=image.getpixel((368,234))
+                assert b>150 and b>g>r # off-center color patch
+            fine=subprocess.check_output(['pdftoppm','-f','1','-l','1','-r','400','-png','-singlefile',str(layered_path)])
+            with Image.open(io.BytesIO(fine)) as image:
+                assert 235<=image.convert('L').crop((300,1750,400,1790)).getextrema()[0]<=248
+                assert any(r>=250 and r-g>=20 and g-b>=5 for r,g,b in image.crop((1164,1750,1183,1765)).getdata())
             for geometry in ('rotated','cropped'):
                 report=responses[geometry+'-target.pdf']
                 assert not report['result']['targetMet'] and 'pageRasterization' not in report['result']['techniques'],report

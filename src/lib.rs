@@ -141,7 +141,7 @@ impl Dispatcher {
             sized.deadline = Instant::now()
                 + backend::compress_deadline_targeted(
                     input_bytes,
-                    request["maxOutputBytes"].is_number(),
+                    request["maxOutputBytes"].is_number() || request["mode"] == "layered",
                 );
         }
         let control = &sized;
@@ -159,6 +159,7 @@ impl Dispatcher {
         struct CompressSpec {
             mode: CompressMode,
             lossy: bool,
+            layered: bool,
             max_output_bytes: Option<u64>,
             error_on_miss: bool,
             level: Option<u64>,
@@ -189,6 +190,13 @@ impl Dispatcher {
                 ));
             }
             let lossy_requested = mode_str == "lossy";
+            let layered = mode_str == "layered";
+            if layered && (level.is_some() || jpeg_quality.is_some()) {
+                return Err(Error(
+                    "INVALID_REQUEST",
+                    Some("layered mode does not accept compressionLevel or jpegQuality".into()),
+                ));
+            }
             match level {
                 Some(1) if lossy_requested => {
                     return Err(Error(
@@ -209,7 +217,7 @@ impl Dispatcher {
             // which stays strictly lossless and simply reports the miss.
             let lossy = lossy_requested
                 || level.is_some_and(|l| l >= 2)
-                || (max_output.is_some() && level != Some(1));
+                || (!layered && max_output.is_some() && level != Some(1));
             if jpeg_quality.is_some() && !lossy_requested {
                 return Err(Error(
                     "INVALID_REQUEST",
@@ -232,6 +240,7 @@ impl Dispatcher {
             Some(CompressSpec {
                 mode,
                 lossy,
+                layered,
                 max_output_bytes: max_output,
                 error_on_miss: request["onTargetMiss"].as_str() == Some("error"),
                 level,
@@ -486,10 +495,70 @@ impl Dispatcher {
                 }
                 let mut candidate = out.clone();
                 let mut candidate_bytes = std::fs::metadata(&out)?.len();
+                if spec.layered {
+                    let rasterizer = plan.rasterizer.ok_or(Error("BACKEND_UNAVAILABLE", None))?;
+                    let mut accepted = false;
+                    let mut skip_message = "No smaller eligible layered candidate was produced; the lossless pass was kept.";
+                    if reports[0]["hasAttachments"] != true {
+                        control.report("rasterize", "building layered pages at 400 DPI", None);
+                        let raw = staging.path().join("layered.raw.pdf");
+                        let finished = staging.path().join("layered.pdf");
+                        let layered_pass = || -> Result<_> {
+                            let summary = rasterizer.layered_document(&out, &raw, control)?;
+                            let count =
+                                summary["rebuilt"].as_u64().ok_or(Error("INTERNAL", None))?;
+                            let skipped =
+                                summary["skipped"].as_u64().ok_or(Error("INTERNAL", None))?;
+                            if count == 0 {
+                                return Ok(None);
+                            }
+                            let pass_warnings = plan.structural.compress(
+                                &raw,
+                                CompressMode::Lossless,
+                                &finished,
+                                control,
+                            )?;
+                            Ok(Some((
+                                std::fs::metadata(&finished)?.len(),
+                                count,
+                                skipped,
+                                pass_warnings,
+                            )))
+                        };
+                        match layered_pass() {
+                            Ok(Some((size, count, skipped, pass_warnings)))
+                                if size < candidate_bytes
+                                    && (size < inputs[0].bytes
+                                        || request["allowLargerOutput"] == true) =>
+                            {
+                                candidate = finished;
+                                candidate_bytes = size;
+                                accepted = true;
+                                techniques.push("layeredRasterization");
+                                warnings.extend(pass_warnings);
+                                warnings.push(json!({"code": "PAGE_RASTERIZED", "message": format!("{count} pages were rebuilt with raster layers; vector detail is lost. {skipped} pages were left intact by the layered pass.")}));
+                            }
+                            Ok(_) => {}
+                            Err(Error("TIMEOUT", _))
+                                if !control.cancelled.load(Ordering::Relaxed) =>
+                            {
+                                skip_message = "Layered compression exceeded the processing deadline; the lossless pass was kept.";
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    if !accepted {
+                        warnings.push(
+                            json!({"code": "PAGE_RASTERIZATION_SKIPPED", "message": skip_message}),
+                        );
+                    }
+                }
                 if let Some(target) = spec.max_output_bytes {
                     control.report(
                         "compress",
-                        format!("lossless pass measured {candidate_bytes} bytes (target {target})"),
+                        format!(
+                            "current candidate measures {candidate_bytes} bytes (target {target})"
+                        ),
                         None,
                     );
                 }
@@ -870,7 +939,7 @@ impl Dispatcher {
                     "inputBytes": input_bytes,
                     "savedBytes": saved_bytes,
                     "compressionRatio": ratio,
-                    "mode": if spec.lossy { "lossy" } else { "lossless" },
+                    "mode": if spec.layered { "layered" } else if spec.lossy { "lossy" } else { "lossless" },
                     "outputSource": if keep_original { "original" } else { "compressed" },
                     "techniques": techniques,
                 });

@@ -99,14 +99,15 @@ def traced_pdf(pages, seed=7, ops_per_page=900, parent_entries=''):
     for offset in offsets[1:]:result.extend(f'{offset:010d} 00000 n \n'.encode())
     result.extend(f'trailer\n<< /Size {len(data)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode());return bytes(result)
 
-def mixed_page_pdf():
+def mixed_page_pdf(traced=None):
     """Page 1 traced graphics only; page 2 holds a photo, live text, a link
     annotation and sparse line art on the SAME page — the conservative case
     that must keep its original objects."""
     photo=rgb_pixels(400,300)
     import zlib as _z
     photo_stream=_z.compress(photo,6)
-    traced=b'0.4 0 0 0.4 0 0 cm\n'+traced_ops(31,900)
+    if traced is None:
+        traced=b'0.4 0 0 0.4 0 0 cm\n'+traced_ops(31,900)
     art=b'40 700 m 200 700 l 120 740 l h S\n40 660 l 200 660 l S'
     text=b'BT /F1 18 Tf 40 780 Td (LIVE-TEXT-ANCHOR) Tj ET'
     im=b'q 300 0 0 200 40 380 cm /Im1 Do Q'

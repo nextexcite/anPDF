@@ -354,8 +354,8 @@ struct CompressFlags {
     #[command(flatten)]
     out: Out,
     #[arg(long, value_name = "mode", allow_hyphen_values = true,
-        value_parser = clap::builder::PossibleValuesParser::new(["lossless", "lossy"]),
-        help = "Compression mode: lossless (streams) | lossy (adds image optimization)")]
+        value_parser = clap::builder::PossibleValuesParser::new(["lossless", "lossy", "layered"]),
+        help = "Compression mode: lossless (streams) | lossy (images) | layered (eligible traced pages)")]
     mode: Option<String>,
     #[arg(
         long,
@@ -522,9 +522,9 @@ enum Cmd {
         help_template = SUB_HELP_TEMPLATE,
         after_help = "Operation: removePages (strictly increasing 1-based pages to remove; at least 1 page must remain)\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[2],\"output\":{\"path\":\"trimmed.pdf\"}}")]
     RemovePages(RemoveArgs),
-    #[command(about = "Compress PDF streams (lossless) or images (lossy)",
+    #[command(about = "Compress PDF streams, images, or eligible traced pages",
         help_template = SUB_HELP_TEMPLATE,
-        after_help = "Operation: compressPdf; output defaults to <name>-compressed.pdf.\nmode: lossless (streams) | lossy (adds image optimization); level 1..3 sets the\nresample floor (1 lossless, 2 ≈200dpi, 3 ≈120dpi); --max-bytes descends a\nDPI/quality ladder toward the floor, --on-target-miss picks bestEffort|error.\n--max-bytes accepts human sizes: SI units (300kB, 3MB, 500k) are decimal;\nKiB, MiB, GiB are binary.\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"compressed.pdf\"},\"mode\":\"lossless\"}")]
+        after_help = "Operation: compressPdf; output defaults to <name>-compressed.pdf.\nLayered mode requires PDFium, tries eligible traced pages at 400 DPI, and\nchecks --max-bytes without lowering DPI. It does not accept --level or\n--jpeg-quality. Otherwise --level sets the descent floor (1 lossless,\n2 ≈200dpi, 3 ≈120dpi). --on-target-miss picks bestEffort|error.\n--max-bytes accepts human sizes: SI units (300kB, 3MB, 500k) are decimal;\nKiB, MiB, GiB are binary.\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"output\":{\"path\":\"compressed.pdf\"},\"mode\":\"lossless\"}")]
     Compress(CompressArgs),
     #[command(about = "Extract embedded text and bounding boxes (optional engine)",
         help_template = SUB_HELP_TEMPLATE,
@@ -772,7 +772,7 @@ fn clap_error(command: &str, e: clap::Error) -> Error {
             match flag.as_str() {
                 "--level" => bad("--level expects 1, 2 or 3"),
                 "--mode" => bad(format!(
-                    "invalid --mode '{value}' — expected lossless|lossy{hint}"
+                    "invalid --mode '{value}' — expected lossless|lossy|layered{hint}"
                 )),
                 "--on-target-miss" => bad(format!(
                     "invalid --on-target-miss '{value}' — expected bestEffort|error{hint}"

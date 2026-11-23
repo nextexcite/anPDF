@@ -779,7 +779,7 @@
             }
           }
         },
-        "description": "Keep validated original bytes when compressed output is not smaller, unless allowLargerOutput is true. outputSource identifies the published bytes. maxOutputBytes requests a byte ceiling: the ladder descends DPI/quality rungs down to compressionLevel's floor until the target is met or exhausted, reporting targetBytes/targetMet and techniques; an unmet target warns (bestEffort) or fails SIZE_TARGET_UNMET (error)."
+        "description": "Keep validated original bytes when compressed output is not smaller, unless allowLargerOutput is true. outputSource identifies the published bytes. maxOutputBytes requests a byte ceiling: layered mode checks the fixed-resolution result; other modes may descend DPI/quality rungs to the compressionLevel floor. Results report targetBytes, targetMet, and techniques; an unmet target warns (bestEffort) or fails SIZE_TARGET_UNMET (error)."
       }
     },
     "/v1/extract-text": {
@@ -1574,10 +1574,11 @@
             "type": "string",
             "enum": [
               "lossless",
-              "lossy"
+              "lossy",
+              "layered"
             ],
             "default": "lossless",
-            "description": "Lossless recompresses streams and object streams; lossy additionally optimizes eligible images with JPEG."
+            "description": "Lossless recompresses streams; lossy additionally optimizes images. Layered requires PDFium and tries a fixed 400 DPI reconstruction of eligible traced pages using a bilevel base and separate grayscale/color regions. It is visually lossy, preserves unsupported pages, and adopts the candidate only if smaller than the lossless pass. It does not accept jpegQuality or compressionLevel. An optional maxOutputBytes is checked without descending to lower DPI."
           },
           "jpegQuality": {
             "type": "integer",
@@ -1594,7 +1595,7 @@
           "maxOutputBytes": {
             "type": "integer",
             "minimum": 1,
-            "description": "Publish compressed output at or below this byte ceiling. Implies lossy mode; the ladder descends DPI/quality rungs toward compressionLevel's floor until the target is met."
+            "description": "Requested byte ceiling. In layered mode this is checked against the fixed-resolution result; otherwise it enables lossy descent unless compressionLevel is 1."
           },
           "onTargetMiss": {
             "type": "string",
@@ -1653,7 +1654,8 @@
             "type": "string",
             "enum": [
               "lossless",
-              "lossy"
+              "lossy",
+              "layered"
             ]
           },
           "outputSource": {
@@ -1668,7 +1670,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Compression passes applied to the published candidate: flate-recompress, object-streams, resource-drop, jpeg-recompress, image-downsample, pageRasterization; empty when original bytes were published. pageRasterization rebuilds dense traced-graphics pages as raster images: those pages become images, fine zoom detail is lost, and pages holding text, annotations, layers or tagged structure keep their original objects rather than being silently discarded."
+            "description": "Compression passes applied to the published candidate: flate-recompress, object-streams, resource-drop, jpeg-recompress, image-downsample, pageRasterization, layeredRasterization; empty when original bytes were published. Rasterization rebuilds eligible traced pages as images, losing vector zoom detail. Pages holding text, annotations, layers or tagged structure are not rasterized."
           },
           "targetBytes": {
             "type": "integer",

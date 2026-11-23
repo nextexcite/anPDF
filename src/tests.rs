@@ -479,6 +479,73 @@ fn compression_fallback_and_opt_out_describe_published_bytes() {
 }
 
 #[test]
+fn layered_timeout_keeps_lossless_output_unless_strict_or_cancelled() {
+    use crate::{
+        BackendRegistry, Dispatcher,
+        backend::{Control, PageRasterizer},
+        error::Result,
+    };
+    use serde_json::Value;
+    use std::{
+        path::Path,
+        sync::{Arc, atomic::Ordering},
+    };
+    struct Deadline(bool);
+    impl PageRasterizer for Deadline {
+        fn layered_document(&self, _: &Path, _: &Path, control: &Control) -> Result<Value> {
+            if self.0 {
+                control.cancelled.store(true, Ordering::Relaxed);
+            }
+            Err(Error("TIMEOUT", None))
+        }
+        fn rasterize_document(
+            &self,
+            _: &Path,
+            _: &Path,
+            _: &[(u32, u8)],
+            _: Option<u64>,
+            _: &Control,
+        ) -> Result<Value> {
+            unreachable!()
+        }
+    }
+    for (cancelled, strict, expected) in [
+        (false, false, None),
+        (false, true, Some("SIZE_TARGET_UNMET")),
+        (true, false, Some("TIMEOUT")),
+    ] {
+        let t = tempfile::tempdir().unwrap();
+        fs::write(t.path().join("in.pdf"), b"original bytes").unwrap();
+        let mut registry = BackendRegistry::with_structural(Arc::new(PreservationBackend {
+            input: preservation_report(),
+            output: preservation_report(),
+            bytes: b"lossless".to_vec(),
+        }));
+        registry.register_rasterizer(Arc::new(Deadline(cancelled)));
+        let d = Dispatcher::with_registry(t.path(), registry).unwrap();
+        let request = json!({"mode":"layered", "input":{"path":"in.pdf"}, "output":{"path":"out.pdf"}, "maxOutputBytes":1, "onTargetMiss":if strict { "error" } else { "bestEffort" }});
+        let result = d.dispatch("compressPdf", &request, false, &Control::default());
+        let out = t.path().join("out.pdf");
+        if let Some(code) = expected {
+            assert_eq!(result.unwrap_err().0, code);
+            assert!(!out.exists());
+        } else {
+            let result = result.unwrap();
+            assert_eq!(fs::read(out).unwrap(), b"lossless");
+            assert_eq!(result["result"]["targetMet"], false);
+            assert!(
+                result["warnings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|w| w["code"] == "PAGE_RASTERIZATION_SKIPPED"
+                        && w["message"].as_str().unwrap().contains("deadline"))
+            );
+        }
+    }
+}
+
+#[test]
 fn compression_invalid_output_never_falls_back_or_publishes() {
     let t = tempfile::tempdir().unwrap();
     fs::write(t.path().join("in.pdf"), b"original").unwrap();

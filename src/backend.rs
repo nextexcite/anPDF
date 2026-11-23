@@ -311,6 +311,8 @@ pub trait RenderPageBackend: Send + Sync {
 /// summary JSON on stdout. Pages carrying text, annotations, layers or other
 /// protected content keep their original objects.
 pub trait PageRasterizer: Send + Sync {
+    fn layered_document(&self, input: &Path, output: &Path, control: &Control) -> Result<Value>;
+
     fn rasterize_document(
         &self,
         input: &Path,

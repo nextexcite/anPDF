@@ -237,6 +237,20 @@ smaller, the already-staged validated original is committed instead. Required
 the published bytes (`savedBytes:0`, `compressionRatio:1.0` for original).
 `NO_SIZE_REDUCTION` identifies which bytes were kept.
 
+`compressPdf.mode: "layered"` requires PDFium (`BACKEND_UNAVAILABLE` otherwise).
+It tries fixed 400 DPI layered rasterization after the lossless pass, only on
+eligible dense traced pages. A bilevel base uses CCITT Group 4 or Flate; detected
+neutral tones use grayscale Flate patches and detected color uses separate JPEG
+or lossless Flate patches for sparse marks. This is a lossy reconstruction, not
+OCR or guaranteed preservation of every faint detail. Ineligible pages keep
+their content. The layered candidate must be smaller than the lossless pass. If
+the layered pass exceeds its deadline, the lossless pass remains the candidate;
+cancellation still aborts and strict size targets still apply.
+`layeredRasterization` and `PAGE_RASTERIZED` identify an adopted candidate.
+`maxOutputBytes` checks the finished bytes without invoking the DPI ladder;
+`compressionLevel` and `jpegQuality` conflict with `layered` and return
+`INVALID_REQUEST`.
+
 qpdf version parsing accepts only 12.x >=12.4.2; 13+, older and malformed versions
 fail `BACKEND_UNAVAILABLE`. Only 12.4.2 is qualified. Other accepted versions
 emit `BACKEND_VERSION_UNTESTED` once per response. `--qpdf-exact` or process-level

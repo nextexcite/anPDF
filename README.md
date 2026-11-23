@@ -56,6 +56,8 @@ Compression keeps the validated original bytes if compressed output is not small
 
 `compress` also accepts `maxOutputBytes`, `compressionLevel` (1–3) and `onTargetMiss` (`bestEffort` default, or `error`). A byte target selects from a DPI/JPEG-quality ladder — `image-downsample` decodes each placed image once, measures every rung, and applies the gentlest rung fitting the target through a sandboxed worker — bounded by the level's floor (2 ≈ 200dpi, 3 ≈ 120dpi; a bare target may descend to ~72dpi; level 1 stays lossless). Results report `techniques`, `targetBytes` and `targetMet`; an unmet target warns `SIZE_TARGET_UNMET` or fails 422.
 
+Opt in with `anpdf compress input.pdf output.pdf --mode layered` (HTTP/MCP: `"mode":"layered"`). With PDFium, this tries rebuilding eligible traced pages at 400 DPI: a bilevel base uses Group 4 or Flate, with separate grayscale and color patches. It keeps live-text and other ineligible pages out of the raster pass. Rebuilt pages lose vector detail; the layered candidate is used only if it beats the lossless pass. `--max-bytes` checks the fixed-resolution result without lowering DPI; `--level` and `--jpeg-quality` do not apply.
+
 ## Basic usage
 
 ### macOS (Apple Silicon)
