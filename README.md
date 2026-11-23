@@ -137,6 +137,12 @@ sh containers/smoke.sh anpdf:0.4.1-local
 
 When modifying `contracts/v1/openapi.json`, regenerate `generated/` and run the Forge schema/TS checks documented in [docs/FORGE.md](docs/FORGE.md).
 
+In Amp orbs, [`.agents/setup`](.agents/setup) prepares the pinned Rust toolchain,
+Cargo dependencies, PDF tools, Python test environment, and Forge dependencies
+for snapshot reuse. A new login shell in the checkout picks up the Python
+environment and the qpdf, PDFium, and CJK font paths. Run `cargo build --locked`
+and then `python3 tests/integration.py` without overriding those paths.
+
 ## Default PDFium text and rendering engine
 
 `cargo build --locked` includes the `pdfium-render 0.9.5` adapter for

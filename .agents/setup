@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd -- "$repo_root"
+work="$repo_root/build/work"
+mkdir -p "$work"
+
+echo 'Checking system packages'
+missing=()
+for package in build-essential ca-certificates curl pkg-config poppler-utils python3; do
+    if [[ $(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null) != installed ]]; then
+        missing+=("$package")
+    fi
+done
+if ((${#missing[@]})); then
+    time sudo apt-get update
+    time sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+fi
+
+echo 'Preparing pinned Rust toolchain and Cargo dependencies'
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+if ! command -v rustup >/dev/null; then
+    time curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none
+fi
+# Running from the checkout makes rustup honor rust-toolchain.toml.
+time cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+
+echo 'Preparing pinned Python test dependencies'
+venv="$work/orb-venv"
+if [[ ! -x "$venv/bin/python" ]]; then
+    uv venv --python /usr/bin/python3 "$venv"
+fi
+time uv pip sync --python "$venv/bin/python" build/test-requirements.txt
+
+echo 'Preparing PDF tools and CJK fixture font'
+# The downloaders verify upstream checksums. Key their installed directories
+# by downloader contents so changed pins never reuse a stale extraction.
+pdf_asset() {
+    local asset=$1 expected=$2 script="build/get-$1.py" key dest staging
+    key=$(sha256sum "$script")
+    dest="$work/$asset-${key%% *}"
+    if [[ ! -f "$dest/$expected" ]]; then
+        staging=$(mktemp -d "$work/.$asset.XXXXXX") || return 1
+        if ! python3 "$script" "$staging" >&2 || ! mv -T -- "$staging" "$dest"; then
+            rm -rf -- "$staging"
+            return 1
+        fi
+    fi
+    printf '%s\n' "$dest/$expected"
+}
+time qpdf=$(pdf_asset qpdf bin/qpdf)
+time pdfium=$(pdf_asset pdfium lib/libpdfium.so)
+time font=$(pdf_asset test-font NotoSansSC.ttf)
+
+echo 'Preparing Forge qualification dependencies'
+node --version
+forge_sha=$(python3 -c 'import json; print(json.load(open("build/forge-pin.json"))["artifactSha256"])')
+if ! printf '%s  %s\n' "$forge_sha" "$work/forge.tgz" | sha256sum --check --status; then
+    time python3 build/get-forge.py "$work/forge.tgz"
+fi
+time npm ci --ignore-scripts --no-audit --no-fund --prefer-offline --prefix build/qualification
+
+echo 'Saving the development environment for orb login shells'
+{
+    printf 'export PATH=%q:$PATH\n' "$venv/bin:${CARGO_HOME:-$HOME/.cargo}/bin"
+    printf 'export ANPDF_QPDF=%q\n' "$qpdf"
+    printf 'export ANPDF_PDFIUM_LIB=%q\n' "$pdfium"
+    printf 'export ANPDF_TEST_FONT=%q\n' "$font"
+} > "$work/orb-env.sh"
+
+profile="$HOME/.bash_profile"
+if [[ ! -e "$profile" ]]; then
+    # Preserve Bash's existing login startup file, if any.
+    if [[ -r "$HOME/.bash_login" ]]; then
+        printf '%s\n' '. "$HOME/.bash_login"' > "$profile"
+    else
+        printf '%s\n' '[[ ! -r "$HOME/.profile" ]] || . "$HOME/.profile"' > "$profile"
+    fi
+fi
+marker="# Amp orb environment: $repo_root"
+if ! grep -Fxq -- "$marker" "$profile"; then
+    {
+        printf '\n%s\n' "$marker"
+        printf 'if [[ ${ANPDF_ORB_ENV_ACTIVE:-} != %q && ( $PWD == %q || $PWD == %q/* ) && -r %q ]]; then\n' \
+            "$repo_root" "$repo_root" "$repo_root" "$work/orb-env.sh"
+        printf '    ANPDF_ORB_ENV_ACTIVE=%q\n    . %q\nfi\n' "$repo_root" "$work/orb-env.sh"
+    } >> "$profile"
+fi
