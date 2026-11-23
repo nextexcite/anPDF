@@ -1138,4 +1138,69 @@ fn protect_dispatch_paths() {
         .0,
         "INVALID_PASSWORD"
     );
+    // An intentionally empty user password is schema-valid: the mock sees
+    // it verbatim and the response warns it provides no confidentiality.
+    let empty = d
+        .dispatch(
+            "encryptPdf",
+            &encrypt(
+                json!({"password":"", "output":{"path":"owner-only.pdf","replaceExisting":true}}),
+            ),
+            false,
+            &c,
+        )
+        .unwrap();
+    assert!(
+        empty["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|w| w["code"] == "EMPTY_OPEN_PASSWORD"),
+        "{empty}"
+    );
+}
+
+#[test]
+fn password_byte_bound() {
+    // The PDF specification binds passwords to 127 UTF-8 *bytes* — JSON
+    // Schema's maxLength counts characters, so the dispatcher re-checks in
+    // bytes and never lets qpdf silently truncate.
+    let base = |password: &str| json!({"input":{"path":"a.pdf"},"password":password,"output":{"path":"b.pdf"}});
+    assert!(contract::invalid_detail("encryptPdf", &base(&"x".repeat(127))).is_none());
+    // 128 characters trips the schema's maxLength first — masked, so the
+    // rejected secret is not echoed.
+    let long = contract::invalid_detail("encryptPdf", &base(&"x".repeat(128))).unwrap();
+    assert!(
+        long.starts_with("/password: ") && !long.contains('x'),
+        "{long}"
+    );
+    // 127 characters but 128 bytes — multi-byte characters count several.
+    assert!(
+        contract::invalid_detail("encryptPdf", &base(&format!("{}é", "a".repeat(126)))).is_some()
+    );
+    // An intentionally empty password is valid (an R6 owner-only file);
+    // an omitted one is not — the field stays required.
+    assert!(contract::invalid_detail("encryptPdf", &base("")).is_none());
+    assert!(
+        contract::invalid_detail(
+            "encryptPdf",
+            &json!({"input":{"path":"a.pdf"},"output":{"path":"b.pdf"}})
+        )
+        .is_some()
+    );
+    // NUL would truncate silently at the backend's C-string boundary.
+    assert_eq!(
+        contract::invalid_detail("encryptPdf", &base("a\0b")).as_deref(),
+        Some("/password: NUL bytes cannot be represented by the password transport")
+    );
+    // Validation errors name the constraint without echoing the secret.
+    let detail = contract::invalid_detail(
+        "encryptPdf",
+        &json!({"input":{"path":"a.pdf"},"password":123,"output":{"path":"b.pdf"}}),
+    )
+    .unwrap();
+    assert!(
+        detail.starts_with("/password: ") && !detail.contains("123"),
+        "{detail}"
+    );
 }

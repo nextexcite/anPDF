@@ -280,6 +280,35 @@ def run():
           ('decrypt',{'input':{'path':'locked.pdf'},'password':'synthetic-user-secret','output':{'path':'opened.pdf'}},None),
           ('encrypt',{'input':{'path':'annotated.pdf'},'password':'synthetic-user-secret','output':{'path':'locked-form.pdf'}},None),
           ('decrypt',{'input':{'path':'locked-form.pdf'},'password':'synthetic-user-secret','output':{'path':'opened-form.pdf'}},None),
+          # Password boundaries: single-character, whitespace (kept
+          # verbatim, never stripped) and Unicode all round-trip; the
+          # spec's 127-byte bound is enforced in bytes — 127 bytes work,
+          # 128 bytes are rejected rather than silently truncated, and a
+          # multi-byte password under the character limit can still
+          # exceed the byte bound.
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'a','output':{'path':'pw-a.pdf'}},None),
+          ('decrypt',{'input':{'path':'pw-a.pdf'},'password':'a','output':{'path':'pw-a-open.pdf'}},None),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'  spaced  ','output':{'path':'pw-ws.pdf'}},None),
+          ('decrypt',{'input':{'path':'pw-ws.pdf'},'password':'spaced','output':{'path':'pw-ws-stripped.pdf'}},'INVALID_PASSWORD'),
+          ('decrypt',{'input':{'path':'pw-ws.pdf'},'password':'  spaced  ','output':{'path':'pw-ws-open.pdf'}},None),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'pä🔒','output':{'path':'pw-uni.pdf'}},None),
+          ('decrypt',{'input':{'path':'pw-uni.pdf'},'password':'pä🔒','output':{'path':'pw-uni-open.pdf'}},None),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'x'*127,'output':{'path':'pw-127.pdf'}},None),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'x'*128,'output':{'path':'pw-128.pdf'}},'INVALID_REQUEST'),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'a'*126+'é','output':{'path':'pw-mb.pdf'}},'INVALID_REQUEST'),
+          # An intentionally empty user password is an R6 owner-only file:
+          # it opens without a password (the response warns it has no
+          # confidentiality) and decrypts with an explicitly empty one.
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'','ownerPassword':'synthetic-owner-secret','output':{'path':'owner-only.pdf'}},None),
+          ('decrypt',{'input':{'path':'owner-only.pdf'},'password':'','output':{'path':'owner-only-open.pdf'}},None),
+          ('decrypt',{'input':{'path':'owner-only.pdf'},'password':'synthetic-owner-secret','output':{'path':'owner-only-owner.pdf'}},None),
+          # Line breaks in a password reach qpdf intact through the job
+          # JSON (a --password-file would carry only the first line); NUL
+          # bytes are rejected outright rather than truncating silently.
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'one\ntwo','output':{'path':'pw-nl.pdf'}},None),
+          ('decrypt',{'input':{'path':'pw-nl.pdf'},'password':'one\ntwo','output':{'path':'pw-nl-open.pdf'}},None),
+          ('decrypt',{'input':{'path':'pw-nl.pdf'},'password':'one','output':{'path':'pw-nl-bad.pdf'}},'INVALID_PASSWORD'),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'a\x00b','output':{'path':'pw-nul.pdf'}},'INVALID_REQUEST'),
         ]
         if PDFOXIDE:
             oxide_cases=[
@@ -611,6 +640,27 @@ def run():
         assert r.returncode and 'encrypt and decrypt' in r.stderr,r.stderr
         r=sh(['decrypt','--root',str(roots['cli']),'--password-file',str(secret)],input=json.dumps({'input':{'path':'locked-cli.pdf'},'password':'x','output':{'path':'z.pdf'}}))
         assert r.returncode and 'given twice' in r.stderr,r.stderr
+        # An empty open password warns it provides no confidentiality.
+        r=sh(['encrypt','--root',str(roots['cli']),'--qpdf',str(QPDF)],input=json.dumps({'input':{'path':'one.pdf'},'password':'','output':{'path':'owner-only-cli.pdf'}}))
+        assert r.returncode==0 and any(w['code']=='EMPTY_OPEN_PASSWORD' for w in json.loads(r.stdout)['warnings']),(r.returncode,r.stderr,r.stdout)
+        # --owner-password-file does not apply to decrypt.
+        r=sh(['decrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'locked-cli.pdf','z.pdf','--owner-password-file',str(secret)])
+        assert r.returncode and 'encrypt only' in r.stderr,r.stderr
+        # A zero-byte secret file supplies nothing and is refused; a lone
+        # newline supplies an intentionally empty password.
+        secret.write_bytes(b'')
+        r=sh(['encrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'one.pdf','empty-file.pdf','--password-file',str(secret)])
+        assert r.returncode and 'is empty' in r.stderr,r.stderr
+        secret.write_bytes(b'\n')
+        r=sh(['encrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'one.pdf','empty-pw-cli.pdf','--password-file',str(secret)])
+        assert r.returncode==0,(r.returncode,r.stderr)
+        r=sh(['decrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'empty-pw-cli.pdf','empty-pw-open.pdf','--password-file',str(secret)])
+        assert r.returncode==0,(r.returncode,r.stderr)
+        # An omitted password on a non-terminal errors instead of blocking
+        # — distinct from an intentionally empty one.
+        r=sh(['decrypt','--root',str(roots['cli']),'--qpdf',str(QPDF)],input=json.dumps({'input':{'path':'locked-cli.pdf'},'output':{'path':'np.pdf'}}))
+        assert r.returncode and 'hidden prompt' in r.stderr,r.stderr
+        secret.write_text('synthetic-user-secret\n')
         # --pages as a flag builds the same request as the positional spec.
         a=sh(['extract','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','--pages','1-2','-o','flag-sub.pdf']);b=sh(['extract','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','1-2','-o','flag-sub2.pdf']);assert a.returncode==0 and b.returncode==0 and json.loads(a.stdout)['result']['pageCount']==2,(a.stderr,b.stderr)
         # Absolute and ~ shorthand paths adapt the workspace root.

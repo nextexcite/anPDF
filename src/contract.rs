@@ -51,18 +51,43 @@ pub fn valid_input(id: &str, value: &Value) -> bool {
 /// so error envelopes can name the offending field.
 pub fn invalid_detail(id: &str, value: &Value) -> Option<String> {
     let schema = input(id)?;
-    jsonschema::validator_for(&schema)
+    if let Some(e) = jsonschema::validator_for(&schema)
         .ok()?
         .iter_errors(value)
         .next()
-        .map(|e| {
-            let path = e.instance_path.as_str();
-            if path.is_empty() {
-                format!("/: {e}")
-            } else {
-                format!("{path}: {e}")
+    {
+        let path = e.instance_path.as_str();
+        // Validation errors render the rejected value; secret fields must
+        // report their constraint without echoing the credential.
+        let rendered = if matches!(path, "/password" | "/ownerPassword") {
+            e.masked_with("redacted").to_string()
+        } else {
+            e.to_string()
+        };
+        return Some(if path.is_empty() {
+            format!("/: {rendered}")
+        } else {
+            format!("{path}: {rendered}")
+        });
+    }
+    // JSON Schema `maxLength` counts characters, but the PDF specification
+    // binds passwords to 127 UTF-8 *bytes*: a multi-byte password under the
+    // character limit can exceed it, and qpdf would truncate it silently.
+    // A NUL byte is worse: the backend's C-string handling reads only the
+    // prefix, so a `\0` open password silently encrypts to an empty one.
+    for field in ["password", "ownerPassword"] {
+        if let Some(v) = value.get(field).and_then(Value::as_str) {
+            if v.contains('\0') {
+                return Some(format!(
+                    "/{field}: NUL bytes cannot be represented by the password transport"
+                ));
             }
-        })
+            if v.len() > 127 {
+                return Some(format!("/{field}: exceeds the 127-byte PDF password bound"));
+            }
+        }
+    }
+    None
 }
 pub fn valid_output(id: &str, value: &Value) -> bool {
     operation(id).is_some_and(|op| {
