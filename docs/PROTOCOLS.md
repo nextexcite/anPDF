@@ -164,7 +164,9 @@ exercised by that harness, not by an external client certification suite.
 `encryptPdf` applies standard AES-256 encryption (PDF revision 6) through the
 qualified qpdf backend: `password` becomes the document's user password and an
 optional `ownerPassword` the permissions password — when omitted a random
-unguessable owner is generated, never an empty backdoor. An intentional empty
+unguessable owner is generated, never an empty backdoor; a supplied blank one
+is refused because qpdf rejects it for AES-256 (the file would open without a
+password). An intentional empty
 `password` produces an owner-only document that opens without a password; it is
 accepted (with an `EMPTY_OPEN_PASSWORD` warning that discloses the loss of
 confidentiality), while an omitted or cancelled password fails closed.

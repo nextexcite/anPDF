@@ -1353,8 +1353,9 @@
           },
           "ownerPassword": {
             "type": "string",
+            "minLength": 1,
             "maxLength": 127,
-            "description": "Optional owner (permissions) password with the same byte bound. When omitted a random unguessable owner password is generated — never a blank backdoor; an intentionally empty string is written as the empty owner password."
+            "description": "Optional owner (permissions) password with the same byte bound. When omitted a random unguessable owner password is generated — never a blank backdoor. A supplied empty string is invalid: qpdf refuses it for AES-256 because the result would open without a password."
           },
           "preserve": {
             "$ref": "#/components/schemas/Preserve"

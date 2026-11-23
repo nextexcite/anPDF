@@ -309,6 +309,9 @@ def run():
           ('decrypt',{'input':{'path':'pw-nl.pdf'},'password':'one\ntwo','output':{'path':'pw-nl-open.pdf'}},None),
           ('decrypt',{'input':{'path':'pw-nl.pdf'},'password':'one','output':{'path':'pw-nl-bad.pdf'}},'INVALID_PASSWORD'),
           ('encrypt',{'input':{'path':'one.pdf'},'password':'a\x00b','output':{'path':'pw-nul.pdf'}},'INVALID_REQUEST'),
+          # A supplied blank owner password is refused: qpdf rejects it
+          # for AES-256 because the output would open without a password.
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'p','ownerPassword':'','output':{'path':'pw-bo.pdf'}},'INVALID_REQUEST'),
         ]
         if PDFOXIDE:
             oxide_cases=[

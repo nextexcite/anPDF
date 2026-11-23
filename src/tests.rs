@@ -1193,7 +1193,8 @@ fn password_byte_bound() {
         contract::invalid_detail("encryptPdf", &base("a\0b")).as_deref(),
         Some("/password: NUL bytes cannot be represented by the password transport")
     );
-    // Validation errors name the constraint without echoing the secret.
+    // Validation errors name the constraint without echoing the secret —
+    // direct fields and secrets nested inside a rejected container alike.
     let detail = contract::invalid_detail(
         "encryptPdf",
         &json!({"input":{"path":"a.pdf"},"password":123,"output":{"path":"b.pdf"}}),
@@ -1202,5 +1203,20 @@ fn password_byte_bound() {
     assert!(
         detail.starts_with("/password: ") && !detail.contains("123"),
         "{detail}"
+    );
+    let wrapped = contract::invalid_detail(
+        "encryptPdf",
+        &json!([{"input":{"path":"a.pdf"},"password":"hidden-secret","output":{"path":"b.pdf"}}]),
+    )
+    .unwrap();
+    assert!(!wrapped.contains("hidden-secret"), "{wrapped}");
+    // A supplied blank owner password is refused: qpdf rejects it for
+    // AES-256 because the output would open without a password.
+    assert!(
+        contract::invalid_detail(
+            "encryptPdf",
+            &json!({"input":{"path":"a.pdf"},"password":"p","ownerPassword":"","output":{"path":"b.pdf"}}),
+        )
+        .is_some_and(|d| d.starts_with("/ownerPassword: "))
     );
 }
