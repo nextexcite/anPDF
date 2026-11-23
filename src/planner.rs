@@ -86,6 +86,13 @@ impl BackendRegistry {
             Capability::Inspect => Job::Inspect,
             Capability::Transform => Job::Transform,
             Capability::Compress => Job::Compress,
+            Capability::Protect => {
+                if id == "encryptPdf" {
+                    Job::Encrypt
+                } else {
+                    Job::Decrypt
+                }
+            }
             Capability::Text => {
                 let pages = parse_pages(&request["pages"])?;
                 let (engine, backend) = select(&self.text, engine)?;
@@ -154,6 +161,7 @@ enum Capability {
     Compress,
     Text,
     Render,
+    Protect,
 }
 
 fn capability(id: &str) -> Result<Capability> {
@@ -163,6 +171,7 @@ fn capability(id: &str) -> Result<Capability> {
         "compressPdf" => Ok(Capability::Compress),
         "extractText" => Ok(Capability::Text),
         "renderPage" => Ok(Capability::Render),
+        "encryptPdf" | "decryptPdf" => Ok(Capability::Protect),
         _ => Err(Error("UNSUPPORTED_OPERATION", None)),
     }
 }
@@ -178,6 +187,9 @@ pub(crate) enum Job<'a> {
     Inspect,
     Transform,
     Compress,
+    /// Writes a PDF; never carries a backend other than the structural one.
+    Encrypt,
+    Decrypt,
     ExtractText {
         engine: &'static str,
         backend: &'a dyn ExtractTextBackend,
@@ -193,7 +205,10 @@ pub(crate) enum Job<'a> {
 
 impl Job<'_> {
     pub(crate) fn writes_pdf(&self) -> bool {
-        matches!(self, Self::Transform | Self::Compress)
+        matches!(
+            self,
+            Self::Transform | Self::Compress | Self::Encrypt | Self::Decrypt
+        )
     }
 
     pub(crate) fn writes_output(&self) -> bool {

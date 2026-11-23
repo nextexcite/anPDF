@@ -1024,7 +1024,7 @@ impl ImageResampler for ResampleProvider {
             "targetBytes": target,
             "budgetMillis": control.remaining().as_millis() as u64,
         });
-        let (_code, stdout) = Qpdf {
+        let (_code, stdout, _) = Qpdf {
             executable: self.worker_executable.clone(),
             exact: false,
             as_limit: 1536 * 1024 * 1024,

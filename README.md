@@ -35,6 +35,8 @@ Versioning convention:
 | Compress streams / optimize images | `compress` | `POST /v1/compress` | `compressPdf` |
 | Extract embedded text with PDF-space spans | `extract-text` | `POST /v1/extract-text` | `extractText` |
 | Render a page as PNG | `render-page` | `POST /v1/render-page` | `renderPage` |
+| Password-protect a PDF (AES-256, revision 6) | `encrypt` | `POST /v1/encrypt` | `encryptPdf` |
+| Remove a PDF's password | `decrypt` | `POST /v1/decrypt` | `decryptPdf` |
 
 All three surfaces use the same validated operation contract. The Rust runtime accepts **qpdf 12.x >=12.4.2**, with **12.4.2** the tested version; other accepted versions emit `BACKEND_VERSION_UNTESTED` once per response. `ANPDF_QPDF_EXACT=1` or `--qpdf-exact` requires exactly 12.4.2 (enabled in CI and OCI). Pinned **Forge 0.2.0** is a build-time generation and qualification dependency, not a product runtime. Release builds publish multi-arch **`linux/amd64` + `linux/arm64` OCI images** (GHCR) and **`macos/arm64` native binaries** (GitHub Releases + the [nextexcite/homebrew-anpdf](https://github.com/nextexcite/homebrew-anpdf) tap).
 
@@ -44,7 +46,9 @@ The capability registry selects registered providers consistently across all thr
 surfaces. The [synthetic corpus and benchmark harness](docs/BENCHMARK.md) compare
 external engines; benchmark scores are not product or production qualification.
 
-Transforms currently **reject** encrypted, signed, form/XFA-bearing, or preservation-unknown PDFs. Inspection is structural—not visual, cryptographic, PDF/A, or malware certification.
+Page transforms currently **reject** encrypted, signed, form/XFA-bearing, or preservation-unknown PDFs. `encrypt` and `decrypt` are the exceptions: they rewrite only protection — encrypt accepts form/XFA-bearing inputs, signatures stay rejected everywhere. Inspection is structural—not visual, cryptographic, PDF/A, or malware certification.
+
+Passwords never travel through command arguments, environment variables, logs or error envelopes. On a terminal `encrypt`/`decrypt` prompt with echo disabled; scripts pass `--password-file <f>` / `--owner-password-file <f>` (a `chmod 600` file), `--request-file`, or piped stdin carrying `password` / `ownerPassword`. `--request-json` refuses literal password fields — argv is exposed to the OS at launch, so that refusal is a guardrail toward the safe channels, not retroactive secrecy — and HTTP/MCP requests carry them only in the body (the contract has no secret file-path fields). Encryption is standard AES-256 revision 6: the user password opens the document; the optional owner password (generated randomly when omitted) is the permissions password. An intentionally empty user password gives an owner-only document that opens without one, warned via `EMPTY_OPEN_PASSWORD`; an omitted or cancelled password fails closed.
 
 Merge, extract, split and remove-pages retain the first input as the primary document. Each output reports `preservation` for `metadata`, `bookmarks`, `annotations` and `attachments`: `preserved`, `omitted` (including uncertainty), or `absent`. Optional `preserve` booleans require those aspects when present; an unmet requirement fails with `PRESERVATION_UNMET` before any output is published. Defaults are best effort, with one `PRESERVATION_OMITTED` warning naming omissions. Secondary merge metadata can be omitted, and secondary bookmarks/attachments are not merged. Inspection includes optional per-page `annotationCount`. See [preservation evidence and limitations](docs/PROTOCOLS.md#preservation-and-compression).
 

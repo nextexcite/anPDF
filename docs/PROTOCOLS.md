@@ -15,6 +15,8 @@ status, and explicit unsupported/excluded capabilities.
 | compressPdf | compress | POST /v1/compress | compressPdf |
 | extractText | extract-text | POST /v1/extract-text | extractText |
 | renderPage | render-page | POST /v1/render-page | renderPage |
+| encryptPdf | encrypt | POST /v1/encrypt | encryptPdf |
+| decryptPdf | decrypt | POST /v1/decrypt | decryptPdf |
 
 CLI discovery/utility commands: `operations`, `schema <operationId>`, `completions <bash|zsh|fish>`, `help [command]` / `--help` / `-h`, `version` / `--version` / `-V`.
 When neither `--qpdf` nor `ANPDF_QPDF` is set, the CLI/server checks standard system paths (`/opt/qpdf/bin/qpdf`, `/usr/bin/qpdf`, `/opt/homebrew/bin/qpdf`, `/usr/local/bin/qpdf`) and trusted `PATH` directories (absolute, owned by the effective user or root, without group/other write bits).
@@ -31,6 +33,8 @@ CLI operations also accept positional shorthand instead of `--request-json`/`--r
 | `anpdf compress <doc.pdf> [<out.pdf>]` | `input`, `output` (defaults to `<name>-compressed.pdf`; `--mode`, `--jpeg-quality`, `--level`, `--max-bytes`, `--on-target-miss`, `--allow-larger` map to `mode`, `jpegQuality`, `compressionLevel`, `maxOutputBytes`, `onTargetMiss`, `allowLargerOutput`) |
 | `anpdf extract-text <doc.pdf> <pages>` | `input`, `pages` (+`--engine`) |
 | `anpdf render-page <doc.pdf> <page> [-o <image>]` | `input`, `page`, `output` (+`--dpi`, `--engine`) |
+| `anpdf encrypt <doc.pdf> [<out.pdf>]` | `input`, `output` (defaults to `<name>-encrypted.pdf`) |
+| `anpdf decrypt <doc.pdf> [<out.pdf>]` | `input`, `output` (defaults to `<name>-decrypted.pdf`) |
 
 `--replace` maps to `output.replaceExisting`, and `--preserve metadata,bookmarks,annotations,attachments` (or `all`) maps to `preserve`. `--` terminates flag parsing for dash-leading filenames. `extract`, `remove-pages` and `extract-text` also accept `--pages <spec>` in place of the positional. Shorthand paths may be absolute or `~/`-prefixed: the invocation's workspace root then adapts to the files' common canonical directory, while `--root` pins it and refuses inputs outside. JSON requests (inline, file, stdin, HTTP, MCP) always stay workspace-relative to `--root`.
 
@@ -43,7 +47,7 @@ Messages never include raw backend output, absolute input paths, or credentials.
 | Error | HTTP | CLI |
 |---|---|---|
 | INVALID_REQUEST | 400 | 2 |
-| NOT_FOUND / ACCESS_DENIED | 404 / 403 | 3 |
+| NOT_FOUND / ACCESS_DENIED / INVALID_PASSWORD | 404 / 403 | 3 |
 | OUTPUT_EXISTS / INPUT_CHANGED | 409 | 4 |
 | INVALID_PDF / ENCRYPTED_UNSUPPORTED / SIGNED_UNSUPPORTED / FORM_UNSUPPORTED / PRESERVATION_UNKNOWN / PRESERVATION_UNMET | 422 | 5 |
 | UNSUPPORTED_OPERATION | 422 | 6 |
@@ -94,7 +98,8 @@ The shared dispatcher preflights PDFs with qpdf, enforces input and destination
 policy, and gives the selected provider only private staging paths and the
 shared job deadline/cancellation control. Signed and form-bearing inputs
 are not blocked by the PDF preservation policy for these non-mutating
-operations; encrypted inputs remain unsupported. Engine adapters must use
+operations; encrypted inputs remain unsupported (encryptPdf/decryptPdf are
+the only password-aware operations). Engine adapters must use
 bounded workers and enforce raster/text limits before allocating or emitting
 large results. The gateway validates the result schema and bounds, and checks
 the PNG signature and dimensions before atomically publishing the artifact.
@@ -153,6 +158,41 @@ The integration corpus drives all three surfaces with identical requests and
 compares complete domain envelopes, errors, discovery schemas, and input hashes.
 The example MCP sequence, CLI invocations and authenticated HTTP operations are
 exercised by that harness, not by an external client certification suite.
+
+## Password protection
+
+`encryptPdf` applies standard AES-256 encryption (PDF revision 6) through the
+qualified qpdf backend: `password` becomes the document's user password and an
+optional `ownerPassword` the permissions password — when omitted a random
+unguessable owner is generated, never an empty backdoor; a supplied blank one
+is refused because qpdf rejects it for AES-256 (the file would open without a
+password). An intentional empty
+`password` produces an owner-only document that opens without a password; it is
+accepted (with an `EMPTY_OPEN_PASSWORD` warning that discloses the loss of
+confidentiality), while an omitted or cancelled password fails closed.
+`decryptPdf` removes protection with either password, including the empty one
+an owner-only file carries; both operations re-inspect the output (encrypt
+re-opens it with the new password) so page count, encryption state and
+forms/signatures status are verified post-rewrite, and preservation evidence
+hashing runs through encryption. Passwords are bounded to the PDF
+specification's 127 UTF-8 *bytes* — multi-byte characters count several bytes
+each — and a NUL byte is rejected outright: the backend's C-string handling
+would silently truncate it and could encrypt to a password shorter than
+supplied.
+
+Secrets never appear in subprocess argv — `--request-json` refuses literal
+`password`/`ownerPassword` fields — environment, logs, errors or telemetry.
+argv is exposed to the operating system at launch, so that refusal cannot undo
+an inline exposure; it is a guardrail toward the safe channels, not a secrecy
+guarantee. The backend hands them to qpdf through an inherited anonymous
+descriptor (`memfd` on Linux) or a private `0600` staging file created before
+write and cleaned on every exit path, inside a job JSON document so passwords
+with line breaks reach qpdf intact. Interactive CLI sessions get echo-disabled
+prompts; scripts use `--password-file`/`--owner-password-file` (files must be
+`chmod 600`), `--request-file` or piped stdin. HTTP and MCP requests carry the
+secret fields in the request body; the contract intentionally defines no secret
+file-path fields, so a remote caller cannot name a local filesystem path to
+read. Signed inputs are rejected; forms/XFA ride through intact.
 
 ## Preservation and compression
 

@@ -265,6 +265,53 @@ def run():
           ('extract',{'input':{'path':'form.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'FORM_UNSUPPORTED'),
           ('extract',{'input':{'path':'xfa.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'FORM_UNSUPPORTED'),
           ('extract',{'input':{'path':'signature-marker.pdf'},'pages':[1],'output':{'path':'blocked.pdf'}},'SIGNED_UNSUPPORTED'),
+          # Protection round trip: encrypt writes locked.pdf into every
+          # surface root, then wrong-password, wrong-input and second-pass
+          # attempts fail while user and owner passwords both open it.
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'synthetic-user-secret','ownerPassword':'synthetic-owner-secret','output':{'path':'locked.pdf'}},None),
+          ('inspect',{'input':{'path':'locked.pdf'}},'ENCRYPTED_UNSUPPORTED'),
+          ('compress',{'input':{'path':'locked.pdf'},'output':{'path':'locked-out.pdf'}},'ENCRYPTED_UNSUPPORTED'),
+          ('extract',{'input':{'path':'locked.pdf'},'pages':[1],'output':{'path':'locked-page.pdf'}},'ENCRYPTED_UNSUPPORTED'),
+          ('decrypt',{'input':{'path':'locked.pdf'},'password':'not-the-password','output':{'path':'never.pdf'}},'INVALID_PASSWORD'),
+          ('decrypt',{'input':{'path':'one.pdf'},'password':'anything','output':{'path':'never2.pdf'}},'INVALID_REQUEST'),
+          ('encrypt',{'input':{'path':'locked.pdf'},'password':'synthetic-user-secret','output':{'path':'twice.pdf'}},'ENCRYPTED_UNSUPPORTED'),
+          ('encrypt',{'input':{'path':'signature-marker.pdf'},'password':'synthetic-user-secret','output':{'path':'signed-locked.pdf'}},'SIGNED_UNSUPPORTED'),
+          ('decrypt',{'input':{'path':'locked.pdf'},'password':'synthetic-owner-secret','output':{'path':'opened-owner.pdf'}},None),
+          ('decrypt',{'input':{'path':'locked.pdf'},'password':'synthetic-user-secret','output':{'path':'opened.pdf'}},None),
+          ('encrypt',{'input':{'path':'annotated.pdf'},'password':'synthetic-user-secret','output':{'path':'locked-form.pdf'}},None),
+          ('decrypt',{'input':{'path':'locked-form.pdf'},'password':'synthetic-user-secret','output':{'path':'opened-form.pdf'}},None),
+          # Password boundaries: single-character, whitespace (kept
+          # verbatim, never stripped) and Unicode all round-trip; the
+          # spec's 127-byte bound is enforced in bytes — 127 bytes work,
+          # 128 bytes are rejected rather than silently truncated, and a
+          # multi-byte password under the character limit can still
+          # exceed the byte bound.
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'a','output':{'path':'pw-a.pdf'}},None),
+          ('decrypt',{'input':{'path':'pw-a.pdf'},'password':'a','output':{'path':'pw-a-open.pdf'}},None),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'  spaced  ','output':{'path':'pw-ws.pdf'}},None),
+          ('decrypt',{'input':{'path':'pw-ws.pdf'},'password':'spaced','output':{'path':'pw-ws-stripped.pdf'}},'INVALID_PASSWORD'),
+          ('decrypt',{'input':{'path':'pw-ws.pdf'},'password':'  spaced  ','output':{'path':'pw-ws-open.pdf'}},None),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'pä🔒','output':{'path':'pw-uni.pdf'}},None),
+          ('decrypt',{'input':{'path':'pw-uni.pdf'},'password':'pä🔒','output':{'path':'pw-uni-open.pdf'}},None),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'x'*127,'output':{'path':'pw-127.pdf'}},None),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'x'*128,'output':{'path':'pw-128.pdf'}},'INVALID_REQUEST'),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'a'*126+'é','output':{'path':'pw-mb.pdf'}},'INVALID_REQUEST'),
+          # An intentionally empty user password is an R6 owner-only file:
+          # it opens without a password (the response warns it has no
+          # confidentiality) and decrypts with an explicitly empty one.
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'','ownerPassword':'synthetic-owner-secret','output':{'path':'owner-only.pdf'}},None),
+          ('decrypt',{'input':{'path':'owner-only.pdf'},'password':'','output':{'path':'owner-only-open.pdf'}},None),
+          ('decrypt',{'input':{'path':'owner-only.pdf'},'password':'synthetic-owner-secret','output':{'path':'owner-only-owner.pdf'}},None),
+          # Line breaks in a password reach qpdf intact through the job
+          # JSON (a --password-file would carry only the first line); NUL
+          # bytes are rejected outright rather than truncating silently.
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'one\ntwo','output':{'path':'pw-nl.pdf'}},None),
+          ('decrypt',{'input':{'path':'pw-nl.pdf'},'password':'one\ntwo','output':{'path':'pw-nl-open.pdf'}},None),
+          ('decrypt',{'input':{'path':'pw-nl.pdf'},'password':'one','output':{'path':'pw-nl-bad.pdf'}},'INVALID_PASSWORD'),
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'a\x00b','output':{'path':'pw-nul.pdf'}},'INVALID_REQUEST'),
+          # A supplied blank owner password is refused: qpdf rejects it
+          # for AES-256 because the output would open without a password.
+          ('encrypt',{'input':{'path':'one.pdf'},'password':'p','ownerPassword':'','output':{'path':'pw-bo.pdf'}},'INVALID_REQUEST'),
         ]
         if PDFOXIDE:
             oxide_cases=[
@@ -339,8 +386,14 @@ def run():
         originals={surface:{f.name:digest(f) for f in root.glob('*.pdf')} for surface,root in roots.items()}
         responses={}
         for n,(command,request,error) in enumerate(corpus,10):
-            op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf','split':'splitPdf','remove-pages':'removePages','compress':'compressPdf','extract-text':'extractText','render-page':'renderPage'}[command]
-            cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps(request)],capture_output=True,text=True)
+            op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf','split':'splitPdf','remove-pages':'removePages','compress':'compressPdf','extract-text':'extractText','render-page':'renderPage','encrypt':'encryptPdf','decrypt':'decryptPdf'}[command]
+            if command in ('encrypt','decrypt'):
+                # Secrets never ride argv: the CLI surface takes the request
+                # through a private file instead of --request-json.
+                req_file=roots['cli']/'request-secret.json';req_file.write_text(json.dumps(request));req_file.chmod(0o600)
+                cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-file',str(req_file)],capture_output=True,text=True)
+            else:
+                cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps(request)],capture_output=True,text=True)
             assert bool(cli.returncode)==bool(error),(n,command,cli.returncode,cli.stderr,cli.stdout);a=json.loads(cli.stderr if error else cli.stdout)
             assert not (cli.stdout if error else cli.stderr),(n,'framing')
             try:status,b=http(port,token,'/v1/'+command,request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else (180 if command=='compress' and request.get('maxOutputBytes') else 30 if command=='compress' else 15))
@@ -349,6 +402,10 @@ def run():
             result=mcp_read(mcp)['result'];c=json.loads(result['content'][0]['text'])
             assert result['isError']==bool(error)
             if not error:assert result['structuredContent']==c
+            if not error and command in ('encrypt','decrypt'):
+                # Encryption randomizes salts and file IDs, and each surface's
+                # locked.pdf differs — envelopes agree in shape, not bytes.
+                for r in (a,b,c):r['result'].pop('sha256');r['result'].pop('bytes')
             assert a==b==c,(n,'surface mismatch',a,b,c)
             if error:assert a['error']['code']==error,(n,a)
             else:assert status==200
@@ -418,6 +475,8 @@ def run():
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'split-a.pdf'),'-']).decode();assert 'PAGE-A' in text and 'PAGE-B' not in text
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'split-c.pdf'),'-']).decode();assert text.index('PAGE-B')<text.index('PAGE-C') and 'PAGE-A' not in text
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'trimmed.pdf'),'-']).decode();assert 'PAGE-B' in text and 'PAGE-A' not in text and 'PAGE-C' not in text
+        # The decrypt round trip restores the semantic page content.
+        text=subprocess.check_output(['pdftotext',str(roots['cli']/'opened.pdf'),'-']).decode();assert 'PAGE-ONE' in text
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'compressed.pdf'),'-']).decode();assert [text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C']]==sorted(text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C'])
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'compressed-lossy.pdf'),'-']).decode();assert [text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C']]==sorted(text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C'])
         comp_res=json.loads(subprocess.check_output([str(BIN),'compress','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'three.pdf'},'output':{'path':'compressed.pdf','replaceExisting':True}})]))['result']
@@ -552,6 +611,59 @@ def run():
         r=sh(['inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'missing.pdf']);assert "input 'missing.pdf'" in r.stderr,r.stderr
         r=sh(['inspect','--root',str(roots['cli']),'--request-json',json.dumps({'input':{'path':1}})]);assert '/input/path' in r.stderr,r.stderr
         r=sh(['bogus']);assert "unknown command 'bogus'" in r.stderr,r.stderr
+        # Secret channels: --request-json never carries literal passwords
+        # (argv is machine-readable), and the error never echoes them back.
+        sentinel='sentinel-secret-value-7f3a'
+        r=sh(['encrypt','--root',str(roots['cli']),'--request-json',json.dumps({'input':{'path':'one.pdf'},'password':sentinel,'output':{'path':'z.pdf'}})])
+        assert r.returncode and 'cannot carry' in r.stderr and sentinel not in r.stderr and sentinel not in r.stdout,r.stderr
+        r=sh(['decrypt','--root',str(roots['cli']),'--request-json',json.dumps({'input':{'path':'locked.pdf'},'password':sentinel,'output':{'path':'z.pdf'}})])
+        assert r.returncode and 'cannot carry' in r.stderr and sentinel not in r.stderr,r.stderr
+        r=sh(['compress','--root',str(roots['cli']),'--request-json',json.dumps({'input':{'path':'one.pdf'},'password':sentinel,'output':{'path':'z.pdf'}})])
+        assert r.returncode and 'cannot carry' in r.stderr,r.stderr
+        # --password-file requires owner-only permissions and round-trips.
+        secret=roots['cli']/'secret-file';secret.write_text('synthetic-user-secret\n')
+        secret.chmod(0o644)
+        r=sh(['encrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'one.pdf','locked-cli.pdf','--password-file',str(secret)])
+        assert r.returncode and 'chmod 600' in r.stderr,r.stderr
+        secret.chmod(0o600)
+        r=sh(['encrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'one.pdf','locked-cli.pdf','--password-file',str(secret)])
+        assert r.returncode==0,(r.returncode,r.stderr)
+        r=sh(['decrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'locked-cli.pdf','opened-cli.pdf','--password-file',str(secret)])
+        assert r.returncode==0,(r.returncode,r.stderr)
+        secret.write_text('not-the-password\n');r=sh(['decrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'locked-cli.pdf','never-cli.pdf','--password-file',str(secret)])
+        assert r.returncode and json.loads(r.stderr)['error']['code']=='INVALID_PASSWORD',r.stderr
+        # Piped stdin carries secrets without argv or files.
+        r=sh(['encrypt','--root',str(roots['cli']),'--qpdf',str(QPDF)],input=json.dumps({'input':{'path':'one.pdf'},'password':'synthetic-user-secret','output':{'path':'locked-stdin.pdf'}}))
+        assert r.returncode==0,(r.returncode,r.stderr)
+        r=sh(['decrypt','--root',str(roots['cli']),'--qpdf',str(QPDF)],input=json.dumps({'input':{'path':'locked-stdin.pdf'},'password':'synthetic-user-secret','output':{'path':'opened-stdin.pdf'}}))
+        assert r.returncode==0,(r.returncode,r.stderr)
+        # Password flags on unrelated commands are rejected; a password file
+        # plus a request-field password conflict too.
+        r=sh(['inspect','--root',str(roots['cli']),'one.pdf','--password-file',str(secret)])
+        assert r.returncode and 'encrypt and decrypt' in r.stderr,r.stderr
+        r=sh(['decrypt','--root',str(roots['cli']),'--password-file',str(secret)],input=json.dumps({'input':{'path':'locked-cli.pdf'},'password':'x','output':{'path':'z.pdf'}}))
+        assert r.returncode and 'given twice' in r.stderr,r.stderr
+        # An empty open password warns it provides no confidentiality.
+        r=sh(['encrypt','--root',str(roots['cli']),'--qpdf',str(QPDF)],input=json.dumps({'input':{'path':'one.pdf'},'password':'','output':{'path':'owner-only-cli.pdf'}}))
+        assert r.returncode==0 and any(w['code']=='EMPTY_OPEN_PASSWORD' for w in json.loads(r.stdout)['warnings']),(r.returncode,r.stderr,r.stdout)
+        # --owner-password-file does not apply to decrypt.
+        r=sh(['decrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'locked-cli.pdf','z.pdf','--owner-password-file',str(secret)])
+        assert r.returncode and 'encrypt only' in r.stderr,r.stderr
+        # A zero-byte secret file supplies nothing and is refused; a lone
+        # newline supplies an intentionally empty password.
+        secret.write_bytes(b'')
+        r=sh(['encrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'one.pdf','empty-file.pdf','--password-file',str(secret)])
+        assert r.returncode and 'is empty' in r.stderr,r.stderr
+        secret.write_bytes(b'\n')
+        r=sh(['encrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'one.pdf','empty-pw-cli.pdf','--password-file',str(secret)])
+        assert r.returncode==0,(r.returncode,r.stderr)
+        r=sh(['decrypt','--root',str(roots['cli']),'--qpdf',str(QPDF),'empty-pw-cli.pdf','empty-pw-open.pdf','--password-file',str(secret)])
+        assert r.returncode==0,(r.returncode,r.stderr)
+        # An omitted password on a non-terminal errors instead of blocking
+        # — distinct from an intentionally empty one.
+        r=sh(['decrypt','--root',str(roots['cli']),'--qpdf',str(QPDF)],input=json.dumps({'input':{'path':'locked-cli.pdf'},'output':{'path':'np.pdf'}}))
+        assert r.returncode and 'hidden prompt' in r.stderr,r.stderr
+        secret.write_text('synthetic-user-secret\n')
         # --pages as a flag builds the same request as the positional spec.
         a=sh(['extract','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','--pages','1-2','-o','flag-sub.pdf']);b=sh(['extract','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','1-2','-o','flag-sub2.pdf']);assert a.returncode==0 and b.returncode==0 and json.loads(a.stdout)['result']['pageCount']==2,(a.stderr,b.stderr)
         # Absolute and ~ shorthand paths adapt the workspace root.

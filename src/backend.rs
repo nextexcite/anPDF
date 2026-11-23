@@ -1,8 +1,11 @@
 use crate::error::{Error, Result};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "linux")]
+use std::io::{Seek, SeekFrom};
 use std::{
-    io::Read,
+    io::{Read, Write},
+    os::unix::fs::OpenOptionsExt,
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -134,8 +137,84 @@ pub enum CompressMode {
     Lossy { jpeg_quality: u8 },
 }
 
+/// A secret handed to a spawned backend worker without crossing argv, the
+/// process environment, or any loggable surface: on Linux an inherited
+/// anonymous `memfd` descriptor (`/proc/self/fd/N`); elsewhere a
+/// staging-local file opened private (0o600) at creation and unlinked on
+/// drop. The worker's argv carries only the descriptor or staging path,
+/// which names a channel meaningless outside the spawned process.
+struct SecretChannel {
+    arg: String,
+    _fd: Option<std::fs::File>,
+    staging_file: Option<PathBuf>,
+}
+impl SecretChannel {
+    /// `dir` is the job's private staging directory (the input or output's
+    /// parent); it holds the file fallback and must already be private.
+    fn new(dir: &Path, secret: &[u8]) -> Result<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::FromRawFd;
+            let fd = unsafe { libc::memfd_create(c"anpdf-secret".as_ptr(), 0) };
+            if fd >= 0 {
+                let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+                file.write_all(secret).and_then(|_| file.write_all(b"\n"))?;
+                file.seek(SeekFrom::Start(0))?;
+                return Ok(Self {
+                    arg: format!("/proc/self/fd/{fd}"),
+                    _fd: Some(file),
+                    staging_file: None,
+                });
+            }
+            // Older kernels lack memfd: fall through to a private file.
+        }
+        let path = dir.join(".anpdf-secret");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
+        file.write_all(secret).and_then(|_| file.write_all(b"\n"))?;
+        file.sync_all()?;
+        Ok(Self {
+            arg: path
+                .to_str()
+                .ok_or(Error("ACCESS_DENIED", None))?
+                .to_string(),
+            _fd: Some(file),
+            staging_file: Some(path),
+        })
+    }
+    fn arg(&self) -> &str {
+        &self.arg
+    }
+}
+impl Drop for SecretChannel {
+    fn drop(&mut self) {
+        if let Some(path) = &self.staging_file {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+/// A random, unguessable owner password for callers who omit one, inside
+/// the 127-byte specification bound and never persisted anywhere.
+pub fn generated_owner() -> Result<String> {
+    let mut bytes = [0u8; 32];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+fn invalid_password(stderr: &[u8]) -> bool {
+    std::str::from_utf8(stderr).is_ok_and(|s| s.contains("invalid password"))
+}
+
 pub trait Backend: Send + Sync {
-    fn inspect(&self, path: &Path, control: &Control, deep: bool) -> Result<(Value, Vec<Value>)>;
+    fn inspect(
+        &self,
+        path: &Path,
+        password: Option<&str>,
+        control: &Control,
+        deep: bool,
+    ) -> Result<(Value, Vec<Value>)>;
     fn transform(
         &self,
         paths: &[PathBuf],
@@ -148,6 +227,21 @@ pub trait Backend: Send + Sync {
         path: &Path,
         mode: CompressMode,
         out: &Path,
+        control: &Control,
+    ) -> Result<Vec<Value>>;
+    fn encrypt(
+        &self,
+        input: &Path,
+        out: &Path,
+        user: &str,
+        owner: &str,
+        control: &Control,
+    ) -> Result<Vec<Value>>;
+    fn decrypt(
+        &self,
+        input: &Path,
+        out: &Path,
+        password: &str,
         control: &Control,
     ) -> Result<Vec<Value>>;
 }
@@ -313,7 +407,11 @@ fn bounded(mut r: impl Read, max: usize, overflow: Arc<AtomicBool>) -> Vec<u8> {
     out
 }
 impl Qpdf {
-    pub(crate) fn run(&self, args: &[String], control: &Control) -> Result<(i32, Vec<u8>)> {
+    pub(crate) fn run(
+        &self,
+        args: &[String],
+        control: &Control,
+    ) -> Result<(i32, Vec<u8>, Vec<u8>)> {
         control.check()?;
         let mut cmd = Command::new(&self.executable);
         cmd.args(args)
@@ -375,17 +473,32 @@ impl Qpdf {
         // Kill descendants before joining pipe readers, even if the leader exited.
         unsafe { libc::kill(-pid, libc::SIGKILL) };
         let bytes = out.join().map_err(|_| Error("INTERNAL", None))?;
-        let _ = err.join();
+        let err_bytes = err.join().unwrap_or_default();
         if overflow.load(Ordering::Relaxed) {
             return Err(Error("LIMIT_EXCEEDED", None));
         }
         if status.code().is_none() {
             return Err(Error("LIMIT_EXCEEDED", None));
         }
-        Ok((status.code().unwrap(), bytes))
+        Ok((status.code().unwrap(), bytes, err_bytes))
+    }
+    /// Run one qpdf invocation described by a job JSON document. The
+    /// document — which may carry passwords — reaches the worker through
+    /// an inherited descriptor or private staging file; argv stays clean
+    /// and secrets survive line breaks (a `--password-file` reads only
+    /// its first line).
+    fn run_job(
+        &self,
+        dir: &Path,
+        job: &Value,
+        control: &Control,
+    ) -> Result<(i32, Vec<u8>, Vec<u8>)> {
+        let bytes = serde_json::to_vec(job).map_err(|_| Error("INTERNAL", None))?;
+        let channel = SecretChannel::new(dir, &bytes)?;
+        self.run(&[format!("--job-json-file={}", channel.arg())], control)
     }
     fn qualified(&self, control: &Control) -> Result<Vec<Value>> {
-        let (code, bytes) = self.run(&["--version".into()], control)?;
+        let (code, bytes, _) = self.run(&["--version".into()], control)?;
         let exact = self.exact || std::env::var_os("ANPDF_QPDF_EXACT").is_some_and(|v| v == "1");
         let version = qpdf_version(&bytes).ok_or(Error("BACKEND_UNAVAILABLE", None))?;
         if code != 0 || !supported_version(version, exact) {
@@ -403,8 +516,12 @@ impl Qpdf {
         &self,
         v: &Value,
         path: &str,
+        password: Option<&str>,
         control: &Control,
     ) -> Result<(bool, Value)> {
+        let dir = Path::new(path)
+            .parent()
+            .ok_or(Error("ACCESS_DENIED", None))?;
         let objs = &v["qpdf"][1];
         let trailer = &objs["trailer"]["value"];
         let info = trailer
@@ -422,14 +539,15 @@ impl Qpdf {
         })?;
         if let Some(xmp) = xmp {
             if let Some(reference) = xmp.as_str().and_then(|r| r.strip_suffix(" R")) {
-                let (code, bytes) = self.run(
-                    &[
-                        format!("--show-object={}", reference.replace(' ', ",")),
-                        "--filtered-stream-data".into(),
-                        path.into(),
-                    ],
-                    control,
-                )?;
+                let mut job = json!({
+                    "inputFile": path,
+                    "showObject": reference.replace(' ', ","),
+                    "filteredStreamData": "",
+                });
+                if let Some(p) = password {
+                    job["password"] = p.into();
+                }
+                let (code, bytes, _) = self.run_job(dir, &job, control)?;
                 if code == 0 {
                     metadata.push(json!(hex_hash(&bytes)));
                 } else {
@@ -459,10 +577,13 @@ impl Qpdf {
                     known = false;
                     break;
                 }
-                let extracted =
-                    self.run(&[format!("--show-attachment={key}"), path.into()], control);
+                let mut job = json!({"inputFile": path, "showAttachment": key});
+                if let Some(p) = password {
+                    job["password"] = p.into();
+                }
+                let extracted = self.run_job(dir, &job, control);
                 control.check()?;
-                let Ok((0, bytes)) = extracted else {
+                let Ok((0, bytes, _)) = extracted else {
                     known = false;
                     break;
                 };
@@ -561,10 +682,14 @@ fn walk(v: &Value, key: &str) -> Result<bool> {
 }
 fn sig(v: &Value) -> Result<bool> {
     walk_any(v, |m| {
-        m.get("/Type").is_some_and(|x| x == "/Sig")
-            || m.get("/FT").is_some_and(|x| x == "/Sig")
-            || m.contains_key("/ByteRange")
-            || m.contains_key("/Perms")
+        // The /Encrypt dictionary also carries /Perms (encrypted permission
+        // bytes) — its /Filter names a security handler, never a signature.
+        let encryption_dict = m.get("/Filter").is_some_and(|x| x == "/Standard");
+        !encryption_dict
+            && (m.get("/Type").is_some_and(|x| x == "/Sig")
+                || m.get("/FT").is_some_and(|x| x == "/Sig")
+                || m.contains_key("/ByteRange")
+                || m.contains_key("/Perms"))
     })
 }
 fn resolve_obj<'a>(objs: &'a Value, r: &str) -> Option<&'a Value> {
@@ -731,7 +856,7 @@ fn inspect_json(v: &Value, warn_code: i32) -> Result<(Value, Vec<Value>)> {
             "pageCount": pages,
             "pdfVersion": pdf_version,
             "structuralStatus": if warnings.is_empty() { "valid" } else { "warnings" },
-            "encrypted": false,
+            "encrypted": v["encrypt"]["encrypted"].as_bool() == Some(true),
             "forms": forms,
             "signatures": signatures,
             "signatureValidity": "notChecked",
@@ -745,24 +870,50 @@ fn inspect_json(v: &Value, warn_code: i32) -> Result<(Value, Vec<Value>)> {
     ))
 }
 impl Backend for Qpdf {
-    fn inspect(&self, path: &Path, control: &Control, deep: bool) -> Result<(Value, Vec<Value>)> {
+    fn inspect(
+        &self,
+        path: &Path,
+        password: Option<&str>,
+        control: &Control,
+        deep: bool,
+    ) -> Result<(Value, Vec<Value>)> {
         let mut warnings = self.qualified(control)?;
         let path = path
             .to_str()
             .ok_or(Error("ACCESS_DENIED", None))?
             .to_string();
-        let (code, data) = self.run(
-            &[
-                "--json=2".into(),
-                "--json-stream-data=none".into(),
-                path.clone(),
-            ],
-            control,
-        )?;
+        // The password reaches qpdf inside a job JSON document carried on
+        // an inherited descriptor or private staging file — argv stays
+        // clean and line breaks in the password survive (a password file
+        // would carry only the first line).
+        let dir = Path::new(&path)
+            .parent()
+            .ok_or(Error("ACCESS_DENIED", None))?;
+        let mut job = json!({
+            "inputFile": path,
+            "json": "latest",
+            "jsonStreamData": "none",
+        });
+        if let Some(p) = password {
+            job["password"] = p.into();
+        }
+        let (code, data, stderr) = self.run_job(dir, &job, control)?;
         if code != 0 && code != 3 {
+            if invalid_password(&stderr) {
+                // No password supplied means the document is protected, not
+                // that a supplied secret was wrong.
+                return Err(Error(
+                    if password.is_none() {
+                        "ENCRYPTED_UNSUPPORTED"
+                    } else {
+                        "INVALID_PASSWORD"
+                    },
+                    None,
+                ));
+            }
             // A rejected dump is either an invalid document or one needing a
             // password; --is-encrypted distinguishes (0 encrypted, 2 not).
-            let (encrypted, _) = self.run(&["--is-encrypted".into(), path.clone()], control)?;
+            let (encrypted, _, _) = self.run(&["--is-encrypted".into(), path.clone()], control)?;
             return Err(Error(
                 if encrypted == 0 {
                     "ENCRYPTED_UNSUPPORTED"
@@ -773,7 +924,7 @@ impl Backend for Qpdf {
             ));
         }
         let v: Value = serde_json::from_slice(&data).map_err(|_| Error("INVALID_PDF", None))?;
-        if v["encrypt"]["encrypted"].as_bool() == Some(true) {
+        if v["encrypt"]["encrypted"].as_bool() == Some(true) && password.is_none() {
             return Err(Error("ENCRYPTED_UNSUPPORTED", None));
         }
         // `deep` re-runs qpdf --check, which decodes and validates every
@@ -782,9 +933,20 @@ impl Backend for Qpdf {
         // scope to callers.
         let mut warn_code = if code == 3 { 3 } else { 0 };
         if deep {
-            let (check, _) = self.run(&["--check".into(), path.clone()], control)?;
+            let mut check_job = json!({"inputFile": path, "check": ""});
+            if let Some(p) = password {
+                check_job["password"] = p.into();
+            }
+            let (check, _, check_err) = self.run_job(dir, &check_job, control)?;
             if check != 0 && check != 3 {
-                return Err(Error("INVALID_PDF", None));
+                return Err(Error(
+                    if invalid_password(&check_err) {
+                        "INVALID_PASSWORD"
+                    } else {
+                        "INVALID_PDF"
+                    },
+                    None,
+                ));
             }
             if check == 3 {
                 warn_code = 3;
@@ -796,7 +958,7 @@ impl Backend for Qpdf {
         if report["pageCount"].as_u64() == Some(0) {
             return Err(Error("INVALID_PDF", None));
         }
-        let (has_metadata, evidence) = self.preservation_evidence(&v, &path, control)?;
+        let (has_metadata, evidence) = self.preservation_evidence(&v, &path, password, control)?;
         report["hasMetadata"] = json!(has_metadata);
         report["preservationEvidence"] = evidence;
         warnings.extend(w);
@@ -829,7 +991,7 @@ impl Backend for Qpdf {
         }
         args.push("--".into());
         args.push(out.to_str().ok_or(Error("ACCESS_DENIED", None))?.into());
-        let (code, _) = self.run(&args, control)?;
+        let (code, _, _) = self.run(&args, control)?;
         if code != 0 && code != 3 {
             return Err(Error("INVALID_PDF", None));
         }
@@ -857,11 +1019,81 @@ impl Backend for Qpdf {
         args.push("--".into());
         args.push(path.to_str().ok_or(Error("ACCESS_DENIED", None))?.into());
         args.push(out.to_str().ok_or(Error("ACCESS_DENIED", None))?.into());
-        let (code, _) = self.run(&args, control)?;
+        let (code, _, _) = self.run(&args, control)?;
         if code != 0 && code != 3 {
             return Err(Error("INVALID_PDF", None));
         }
         Ok(warning(code))
+    }
+    fn encrypt(
+        &self,
+        input: &Path,
+        out: &Path,
+        user: &str,
+        owner: &str,
+        control: &Control,
+    ) -> Result<Vec<Value>> {
+        let mut warnings = self.qualified(control)?;
+        let dir = out.parent().ok_or(Error("ACCESS_DENIED", None))?;
+        // The job JSON carries both passwords; it reaches qpdf as an
+        // inherited descriptor or private staging file — argv stays clean.
+        let (code, _, stderr) = self.run_job(
+            dir,
+            &json!({
+                "inputFile": input.to_str().ok_or(Error("ACCESS_DENIED", None))?,
+                "outputFile": out.to_str().ok_or(Error("ACCESS_DENIED", None))?,
+                "encrypt": {
+                    "userPassword": user,
+                    "ownerPassword": owner,
+                    "256bit": {}
+                }
+            }),
+            control,
+        )?;
+        if code != 0 && code != 3 {
+            return Err(Error(
+                if invalid_password(&stderr) {
+                    "INVALID_PASSWORD"
+                } else {
+                    "INVALID_PDF"
+                },
+                None,
+            ));
+        }
+        warnings.extend(warning(code));
+        Ok(warnings)
+    }
+    fn decrypt(
+        &self,
+        input: &Path,
+        out: &Path,
+        password: &str,
+        control: &Control,
+    ) -> Result<Vec<Value>> {
+        let mut warnings = self.qualified(control)?;
+        let dir = out.parent().ok_or(Error("ACCESS_DENIED", None))?;
+        let (code, _, stderr) = self.run_job(
+            dir,
+            &json!({
+                "inputFile": input.to_str().ok_or(Error("ACCESS_DENIED", None))?,
+                "outputFile": out.to_str().ok_or(Error("ACCESS_DENIED", None))?,
+                "password": password,
+                "decrypt": "",
+            }),
+            control,
+        )?;
+        if code != 0 && code != 3 {
+            return Err(Error(
+                if invalid_password(&stderr) {
+                    "INVALID_PASSWORD"
+                } else {
+                    "INVALID_PDF"
+                },
+                None,
+            ));
+        }
+        warnings.extend(warning(code));
+        Ok(warnings)
     }
 }
 
@@ -891,7 +1123,7 @@ mod tests {
         };
         let report = json!({"outlines":[], "pages":[], "attachments":{"sample.txt":{"streams":{"/F":"1 0 R"}}}, "qpdf":[{},{}]});
         let (_, evidence) = qpdf
-            .preservation_evidence(&report, "input.pdf", &Control::default())
+            .preservation_evidence(&report, "input.pdf", None, &Control::default())
             .unwrap();
         assert!(evidence["attachments"].is_string());
         for script in [
@@ -900,13 +1132,13 @@ mod tests {
         ] {
             fs::write(&executable, script).unwrap();
             let (_, evidence) = qpdf
-                .preservation_evidence(&report, "input.pdf", &Control::default())
+                .preservation_evidence(&report, "input.pdf", None, &Control::default())
                 .unwrap();
             assert!(evidence.get("attachments").is_none());
         }
         let empty = json!({"attachments":{}, "outlines":[], "pages":[], "qpdf":[{},{}]});
         assert!(
-            qpdf.preservation_evidence(&empty, "input.pdf", &Control::default())
+            qpdf.preservation_evidence(&empty, "input.pdf", None, &Control::default())
                 .unwrap()
                 .1["attachments"]
                 .is_string()
@@ -918,7 +1150,7 @@ mod tests {
         };
         let start = Instant::now();
         assert_eq!(
-            qpdf.preservation_evidence(&report, "input.pdf", &control)
+            qpdf.preservation_evidence(&report, "input.pdf", None, &control)
                 .unwrap_err()
                 .0,
             "TIMEOUT"

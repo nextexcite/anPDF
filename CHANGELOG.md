@@ -4,6 +4,58 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
+## [0.4.0] - 2026-11-23
+
+### Added
+- Password protection: `encryptPdf` and `decryptPdf` operations (CLI
+  `anpdf encrypt` / `anpdf decrypt`, HTTP `/v1/encrypt` / `/v1/decrypt`,
+  MCP tools) apply and remove standard AES-256 encryption (PDF revision 6)
+  via the qualified qpdf backend. Encrypt requires a non-empty user
+  password and accepts an optional `ownerPassword`; when omitted, a random
+  unguessable owner password is generated — never an empty one. Decrypt
+  requires a valid user or owner password; a wrong password fails as
+  `INVALID_PASSWORD`, decrypting an unencrypted input fails as
+  `INVALID_REQUEST`, and any other operation on an encrypted input still
+  fails as `ENCRYPTED_UNSUPPORTED`.
+- Secrets never enter command arguments, environment, logs or errors. On a
+  terminal, `anpdf encrypt`/`decrypt` prompt interactively with echo
+  disabled (a blank owner answer generates one); scripts use
+  `--password-file <f>` / `--owner-password-file <f>` (must be `chmod 600`),
+  `--request-file` or piped stdin carrying the JSON `password` /
+  `ownerPassword` fields. `--request-json` refuses literal password fields
+  — argv is machine-readable. HTTP and MCP requests carry the fields in
+  the body only; no filesystem path fields for secrets exist. The backend
+  hands secrets to qpdf through an inherited anonymous descriptor (memfd)
+  or a private staging file, never argv.
+- Positional shorthand for both operations: `anpdf encrypt <doc.pdf>
+  [<out.pdf>]` (default `<name>-encrypted.pdf`) and `anpdf decrypt
+  <doc.pdf> [<out.pdf>]` (default `<name>-decrypted.pdf`).
+- Inspect reports `encrypted: true` on protected inputs; encrypted outputs
+  are re-inspected with the new password so the returned page count, forms
+  and signatures status are verified after the rewrite, and
+  `preservationEvidence` hashing works through encryption.
+- New canonical error `INVALID_PASSWORD` (exit 3, HTTP 403).
+
+## [0.3.4] - 2026-11-21
+
+### Changed
+- OCI image: advanced the pinned Debian snapshot to pick up glibc
+  deb13u5.
+
+## [0.3.3] - 2026-11-20
+
+### Added
+- Terminal progress reporting and human-readable byte sizes in CLI output;
+  the argument parser is rebuilt on clap.
+- Size-targeted compression improvements: the resample worker decodes each
+  image once, measures every ladder rung and applies the gentlest rung
+  that fits (~10% of target); worker memory is bounded by a per-worker
+  /proc VmRSS poll under its own AS limit; deadlines scale with input
+  size and the best-so-far candidate is published on exhaustion.
+- `inspectPdf` parses the object graph shallowly by default; `deepCheck:
+  true` opts into complete qpdf stream validation. PDF-writing operations
+  keep the deep check on their inputs.
+
 ## [0.3.2] - 2026-11-20
 
 ### Added
