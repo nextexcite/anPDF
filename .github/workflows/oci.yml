@@ -347,6 +347,8 @@ jobs:
             gh release create "$TAG" --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "anPDF ${TAG}" --notes "$notes" --prerelease release-assets/*
           fi
       - name: Notify the Homebrew tap updater
+        # The tap only accepts plain vMAJOR.MINOR.PATCH tags.
+        if: ${{ !contains(needs.prepare.outputs.version, '-') }}
         env:
           # GITHUB_TOKEN is scoped to this repository and cannot dispatch an
           # event on nextexcite/homebrew-anpdf. HOMEBREW_TAP_TOKEN must be an

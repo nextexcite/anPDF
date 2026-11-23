@@ -4,7 +4,17 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
-## [0.4.1] - Unreleased
+## [0.5.0-alpha.1] - 2026-11-23
+
+### Added
+- Opt-in `compress --mode layered` (CLI, HTTP, and MCP). With PDFium, eligible
+  traced pages are rebuilt at 400 DPI with separate bilevel, grayscale, and
+  color layers. The layered output is used only when smaller than the lossless
+  pass; ineligible pages are not rasterized. Rebuilt pages lose vector detail.
+- Layered compression retains the lossless candidate on a processing deadline
+  while still honoring cancellation and strict size targets.
+
+## [0.4.1] - 2026-11-23
 
 ### Fixed
 - PDFium scales page content to the DPI-derived bitmap size.
@@ -195,7 +205,8 @@ SemVer prerelease suffixes, not production-qualified releases.
 ### Changed
 - Development milestone versioning without prerelease suffixes below 0.5.0.
 
-[0.4.1]: https://github.com/nextexcite/anPDF/compare/v0.4.0...main
+[0.5.0-alpha.1]: https://github.com/nextexcite/anPDF/compare/v0.4.1...v0.5.0-alpha.1
+[0.4.1]: https://github.com/nextexcite/anPDF/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nextexcite/anPDF/compare/v0.3.4...v0.4.0
 [0.3.0]: https://github.com/nextexcite/anPDF/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nextexcite/anPDF/releases/tag/v0.2.0

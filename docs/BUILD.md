@@ -7,11 +7,14 @@ Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on 
 tag pushes except PDFOxide preview tags, and on `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
 tag alignment on tag pushes), so untrusted PRs never receive package or release write permissions.
 
-Current published release: **0.4.0** ([v0.4.0](https://github.com/nextexcite/anPDF/releases/tag/v0.4.0)); `0.4.1` is staged on `main`, unpublished. Its baseline includes the
+The `0.5.0-alpha.1` baseline includes opt-in layered compression alongside the
 capability registry, default PDFium content operations, qpdf preservation reporting,
 size-targeted compression with automatic page rasterization, AES-256 encrypt/decrypt,
 and the synthetic comparison harness in `docs/BENCHMARK.md`. Status and the
 prioritized queue live in `docs/HANDOFF.md`.
+
+The Homebrew tap tracks plain `vMAJOR.MINOR.PATCH` tags. Download suffixed
+prereleases from GitHub Releases or use their versioned OCI tags directly.
 
 Versioning convention: `< 0.5.0` tags use clean milestone versions (`0.3.0`, `v0.3.0`); SemVer prerelease identifiers (`-alpha.N`, `-rc.N`) start at `>= 0.5.0`.
 

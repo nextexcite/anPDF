@@ -4,6 +4,13 @@ Only the newest section describes the current baseline; older sections are
 historical evidence kept for audit. Status and the prioritized queue live in
 [HANDOFF.md](HANDOFF.md).
 
+## 0.5.0-alpha.1
+
+Adds opt-in layered PDF compression. The tag workflow runs full CI and
+publishes development artifacts only after their automated checks pass.
+The remaining qualification gaps below still apply; this is not a
+production-qualified release.
+
 ## 0.4.x
 
 The current baseline adds AES-256 R6 `encryptPdf`/`decryptPdf` with protected
@@ -64,9 +71,9 @@ v0.4.0** — the `bench/providers/anpdf` adapter needs `ANPDF_BIN` +
 `ANPDF_ENGINE` on a manual run and none was captured at release. Rasterize
 cost is qualitative only ("order of a minute, deadline-bounded").
 
-`0.4.1` is staged on `main` and unpublished: raster-pass outcome reporting and
-measured terminal progress on a `--max-bytes` miss. PR CI passed on the merged
-commits; the staging commit's CI was still running at audit time.
+[v0.4.1](https://github.com/nextexcite/anPDF/releases/tag/v0.4.1) published
+on 2026-11-23. The [tag workflow](https://github.com/nextexcite/anPDF/actions/runs/45150899807)
+passed full automated qualification and publication.
 
 Remaining gates are unchanged from the 0.3.0 list below, plus external MCP/HTTP
 client conformance, formal OS/backend license sign-off, installed-binary

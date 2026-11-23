@@ -8,9 +8,9 @@ leave only the link.
 
 ## 1. Where the project stands
 
-**Baseline:** `0.4.1` staged on `main` (unpublished). Latest published build is
-[v0.4.0](https://github.com/nextexcite/anPDF/releases/tag/v0.4.0) — a development
-prerelease, not production-qualified. The PDFOxide engine ships separately as
+**Baseline:** `0.5.0-alpha.1` adds opt-in layered compression. See
+[GitHub Releases](https://github.com/nextexcite/anPDF/releases) for published
+development builds; they are not production-qualified. The PDFOxide engine ships separately as
 [v0.3.0-pdfoxide-preview.1](https://github.com/nextexcite/anPDF/releases/tag/v0.3.0-pdfoxide-preview.1);
 it is an evaluation artifact, not part of standard releases.
 
@@ -54,8 +54,8 @@ Read these as dated records, not current claims:
 Intention ordering, not commitments. Each phase ships only with the gates in
 [QUALIFICATION.md](QUALIFICATION.md).
 
-1. **Consolidate 0.4.x.** Publish staged 0.4.1; keep fixes on 0.4.x — no 0.5.0
-   without explicit owner approval. Close the compression untested-class log.
+1. **Qualify compression.** Close the compression untested-class log as the
+   0.5.0 prerelease line develops.
 2. **Qualification debt.** linux/arm64 native test run, macOS RSS-limit
    strategy, malformed/fuzz corpus growth, external MCP/HTTP client conformance,
    Forge fidelity gaps, formal OS/backend license sign-off.
@@ -81,14 +81,10 @@ linked in the owning doc.
    session log. *Acceptance:* formula test or tap CI exercises encrypt/decrypt
    on the installed build; `smoke.sh` gains an encrypt step; one real
    `brew install anpdf` run logged in QUALIFICATION.md.
-2. **Publish v0.4.1** — staged on `main`; requires owner go-ahead, green routine CI
-   on the staging commit, and item 1's installed-binary gates closed. The release
-   workflow runs [full qualification](BUILD.md#ci-matrix-and-pinned-github-actions)
-   on that commit and blocks publication on failure.
-   *Acceptance:* tag build green end-to-end; GHCR index + macOS tarball + tap
-   formula updated to 0.4.1; artifact/image sizes reported; CHANGELOG section
-   dated; release notes name shipped features (v0.4.0's were a generic
-   template that omitted `pageRasterization`).
+2. **Record prerelease evidence.** The tag workflow runs
+   [full qualification](BUILD.md#ci-matrix-and-pinned-github-actions)
+   before publishing. Record the verified GHCR index and macOS tarball;
+   the Homebrew tap continues to track plain version tags.
 3. **Compression untested classes** (degraded scans, ID/passport scans,
    CCITT/TIFF-dominant docs, mixed traced+live pages). *Acceptance:* one case
    entry per class in COMPRESSION-TECH-REVIEW.md §4 using the §5 template —
