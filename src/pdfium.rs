@@ -135,6 +135,66 @@ const UNCLEAR_OPS: &[&[u8]] = &[b"BDC", b"EMC", b"MP", b"DP", b"sh"];
 /// Dense traced page: at least this many painted paths drawn on it.
 const TRACED_PATH_FLOOR: usize = 64;
 
+fn page_render_config((width, height): (u32, u32)) -> PdfRenderConfig {
+    // With form drawing off, PDFium uses a transform matrix. A fixed bitmap
+    // size alone leaves that matrix at 1:1, regardless of the requested DPI.
+    PdfRenderConfig::new()
+        .render_annotations(false)
+        .render_form_data(false)
+        .set_target_size(width as i32, height as i32)
+        .clear_before_rendering(true)
+        .set_clear_color(PdfColor::WHITE)
+}
+
+fn raster_geometry_supported<'a>(doc: &'a Document, mut page: &'a Dictionary) -> Option<()> {
+    // The replacement image is placed at (0, 0) on the original page. Resolve
+    // the nearest definition of each inheritable attribute before doing so.
+    let mut attrs = [None; 3];
+    let mut at_root = false;
+    for _ in 0..64 {
+        for (value, key) in attrs
+            .iter_mut()
+            .zip([&b"Rotate"[..], b"MediaBox", b"CropBox"])
+        {
+            if value.is_none() && page.get(key).is_ok() {
+                *value = Some(page.get_deref(key, doc).ok()?);
+            }
+        }
+        let Ok(parent) = page.get(b"Parent") else {
+            at_root = true;
+            break;
+        };
+        page = doc.get_dictionary(parent.as_reference().ok()?).ok()?;
+    }
+    if !at_root {
+        return None;
+    }
+    let [rotation, media, crop] = attrs;
+    let rect = |value: &Object| {
+        let [x0, y0, x1, y1] = value.as_array().ok()?.as_slice() else {
+            return None;
+        };
+        let coords = [
+            x0.as_float().ok()?,
+            y0.as_float().ok()?,
+            x1.as_float().ok()?,
+            y1.as_float().ok()?,
+        ];
+        coords.iter().all(|n| n.is_finite()).then_some(coords)
+    };
+    let media = rect(media?)?;
+    if rotation.map_or(Some(0), |v| v.as_i64().ok())? % 360 != 0
+        || media[0] != 0.0
+        || media[1] != 0.0
+        || media[2] <= 0.0
+        || media[3] <= 0.0
+        || crop.is_some_and(|v| rect(v) != Some(media))
+    {
+        return None;
+    }
+    Some(())
+}
+
 /// Positive-evidence check for a traced-graphics page: dense painted paths
 /// with no text operators, no annotations, and no layer/blend/clip content
 /// that makes region separation uncertain. Returns a skip reason when the
@@ -143,28 +203,7 @@ fn traced_evidence(doc: &Document, page: &Dictionary, contents: &[u8]) -> Option
     if page.get(b"Annots").is_ok() {
         return Some("annotations");
     }
-    // The rebuilt page draws the rendered bitmap over the full box at its
-    // origin; a rotated page would rotate it twice and a shifted or cropped
-    // box would misplace it, so those keep original objects.
-    let box_origin = |k: &[u8]| {
-        resample_lookup(doc, page, k)
-            .and_then(|b| b.as_array().ok().cloned())
-            .map(|a| {
-                (
-                    a.first().and_then(|v| v.as_float().ok()).unwrap_or(0.0),
-                    a.get(1).and_then(|v| v.as_float().ok()).unwrap_or(0.0),
-                )
-            })
-    };
-    if page
-        .get(b"Rotate")
-        .ok()
-        .is_some_and(|r| r.as_i64().ok().unwrap_or(0) != 0)
-        || box_origin(b"MediaBox").is_some_and(|o| o != (0.0, 0.0))
-        || box_origin(b"CropBox")
-            .zip(box_origin(b"MediaBox"))
-            .is_some_and(|(c, m)| c != m)
-    {
+    if raster_geometry_supported(doc, page).is_none() {
         return Some("page-geometry");
     }
     let resources =
@@ -433,15 +472,8 @@ fn rasterize(document: &PdfDocument, request: &Value) -> Result<Value> {
                 let w_pt = f64::from(page.width().value);
                 let h_pt = f64::from(page.height().value);
                 let pixels = required_pixels((w_pt, h_pt), ladder[0].0);
-                let config = PdfRenderConfig::new()
-                    .render_annotations(false)
-                    .render_form_data(false)
-                    .set_fixed_width(pixels.0 as i32)
-                    .set_fixed_height(pixels.1 as i32)
-                    .clear_before_rendering(true)
-                    .set_clear_color(PdfColor::WHITE);
                 let image = page
-                    .render_with_config(&config)
+                    .render_with_config(&page_render_config(pixels))
                     .map_err(|_| Error("RENDER_FAILED", None))?
                     .as_image()
                     .map_err(|_| Error("INTERNAL", None))?;
@@ -519,15 +551,8 @@ fn rasterize(document: &PdfDocument, request: &Value) -> Result<Value> {
             // produce larger JPEGs than the measured path implies, which
             // would break the rung choice.
             let pixels = required_pixels((*w_pt, *h_pt), ladder[0].0);
-            let config = PdfRenderConfig::new()
-                .render_annotations(false)
-                .render_form_data(false)
-                .set_fixed_width(pixels.0 as i32)
-                .set_fixed_height(pixels.1 as i32)
-                .clear_before_rendering(true)
-                .set_clear_color(PdfColor::WHITE);
             let image = page
-                .render_with_config(&config)
+                .render_with_config(&page_render_config(pixels))
                 .map_err(|_| Error("RENDER_FAILED", None))?
                 .as_image()
                 .map_err(|_| Error("INTERNAL", None))?;
@@ -740,15 +765,8 @@ fn process(library: &Path, request: &Value) -> Result<Value> {
             .as_u64()
             .filter(|n| (36..=300).contains(n))
             .ok_or(Error("INVALID_REQUEST", None))? as u32;
-        let (width, height) = dimensions(page.width().value, page.height().value, dpi)?;
-        let config = PdfRenderConfig::new()
-            .render_annotations(false)
-            .render_form_data(false)
-            .set_fixed_width(width as i32)
-            .set_fixed_height(height as i32)
-            .clear_before_rendering(true)
-            .set_clear_color(PdfColor::WHITE);
-        page.render_with_config(&config)
+        let pixels = dimensions(page.width().value, page.height().value, dpi)?;
+        page.render_with_config(&page_render_config(pixels))
             .map_err(|_| Error("INVALID_PDF", None))?
             .as_image()
             .map_err(|_| Error("INTERNAL", None))?

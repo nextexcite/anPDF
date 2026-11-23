@@ -47,7 +47,7 @@ memory/CPU caps.
 | Traced-vector pages (text drawn as paths, ~1e3 paint ops/page) | dense path ops, no text ops, no annots, no layer/blend | whole-page rasterization in place | path simplification, stream recompression | non-image streams dominate → no image lever reaches target |
 | Page with live text/link + photo + line art | text ops / Annots present | photo resampled by descent; raster pass retains the page untouched | whole-page rasterize | searchable content must not be discarded |
 | Tagged/structured document | `MarkInfo`/`StructTreeRoot`/`OCProperties` present | raster pass returns `protected-structure`; descent may still run | partial rasterize | semantics would be silently dropped |
-| Rotated / shifted / cropped page | `Rotate != 0`, nonzero `MediaBox` origin, `CropBox != MediaBox` | raster pass retains original objects | offset/transform math | correctness beats coverage — placement would clip or double-rotate |
+| Rotated / shifted / cropped page | Effective (including inherited) rotation is nonzero, `MediaBox` origin is nonzero, or `CropBox` differs from `MediaBox` | raster pass retains original objects | offset/transform math | correctness beats coverage — placement would clip or double-rotate |
 | `Do` to Image XObject | resolves to `/Subtype /Image` | eligible alongside path evidence | — | already pixels |
 | `Do` to Form XObject | nested content decoded and scanned | eligible only when no text/layered ops inside | blind rasterize | nested live text would be flattened |
 | Undecodable content | `Content::decode` fails | retained | rasterize anyway | cannot prove no live text |
@@ -88,10 +88,11 @@ One entry per document class or reported failure, using §5's template.
 - **Baseline recipe (executable):** `anpdf compress traced.pdf -o out.pdf
   --max-bytes 50000` — pre-fix code published ~input size with
   `SIZE_TARGET_UNMET` (correct best-effort, useless to the user).
-- **Candidate recipe:** same command on main → the raster pass rebuilds both
-  pages; asserted result 41,239B, `targetMet`, techniques include
-  `pageRasterization`, warning `PAGE_RASTERIZED` (see
-  `tests/integration.py`, corpus entry `traced.pdf`).
+- **Historical result (original A4 fixture, before the layout fix below):**
+  41,239 bytes with `targetMet` and `PAGE_RASTERIZED`. With the layout fix,
+  a repeat on that A4 fixture returned 61,853 bytes with `SIZE_TARGET_UNMET`;
+  the raster pass hit its deadline. The compact fixture in Case 2 exercises
+  successful rasterization, not the original A4 byte target.
 - **Preservation checks:** page count/box intact; in `mixed-elements.pdf` the
   retained page kept its link annotation and `LIVE-TEXT-ANCHOR` extractable
   text while its photo was resampled by the descent.
@@ -124,6 +125,22 @@ One entry per document class or reported failure, using §5's template.
 - **Lesson:** gating a pass on an optional capability must surface the gate's
   outcome; a suggestion that reads like an available action is a bug report
   waiting to happen.
+
+### Case 2 — rasterization shrinks page content into a corner
+
+- **Fixture:** `traced_pdf(2)` in `fixtures/generate.py`, now on 238×337 pt
+  pages to keep the test fast without reducing the traced stream's complexity.
+- **Recipe:** `anpdf compress traced.pdf out.pdf --max-bytes 50000`, with
+  qpdf 12.4.2 and PDFium `chromium/8165` on Linux amd64.
+- **Baseline:** 160,216 → 47,427 bytes; `targetMet` was true, but the ink on
+  page 1 occupied only 57×75 pixels of a 238×337 render at 72 DPI. PDFium's
+  matrix render path was given a larger bitmap without a matching transform.
+- **Fixed:** 44,786 bytes, still under target, with the page 1 ink bounds
+  restored to the original `(0, 26, 238, 337)` (Poppler, 72 DPI). `qpdf --check`
+  found no syntax or stream errors. The integration test checks ink placement
+  on both pages in addition to page count and MediaBox dimensions.
+- **Verdict:** use the same scaled render for measurement and assembly, and
+  for `render-page`. Geometry is preserved on the fixture; JPEG remains lossy.
 
 ### Untested classes — next entries needed
 

@@ -81,16 +81,17 @@ def traced_ops(seed, n_paths):
         ops.append('h f' if nxt()%3 else 'f')
     return '\n'.join(ops).encode()
 
-def traced_pdf(pages, seed=7, ops_per_page=900):
+def traced_pdf(pages, seed=7, ops_per_page=900, parent_entries=''):
     """Multi-page document of traced-graphics content with no text or annots."""
     data=[b'<< /Type /Catalog /Pages 2 0 R >>', b'']
     kids=[]
     for n in range(pages):
         page=len(data)+1;stream=page+1;kids.append(f'{page} 0 R')
-        content=traced_ops(seed+n*97, ops_per_page)
-        data.append(f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << >> /Contents {stream} 0 R >>'.encode())
+        # Keep the raster workload small while retaining the dense vector stream.
+        content=b'0.4 0 0 0.4 0 0 cm\n'+traced_ops(seed+n*97, ops_per_page)
+        data.append(f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 238 337] /Resources << >> /Contents {stream} 0 R >>'.encode())
         data.append(b'<< /Length '+str(len(content)).encode()+b' >>\nstream\n'+content+b'\nendstream')
-    data[1]=f'<< /Type /Pages /Count {pages} /Kids [{" ".join(kids)}] >>'.encode()
+    data[1]=f'<< /Type /Pages /Count {pages} /Kids [{" ".join(kids)}] {parent_entries} >>'.encode()
     result=bytearray(b'%PDF-1.7\n%\xe2\xe3\xcf\xd3\n');offsets=[0]
     for i,o in enumerate(data,1):
         offsets.append(len(result));result.extend(f'{i} 0 obj\n'.encode()+o+b'\nendobj\n')
@@ -105,7 +106,7 @@ def mixed_page_pdf():
     photo=rgb_pixels(400,300)
     import zlib as _z
     photo_stream=_z.compress(photo,6)
-    traced=traced_ops(31,900)
+    traced=b'0.4 0 0 0.4 0 0 cm\n'+traced_ops(31,900)
     art=b'40 700 m 200 700 l 120 740 l h S\n40 660 l 200 660 l S'
     text=b'BT /F1 18 Tf 40 780 Td (LIVE-TEXT-ANCHOR) Tj ET'
     im=b'q 300 0 0 200 40 380 cm /Im1 Do Q'
@@ -113,7 +114,7 @@ def mixed_page_pdf():
     annot=b'<< /Type /Annot /Subtype /Link /Rect [40 760 220 800] /A << /S /URI /URI (https://example.invalid/link) >> >>'
     data=[b'<< /Type /Catalog /Pages 2 0 R >>',
           b'<< /Type /Pages /Count 2 /Kids [3 0 R 5 0 R] >>',
-          b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << >> /Contents 4 0 R >>',
+          b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 238 337] /Resources << >> /Contents 4 0 R >>',
           b'<< /Length '+str(len(traced)).encode()+b' >>\nstream\n'+traced+b'\nendstream',
           f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Annots [7 0 R] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> /XObject << /Im1 6 0 R >> >> /Contents 8 0 R >>'.encode(),
           f'<< /Type /XObject /Subtype /Image /Width 400 /Height 300 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length {len(photo_stream)} >>\nstream\n'.encode()+photo_stream+b'\nendstream',

@@ -1,6 +1,7 @@
 """Real qpdf cross-surface qualification. Requires built anpdf, qpdf 12.4.2, Poppler."""
-import argparse,hashlib,importlib.util,json,os,pathlib,pty,shutil,socket,subprocess,sys,tempfile,time,urllib.request,urllib.error,zlib
-from pypdf import PdfWriter
+import argparse,hashlib,importlib.util,io,json,os,pathlib,pty,shutil,socket,subprocess,sys,tempfile,time,urllib.request,urllib.error,zlib
+from PIL import Image
+from pypdf import PdfReader, PdfWriter
 from pypdf.annotations import Text, Link
 from pypdf.generic import DecodedStreamObject, NameObject
 ROOT=pathlib.Path(__file__).resolve().parents[1]
@@ -116,6 +117,9 @@ def run(routine=False):
     ])
     for root in roots.values():
         gen.generate(root)
+        (root/'traced-rotated.pdf').write_bytes(gen.traced_pdf(1,parent_entries='/Rotate 90'))
+        (root/'traced-cropped.pdf').write_bytes(gen.traced_pdf(1,parent_entries='/CropBox [0 0 160 270]'))
+        (root/'render-geometry.pdf').write_bytes(render_fixture())
         if PDFOXIDE:
             (root/'crop.pdf').write_bytes(render_fixture())
             (root/'annotation.pdf').write_bytes(render_fixture(annotations=True))
@@ -358,12 +362,15 @@ def run(routine=False):
         ])
         if pdfium:
             corpus.extend([
+              ('compress',{'input':{'path':'traced-rotated.pdf'},'output':{'path':'rotated-target.pdf'},'maxOutputBytes':10000},None),
+              ('compress',{'input':{'path':'traced-cropped.pdf'},'output':{'path':'cropped-target.pdf'},'maxOutputBytes':10000},None),
               ('extract-text',{'input':{'path':'text-geometry.pdf'},'pages':[1,2,3]},None),
               ('extract-text',{'input':{'path':'blank.pdf'},'pages':[1],'engine':'pdfium'},None),
               ('extract-text',{'input':{'path':'three.pdf'},'pages':[4]},'INVALID_REQUEST'),
               ('render-page',{'input':{'path':'three.pdf'},'page':4,'output':{'path':'missing.png'}},'INVALID_REQUEST'),
               ('render-page',{'input':{'path':'huge.pdf'},'page':1,'dpi':300,'output':{'path':'huge.png'}},'LIMIT_EXCEEDED'),
               ('render-page',{'input':{'path':'three.pdf'},'page':1,'dpi':72,'engine':'pdfium','output':{'path':'small.png'}},None),
+              ('render-page',{'input':{'path':'render-geometry.pdf'},'page':1,'dpi':101,'engine':'pdfium','output':{'path':'geometry.png'}},None),
               ('render-page',{'input':{'path':'blank.pdf'},'page':1,'dpi':72,'output':{'path':'blank-render.png'}},None),
               ('render-page',{'input':{'path':'annotated.pdf'},'page':1,'dpi':72,'output':{'path':'annotation.png'}},None),
               ('extract-text',{'input':{'path':'three.pdf'},'pages':[1],'engine':'absent'},'BACKEND_UNAVAILABLE'),
@@ -460,10 +467,17 @@ def run(routine=False):
                             b=span['bounds'];offset=500 if request['input']['path']=='text-geometry.pdf' and p['page']==1 else 0
                             assert offset<=b['left']<b['right']<=offset+360 and 0<=b['bottom']<b['top']<=(800 if offset else 200)
             if not error and command=='render-page' and a['result']['engine']=='pdfium':
-                expected=(300,200) if request.get('dpi')==72 else (600,400)
+                name=request['output']['path']
+                expected=(113,211) if name=='geometry.png' else (300,200) if request.get('dpi')==72 else (600,400)
                 for root in roots.values():
-                    data=(root/request['output']['path']).read_bytes();assert data[:8]==b'\x89PNG\r\n\x1a\n'
+                    data=(root/name).read_bytes();assert data[:8]==b'\x89PNG\r\n\x1a\n'
                     assert (int.from_bytes(data[16:20],'big'),int.from_bytes(data[20:24],'big'))==expected
+                    if name=='geometry.png':
+                        # Crop origin (20,30) and clockwise rotation put the
+                        # red rectangle at x=10..40, y=20..70 from the top left.
+                        with Image.open(io.BytesIO(data)) as image:
+                            bounds=image.convert('L').point(lambda x:255 if x<128 else 0).getbbox()
+                        assert bounds and all(abs(a-b)<=1 for a,b in zip(bounds,(14,28,56,98))),bounds
             for surface,root in roots.items():
                 for name,h in originals[surface].items():assert digest(root/name)==h,(n,'input changed',name)
         for root in roots.values():
@@ -476,7 +490,14 @@ def run(routine=False):
                 assert digest(root/'crop.png')==digest(root/'oxide-annotation.png')!=digest(root/'blank.png')
         assert all(not (root/name).exists() for root in roots.values() for name in ['missing.png','huge.png'])
         if pdfium:
-            for root in roots.values():assert (root/'annotation.png').read_bytes()==(root/'blank-render.png').read_bytes()
+            for root in roots.values():
+                assert (root/'annotation.png').read_bytes()==(root/'blank-render.png').read_bytes()
+                with Image.open(root/'small.png') as small, Image.open(root/'page.png') as large:
+                    # The same page at 144 dpi must move and scale the ink, not
+                    # just add blank pixels around its 72 dpi rendering.
+                    low=small.convert('L').point(lambda x:255 if x<128 else 0).getbbox()
+                    high=large.convert('L').point(lambda x:255 if x<128 else 0).getbbox()
+                    assert low and high and all(abs(2*a-b)<=3 for a,b in zip(low,high)),(low,high)
             req=json.dumps({'input':{'path':'three.pdf'},'pages':[1],'engine':'pdfium'})
             r=subprocess.run([str(BIN),'extract-text','--root',str(roots['cli']),'--pdfium-lib',str(base/'missing-library'),'--request-json',req],capture_output=True,text=True)
             assert r.returncode==8 and json.loads(r.stderr)['error']['code']=='BACKEND_UNAVAILABLE' and not r.stdout
@@ -543,7 +564,26 @@ def run(routine=False):
             assert traced['targetMet'] is True and 'pageRasterization' in traced['techniques'],traced
             assert any(w['code']=='PAGE_RASTERIZED' for w in responses['traced-target.pdf']['warnings'])
             ins=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'traced-target.pdf'}})]))
-            assert ins['result']['pageCount']==2 and all(p['widthPoints']==595.0 and p['heightPoints']==842.0 for p in ins['result']['pages'])
+            assert ins['result']['pageCount']==2 and all(p['widthPoints']==238 and p['heightPoints']==337 for p in ins['result']['pages'])
+            rebuilt=PdfReader(roots['cli']/'traced-target.pdf')
+            assert all(len(page.images)==1 for page in rebuilt.pages)
+            for geometry in ('rotated','cropped'):
+                report=responses[geometry+'-target.pdf']
+                assert not report['result']['targetMet'] and 'pageRasterization' not in report['result']['techniques'],report
+                assert any(w['code']=='PAGE_RASTERIZATION_SKIPPED' for w in report['warnings']),report
+                before,after=(subprocess.check_output(['pdftoppm','-r','72','-gray','-png','-singlefile',str(roots['cli']/name)])
+                              for name in ('traced-'+geometry+'.pdf',geometry+'-target.pdf'))
+                assert before==after,geometry
+            # Check where the ink landed with Poppler, independently of the
+            # PDFium renderer used by compress. Box metadata alone misses this.
+            for page in ('1','2'):
+                bounds=[]
+                for name in ('traced.pdf','traced-target.pdf'):
+                    png=subprocess.check_output(['pdftoppm','-f',page,'-l',page,'-r','72','-gray','-png','-singlefile',str(roots['cli']/name)])
+                    with Image.open(io.BytesIO(png)) as image:
+                        bounds.append(image.point(lambda x:255 if x<128 else 0).getbbox())
+                before,after=bounds
+                assert before and after and all(abs(a-b)<=10 for a,b in zip(before,after)),(page,before,after)
             # The mixed page's photo, live text, link and line art survive;
             # only the isolated traced page was rebuilt.
             if not routine:

@@ -6,6 +6,13 @@ SemVer prerelease suffixes, not production-qualified releases.
 
 ## [0.4.1] - Unreleased
 
+### Fixed
+- PDFium scales page content to the DPI-derived bitmap size.
+  This fixes shrunken or clipped content in `compress` page rasterization
+  and `render-page`.
+- Compression keeps traced pages in vector form when their effective page
+  geometry, including inherited rotation or crop, makes raster placement unsafe.
+
 ### Changed
 - A `--max-bytes` miss now reports what page rasterization actually did:
   `IMAGE_RESAMPLE_LIMITED` states whether the pass ran, was skipped because
