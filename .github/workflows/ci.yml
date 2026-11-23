@@ -5,13 +5,19 @@ on:
       - main
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        required: true
 permissions:
   contents: read
 env:
   ANPDF_QPDF_EXACT: '1'
+  FULL_QUALIFICATION: ${{ inputs.full || github.event_name == 'workflow_dispatch' }}
 jobs:
   native:
-    if: github.event_name == 'workflow_dispatch'
+    if: inputs.full || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -90,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-26.04","macos-26"]' || '["ubuntu-26.04"]') }}
+        runner: ${{ fromJSON((inputs.full || github.event_name == 'workflow_dispatch') && '["ubuntu-26.04","macos-26"]' || '["ubuntu-26.04"]') }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -168,13 +174,13 @@ jobs:
         shell: bash
         run: |
           args=()
-          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
+          if [ "$FULL_QUALIFICATION" != true ]; then
             args+=(--routine)
           fi
           unset ANPDF_PDFIUM_LIB
           ANPDF_QPDF="$(cat build/work/qpdf-path)" ANPDF_TEST_FONT="$PWD/build/work/font/NotoSansSC.ttf" build/work/venv/bin/python tests/integration.py "${args[@]}"
   oci-smoke:
-    if: github.event_name == 'workflow_dispatch'
+    if: inputs.full || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-26.04
     env:
       DOCKER_BUILD_RECORD_UPLOAD: 'false'

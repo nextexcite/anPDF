@@ -1,6 +1,6 @@
 # Preliminary builds and workflows
 
-Routine CI runs on `ubuntu-26.04` (Linux amd64); manual qualification also
+Routine CI runs on `ubuntu-26.04` (Linux amd64); full qualification also
 runs on `macos-26` (Apple Silicon arm64).
 Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on `ubuntu-26.04`
 (`linux/amd64`) and `ubuntu-26.04-arm` (`linux/arm64`). `.github/workflows/oci.yml` triggers on `v*`
@@ -176,7 +176,10 @@ or publish images/assets. Review `CHANGELOG.md`, the version in Cargo.toml/Cargo
 the Dockerfile `APP_VERSION`, baseline documentation and regenerated contract outputs.
 Keep Forge **0.2.0** and third-party dependency pins unchanged.
 
-Before separately authorizing publication:
+For release review, use the checks below. The release workflow runs the version
+check, full CI, and shipping-artifact checks automatically; a separate CI dispatch
+is not required. Review any evidence the workflow does not collect before
+authorizing publication.
 
 1. Dry-run the `prepare` job's version/tag validation with `GITHUB_REF_TYPE=tag`
    and `GITHUB_REF_NAME=v<Cargo.toml version>`; reject mismatched tags. Do not execute publish jobs.
@@ -202,12 +205,14 @@ plus `forge-output` and `privacy`. They do not build macOS or OCI artifacts.
 The routine corpus keeps cross-surface checks, including CJK text and rendering,
 and runs one real image-downsampling and one page-rasterization case via the CLI.
 
-Run **Rust and contract qualification** manually on the exact release candidate
-ref before tagging. This runs the full bundled PDFium corpus on Linux and macOS,
-including the compression matrix across all three interfaces, and adds the
-Ubuntu `--no-default-features` corpus and reference backend benchmark, and the
-restricted linux/amd64 OCI smoke. This workflow does not publish; the separate
-release workflow still builds and verifies each shipping platform.
+The release workflow calls **Rust and contract qualification** on the same commit
+after validating the version and tag. Qualification must pass before the release
+builds start, including before any GHCR push. It runs the full bundled PDFium
+corpus on Linux and macOS, including the compression matrix across all three
+interfaces, plus the Ubuntu `--no-default-features` corpus, reference backend
+benchmark, restricted linux/amd64 OCI smoke, Forge, and privacy checks. Dispatch
+**Rust and contract qualification** directly to run those checks without
+publishing. The release workflow still builds and verifies each shipping platform.
 
 Poppler and upstream qpdf binary archives are test tools, not runtime image dependencies.
 OpenAPI validation and optional signed/CJK fixtures can use pinned Python packages from
@@ -229,6 +234,6 @@ tag ref with `git ls-remote`. Full commit SHAs are pinned with version comments:
 | [docker/build-push-action](https://github.com/docker/build-push-action/releases/tag/v7.4.0) | v7.4.0 |
 
 Only minimum read permissions are requested at workflow top level; `packages: write` and
-`contents: write` are scoped strictly to the manual publish jobs in `oci.yml`. Checkout
+`contents: write` are scoped strictly to the jobs that publish in `oci.yml`. Checkout
 credentials are not retained. Generated-code checks use a locked Node build dependency
 tree. Gitleaks and Syft qualification binaries are checksum pinned.

@@ -28,8 +28,13 @@ jobs:
             exit 1
           fi
           printf 'version=%s\ntag=%s\n' "$version" "$tag" >> "$GITHUB_OUTPUT"
-  image:
+  qualification:
     needs: prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      full: true
+  image:
+    needs: [prepare, qualification]
     strategy:
       fail-fast: true
       matrix:
@@ -223,7 +228,7 @@ jobs:
             build/artifacts/oci-digest.txt
             build/artifacts/SHA256SUMS-oci-index.txt
   macos-arm64:
-    needs: prepare
+    needs: [prepare, qualification]
     runs-on: macos-26
     permissions:
       contents: read
@@ -322,6 +327,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          pattern: '{oci-*,macos-arm64}'
           path: release-assets
           merge-multiple: true
       - name: Publish development release assets
