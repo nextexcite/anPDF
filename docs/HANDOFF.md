@@ -81,7 +81,8 @@ linked in the owning doc.
    session log. *Acceptance:* formula test or tap CI exercises encrypt/decrypt
    on the installed build; `smoke.sh` gains an encrypt step; one real
    `brew install anpdf` run logged in QUALIFICATION.md.
-2. **Publish v0.4.1** — staged on `main`; requires owner go-ahead, its CI
+2. **Publish v0.4.1** — staged on `main`; requires owner go-ahead, routine CI
+   and [manual qualification](BUILD.md#ci-matrix-and-pinned-github-actions)
    green on the staging commit, and item 1's installed-binary gates closed.
    *Acceptance:* tag build green end-to-end; GHCR index + macOS tarball + tap
    formula updated to 0.4.1; artifact/image sizes reported; CHANGELOG section

@@ -1,6 +1,7 @@
 # Preliminary builds and workflows
 
-CI workflows run on `ubuntu-26.04` (Linux amd64) and `macos-26` (Apple Silicon arm64).
+Routine CI runs on `ubuntu-26.04` (Linux amd64); manual qualification also
+runs on `macos-26` (Apple Silicon arm64).
 Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on `ubuntu-26.04`
 (`linux/amd64`) and `ubuntu-26.04-arm` (`linux/arm64`). `.github/workflows/oci.yml` triggers on `v*`
 tag pushes except PDFOxide preview tags, and on `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
@@ -146,7 +147,7 @@ The Grype vulnerability database and scan/SBOM results are **not** cached.
 
 OCI builds may **read and write GitHub Actions BuildKit layer caches**, including
 intermediate build stages (`mode=max`), scoped separately as `oci-amd64` and
-`oci-arm64`. The CI amd64 smoke build seeds `oci-amd64` on the default branch;
+`oci-arm64`. The manual CI amd64 smoke build seeds `oci-amd64` when run on the default branch;
 release local builds read/write the corresponding architecture scope, and the
 subsequent OCI export and digest push read it. GitHub's ref-based cache access
 rules still apply: PR caches cannot overwrite default-branch caches; tag-scoped
@@ -195,15 +196,15 @@ Before separately authorizing publication:
 
 ## CI matrix and pinned GitHub Actions
 
-The native CI matrix (`.github/workflows/ci.yml`) runs:
-- `ubuntu-26.04` (Linux amd64, required)
-- `macos-26` (macOS arm64, experimental)
-- `forge-output` (`ubuntu-26.04`) and `privacy` (`ubuntu-26.04`)
+Pull requests and pushes to `main` run one default Rust build and the bundled
+PDFium integration corpus (including CJK and compression) on `ubuntu-26.04`,
+plus `forge-output` and `privacy`. They do not build macOS or OCI artifacts.
 
-An additional Ubuntu native leg verifies `--no-default-features`. The PDFium
-Ubuntu/macOS matrix tests default builds with bundled-library discovery and CJK
-fixtures. `oci-smoke` builds and loads linux/amd64 without pushing, then exercises
-merge, PDFium text, and PNG rendering with the restricted runtime flags.
+Run **Rust and contract qualification** manually on the exact release candidate
+ref before tagging. This adds the bundled PDFium corpus on `macos-26`, the
+Ubuntu `--no-default-features` corpus and reference backend benchmark, and the
+restricted linux/amd64 OCI smoke. This workflow does not publish; the separate
+release workflow still builds and verifies each shipping platform.
 
 Poppler and upstream qpdf binary archives are test tools, not runtime image dependencies.
 OpenAPI validation and optional signed/CJK fixtures can use pinned Python packages from
