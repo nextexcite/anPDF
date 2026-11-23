@@ -7,34 +7,71 @@ historical evidence kept for audit. Status and the prioritized queue live in
 ## 0.4.x
 
 The current baseline adds AES-256 R6 `encryptPdf`/`decryptPdf` with protected
-secret channels (prompts, `chmod 600` files, stdin, request bodies — never
-argv/env/logs), automatic page rasterization when a compression byte target is
-missed (`pageRasterization`, PDFium-backed, evidence-gated to traced-graphics
-pages), miss-outcome reporting inside `IMAGE_RESAMPLE_LIMITED`, measured
-terminal progress, and the clap-built CLI. PDFium remains the default
-text/render engine; qpdf stays structural; PDFOxide ships only as its own
-preview tag. Fixes stay on the 0.4.x line; no 0.5.0 without explicit approval.
+secret channels: secrets are accepted via echo-off prompts, `chmod 600` files,
+stdin, and request bodies — `--request-json` refuses literal password fields
+because argv is already machine-readable at launch — and the backend hands
+them to qpdf via memfd/private staging, never argv/env/logs. It adds automatic
+page rasterization when a compression byte target is missed
+(`pageRasterization`, PDFium-backed, evidence-gated to traced-graphics pages),
+miss-outcome reporting inside `IMAGE_RESAMPLE_LIMITED`, measured terminal
+progress, and the clap-built CLI. PDFium remains the default text/render
+engine; qpdf stays structural; PDFOxide ships only as its own preview tag.
+Fixes stay on the 0.4.x line; no 0.5.0 without explicit approval.
 
-[v0.4.0](https://github.com/nextexcite/anPDF/releases/tag/v0.4.0) was published
-by the tag workflow as a development prerelease (all jobs green: prepare,
-linux/amd64 + linux/arm64 OCI images with restricted smoke + SBOM/Grype/license
-audits before push, image-index verification, macOS arm64 tarball, GitHub
-release, Homebrew tap notify). Its assets carry per-arch SPDX SBOMs, Grype
-reports, license audits and digests; the `nextexcite/homebrew-anpdf` formula
-(updated via repository_dispatch) installs the bundled `libpdfium.dylib`, with
-a revision bump so the v0.4.0 packaging miss (library omitted) forces
-reinstall. Installed-binary CI checks a rasterize-backed `compress --max-bytes`
-run, but that evidence is synthetic — simulated absence on Linux, not a literal
-macOS arm64 install; `brew install anpdf && brew test anpdf` on real hardware
-remains open.
+[v0.4.0](https://github.com/nextexcite/anPDF/releases/tag/v0.4.0) (tag
+`293b0432`, prerelease, 2026-11-23) published: macOS tarball
+`anpdf-0.4.0-macos-arm64.tar.gz` (6.55 MB, sha256 `0ba2ef00…`), multi-arch OCI
+index `ghcr.io/nextexcite/anpdf@sha256:6eb166d1…` (amd64 40.72 MB / arm64
+40.92 MB compressed, flattened rootfs), per-arch SPDX SBOMs, Grype reports,
+`oci-audit-report` and `SHA256SUMS`. Every tag-workflow job green on the tag
+commit (actions runs 45096553653/45097091234): real `ubuntu-26.04-arm` arm64
+execution (not emulation) for the arm64 image — build, restricted smoke
+(`--network=none --read-only --cap-drop=ALL --no-new-privileges`, UID 65532),
+SBOM/Grype/license audit, push-by-digest, then a pull of the published digest
+re-smoked; `macos-26` arm64 tarball built and smoke-tested against pinned qpdf
+12.4.2; the tap updater fired `repository_dispatch` and committed the formula
+update within seconds (the v0.3.4 empty-token failure is resolved; cron
+fallback retained).
+
+**Audit counts** (both arches): 268/266 SBOM packages, 81 Debian packages,
+185/183 Rust crates; 0 disallowed licenses, 0 unexpected crates, 0 missing deb
+packages, **0 fixable High/Critical**. Grype still reports **78 High + 64
+Medium non-fixable advisories** — a passing fixable-only gate, not a
+vulnerability-free claim; the non-fixable count should be tracked across
+releases.
+
+**Package regression evidence: the real Homebrew install on macOS arm64 CI was
+tested; the document was synthetic.** The tap's own CI runs on a real
+`macos-26` runner — installs the formula, `brew test`, a
+baseline-without-libpdfium vs patched render/extract check, and a real
+`compress --max-bytes` asserting `pageRasterization` in techniques and
+`targetMet` on a high-entropy synthetic fixture. The formula's `revision 1`
+installs the bundled `libpdfium.dylib` so the original v0.4.0 packaging miss
+(library omitted) forces reinstall. What that does *not* prove: a human-driven
+`brew install` session; the in-repo package regression test simulates renderer
+absence via env on Linux.
+
+**Missing automated packaging regressions:** no installed-binary
+`encrypt`/`decrypt` smoke anywhere — the formula `test` block covers
+version/operations/completions/render-page only, and `containers/smoke.sh`
+skips encryption. Separately, a one-off AES-256 check against the released
+Linux image exists but is not part of release gating.
+
+**Benchmarks:** CI produces only the reference-provider comparison (qpdf
+correctness 1.000/~31 ms; poppler 0.988/~46 ms — `backend-comparison`
+artifact). **No product-engine (PDFium/PDFOxide) numbers were recorded for
+v0.4.0** — the `bench/providers/anpdf` adapter needs `ANPDF_BIN` +
+`ANPDF_ENGINE` on a manual run and none was captured at release. Rasterize
+cost is qualitative only ("order of a minute, deadline-bounded").
 
 `0.4.1` is staged on `main` and unpublished: raster-pass outcome reporting and
-measured terminal progress on a `--max-bytes` miss. PR CI (native Ubuntu/macOS,
-structural-only leg, bundled-PDFium legs, OCI smoke, Forge output, privacy)
-passed on the merged commits.
+measured terminal progress on a `--max-bytes` miss. PR CI passed on the merged
+commits; the staging commit's CI was still running at audit time.
 
 Remaining gates are unchanged from the 0.3.0 list below, plus external MCP/HTTP
-client conformance and formal OS/backend license sign-off.
+client conformance, formal OS/backend license sign-off, installed-binary
+encrypt smoke (formula test + `containers/smoke.sh`), per-release
+product-engine benchmark capture, and advisory-count tracking.
 
 ## Historical 0.3.0 evidence
 

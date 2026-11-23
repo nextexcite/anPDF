@@ -33,6 +33,11 @@ SemVer prerelease suffixes, not production-qualified releases.
   `INVALID_PASSWORD`, decrypting an unencrypted input fails as
   `INVALID_REQUEST`, and any other operation on an encrypted input still
   fails as `ENCRYPTED_UNSUPPORTED`.
+- Automatic page rasterization on a `compress --max-bytes` descent miss:
+  when the size-targeted descent misses the target, `pageRasterization`
+  renders eligible traced-graphics pages via the PDFium renderer (evidence
+  gated — no annotation/text/tagged-structure pages, no attachments) and
+  rebuilds the document around them (PR #27).
 - Secrets never enter command arguments, environment, logs or errors. On a
   terminal, `anpdf encrypt`/`decrypt` prompt interactively with echo
   disabled (a blank owner answer generates one); scripts use

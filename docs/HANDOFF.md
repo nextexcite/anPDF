@@ -27,7 +27,7 @@ visual, cryptographic, PDF/A or malware certification.
 | Structural engine | qpdf 12.4.2 qualified; 12.x>=12.4.2 accepted with warning; `ANPDF_QPDF_EXACT=1` in CI/OCI | [PROTOCOLS.md](PROTOCOLS.md) |
 | Text/render engine | PDFium `chromium/8165` bundled in standard releases; `--no-default-features` for structural-only | [BUILD.md](BUILD.md#default-content-engine) |
 | Compression | Lossless stream passes + image descent (ladder, ~10% fit) + page rasterization on target miss; methods chosen automatically from content evidence | [COMPRESSION-TECH-REVIEW.md](COMPRESSION-TECH-REVIEW.md) |
-| Encryption | AES-256 R6 encrypt/decrypt; secrets via prompts/files/stdin/body, never argv/env/logs | [PROTOCOLS.md](PROTOCOLS.md#password-protection), [SECURITY.md](../SECURITY.md) |
+| Encryption | AES-256 R6 encrypt/decrypt; secrets accepted via echo-off prompts, `chmod 600` files, stdin, and request bodies — `--request-json` refuses literal password fields (argv is machine-readable at launch); backend hands them to qpdf via memfd/private staging, never argv/env/logs | [PROTOCOLS.md](PROTOCOLS.md#password-protection), [SECURITY.md](../SECURITY.md) |
 | Release machinery | Multi-arch OCI index (GHCR) + macOS arm64 tarball + Homebrew tap `nextexcite/homebrew-anpdf`; build caching; per-arch SBOM/Grype/license audit gates | [BUILD.md](BUILD.md) |
 | Qualification | Per-version evidence and remaining gates | [QUALIFICATION.md](QUALIFICATION.md) |
 
@@ -72,15 +72,21 @@ Intention ordering, not commitments. Each phase ships only with the gates in
 Ordered. "Done" means the acceptance criteria hold with execution evidence
 linked in the owning doc.
 
-1. **Publish v0.4.1** — staged on `main`; requires owner go-ahead.
+1. **Close installed-binary gaps on the macOS package (release gate).**
+   The real Homebrew install path is proven on macOS arm64 CI (`macos-26`
+   runner: formula install, `brew test`, bundled renderer, rasterize-backed
+   `compress --max-bytes`); the fixture document was synthetic. Still missing:
+   any `encrypt`/`decrypt` smoke on the installed binary (formula `test` block
+   and `containers/smoke.sh` both skip it) and a human-driven `brew install`
+   session log. *Acceptance:* formula test or tap CI exercises encrypt/decrypt
+   on the installed build; `smoke.sh` gains an encrypt step; one real
+   `brew install anpdf` run logged in QUALIFICATION.md.
+2. **Publish v0.4.1** — staged on `main`; requires owner go-ahead, its CI
+   green on the staging commit, and item 1's installed-binary gates closed.
    *Acceptance:* tag build green end-to-end; GHCR index + macOS tarball + tap
    formula updated to 0.4.1; artifact/image sizes reported; CHANGELOG section
-   dated.
-2. **Verify the installed macOS build on real hardware.** The v0.4.0 package
-   regression (missing `libpdfium`) is covered by CI's installed-binary test,
-   but that evidence is synthetic — simulated absence, not a literal macOS arm64
-   run. *Acceptance:* `brew install anpdf && brew test anpdf` on macOS arm64
-   passes, including a rasterize-backed `compress --max-bytes` run.
+   dated; release notes name shipped features (v0.4.0's were a generic
+   template that omitted `pageRasterization`).
 3. **Compression untested classes** (degraded scans, ID/passport scans,
    CCITT/TIFF-dominant docs, mixed traced+live pages). *Acceptance:* one case
    entry per class in COMPRESSION-TECH-REVIEW.md §4 using the §5 template —
@@ -91,35 +97,44 @@ linked in the owning doc.
 5. **External-client conformance** — MCP/HTTP exercised only by the in-repo
    harness today. *Acceptance:* a third-party MCP client and an HTTP client run
    the documented sequences without drift; results logged in QUALIFICATION.md.
-6. **linux/arm64 + macOS native runs** — arm64 verified only via OCI smoke;
-   macOS RSS enforcement is a `proc_pidinfo` watchdog, not `RLIMIT_AS`.
-   *Acceptance:* full suite runs natively on both; QUALIFICATION.md updated.
-7. **License sign-off** — 155-component inventory reconciled, but formal
-   OS/backend review is open. *Acceptance:* signed-off manifest diff for new
-   deps since 0.4.0.
+6. **linux/arm64 + macOS native runs** — the native arm64 *release smoke*
+   passed (real `ubuntu-26.04-arm` execution, not emulation), but the full
+   integration corpus has never run natively on arm64; macOS RSS enforcement
+   is a `proc_pidinfo` watchdog, not `RLIMIT_AS`. *Acceptance:* full suite
+   runs natively on both; QUALIFICATION.md updated.
+7. **License sign-off + advisory tracking** — 155-component inventory
+   reconciled, formal review open; v0.4.0 Grype reports 78 High + 64 Medium
+   *non-fixable* advisories under a fixable-only gate. *Acceptance:* signed-off
+   manifest diff for new deps since 0.4.0; non-fixable advisory count recorded
+   per release.
+8. **Per-release performance evidence** — CI captures only the qpdf/poppler
+   reference comparison; no PDFium/PDFOxide product-engine numbers exist for
+   v0.4.0. *Acceptance:* `bench/harness.py` run with `ANPDF_BIN`/`ANPDF_ENGINE`
+   against the release binary, `results.json` archived, rasterize cost measured
+   (currently qualitative only: "order of a minute").
 
 ### Interface-parity and metadata gaps (architecture audit, verified against `main` @ `3e09d75`)
 
 Recorded as plan items, not implementation changes. Each is a decision plus a
 small contract/doc touch-up; implement deliberately, not opportunistically.
 
-8. **`--dry-run` parity decision.** CLI-only today; HTTP/MCP dispatch
+9. **`--dry-run` parity decision.** CLI-only today; HTTP/MCP dispatch
    `dry_run=false`. AGENTS.md rule 1 wants equivalent dry-run behavior across
    surfaces; the contract has no `dryRun` schema and the response bypasses
    `valid_output`. *Acceptance:* either `dryRun` is added to request schemas for
    HTTP/MCP parity, or AGENTS.md/PROTOCOLS.md scope it explicitly as CLI-only —
    one statement of the rule, no drift.
-9. **Discovery can't disclose resampler/rasterizer availability.** `engines`
+10. **Discovery can't disclose resampler/rasterizer availability.** `engines`
    lists text/render providers; a client learns `pageRasterization` didn't run
    only at miss time via `IMAGE_RESAMPLE_LIMITED`. *Acceptance:* discovery
    surfaces resample-worker/rasterizer presence (e.g. a compress `techniques`/
    `engines` field), or the omission is waived with rationale in PROTOCOLS.md.
-10. **Deadline ceiling vs per-operation defaults.** Discovery advertises
+11. **Deadline ceiling vs per-operation defaults.** Discovery advertises
     `wallSeconds:600`; `Control::default()` is 60s and compress scales 60→600.
     The advertised number is a ceiling, not a per-op bound. *Acceptance:*
     discovery output or PROTOCOLS.md states the ceiling semantics; no false
     per-operation claim.
-11. **Stale contract metadata (tracked follow-up, not in this docs PR).**
+12. **Stale contract metadata (tracked follow-up, not in this docs PR).**
     `x-anpdf-status` still reads "development 0.3.0 contract" and the Dockerfile
     `APP_VERSION` default is `0.3.0`; `contractVersion:1.0.0` is a schema
     version, not the product version, and docs should say so. Updating them
