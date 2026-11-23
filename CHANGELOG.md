@@ -25,13 +25,19 @@ SemVer prerelease suffixes, not production-qualified releases.
 - Password protection: `encryptPdf` and `decryptPdf` operations (CLI
   `anpdf encrypt` / `anpdf decrypt`, HTTP `/v1/encrypt` / `/v1/decrypt`,
   MCP tools) apply and remove standard AES-256 encryption (PDF revision 6)
-  via the qualified qpdf backend. Encrypt requires a non-empty user
-  password and accepts an optional `ownerPassword`; when omitted, a random
-  unguessable owner password is generated — never an empty one. Decrypt
+  via the qualified qpdf backend. Encrypt accepts an optional empty
+  user (open) password — warned as `EMPTY_OPEN_PASSWORD`, owner-only
+  permissions, no confidentiality — and an optional `ownerPassword`;
+  when omitted, a random unguessable owner password is generated. Decrypt
   requires a valid user or owner password; a wrong password fails as
   `INVALID_PASSWORD`, decrypting an unencrypted input fails as
   `INVALID_REQUEST`, and any other operation on an encrypted input still
   fails as `ENCRYPTED_UNSUPPORTED`.
+- Automatic page rasterization on a `compress --max-bytes` descent miss:
+  when the size-targeted descent misses the target, `pageRasterization`
+  renders eligible traced-graphics pages via the PDFium renderer (evidence
+  gated — no annotation/text/tagged-structure pages, no attachments) and
+  rebuilds the document around them (PR #27).
 - Secrets never enter command arguments, environment, logs or errors. On a
   terminal, `anpdf encrypt`/`decrypt` prompt interactively with echo
   disabled (a blank owner answer generates one); scripts use
@@ -182,5 +188,7 @@ SemVer prerelease suffixes, not production-qualified releases.
 ### Changed
 - Development milestone versioning without prerelease suffixes below 0.5.0.
 
-[0.3.0]: https://github.com/nextexcite/anPDF/compare/v0.2.0...main
+[0.4.1]: https://github.com/nextexcite/anPDF/compare/v0.4.0...main
+[0.4.0]: https://github.com/nextexcite/anPDF/compare/v0.3.4...v0.4.0
+[0.3.0]: https://github.com/nextexcite/anPDF/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nextexcite/anPDF/releases/tag/v0.2.0

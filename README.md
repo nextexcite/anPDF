@@ -16,10 +16,10 @@ The goal is to **own the interface and the workflow**, while reusing proven PDF 
 
 ## What works today
 
-**Version:** `0.3.2` — early development milestone (**not production-qualified**).
+**Version:** `0.4.1` staged on `main` — early development milestone (**not production-qualified**).
 
-Released as [v0.3.0](https://github.com/nextexcite/anPDF/releases/tag/v0.3.0). See [CHANGELOG.md](CHANGELOG.md) and the
-[release checklist](docs/BUILD.md#release-checklist).
+Latest published build: [v0.4.0](https://github.com/nextexcite/anPDF/releases/tag/v0.4.0). See [CHANGELOG.md](CHANGELOG.md), the
+[release checklist](docs/BUILD.md#release-checklist), and the [project handoff](docs/HANDOFF.md) for status, roadmap and next actions.
 
 Versioning convention:
 - **`< 0.5.0`** (`0.2.0`, `0.3.0`, …): development milestones with no SemVer prerelease suffix (`v0.2.0`).
@@ -74,19 +74,19 @@ Current Homebrew requires `brew trust --formula` for non-official tap formulae b
 > [!NOTE]
 > If you previously tapped this repository directly (`brew tap nextexcite/anpdf https://github.com/nextexcite/anPDF`), migrate once: `brew untap nextexcite/anpdf && brew tap nextexcite/anpdf` — installed `anpdf` stays installed.
 
-Or download `anpdf-0.3.0-macos-arm64.tar.gz` from [GitHub Releases](https://github.com/nextexcite/anPDF/releases), verify against `SHA256SUMS-macos-arm64.txt`, and install `qpdf` (`brew install qpdf`).
+Or download `anpdf-0.4.0-macos-arm64.tar.gz` from [GitHub Releases](https://github.com/nextexcite/anPDF/releases), verify against `SHA256SUMS-macos-arm64.txt`, and install `qpdf` (`brew install qpdf`).
 
 ### Linux (OCI container, `linux/amd64` & `linux/arm64`)
 
-The container image bundles `anpdf`, `qpdf 12.4.2` and PDFium on a minimal Debian 13 runtime and runs as non-root UID `65532`. The v0.3.0 example applies after publication:
+The container image bundles `anpdf`, `qpdf 12.4.2` and PDFium on a minimal Debian 13 runtime and runs as non-root UID `65532`. The v0.4.0 example applies after publication:
 
 ```sh
-docker pull ghcr.io/nextexcite/anpdf:0.3.0
+docker pull ghcr.io/nextexcite/anpdf:0.4.0
 mkdir -p out
 docker run --rm --read-only --network=none \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   -v "$PWD:/data/in:ro" -v "$PWD/out:/data/out" \
-  ghcr.io/nextexcite/anpdf:0.3.0 \
+  ghcr.io/nextexcite/anpdf:0.4.0 \
   inspect --root /data --request-json '{"input":{"path":"in/sample.pdf"}}'
 ```
 
@@ -131,8 +131,8 @@ ANPDF_QPDF="$(command -v qpdf)" python3 tests/integration.py
 To build and verify the OCI image locally:
 
 ```sh
-docker build -f containers/Dockerfile -t anpdf:0.3.0-local .
-sh containers/smoke.sh anpdf:0.3.0-local
+docker build -f containers/Dockerfile -t anpdf:0.4.1-local .
+sh containers/smoke.sh anpdf:0.4.1-local
 ```
 
 When modifying `contracts/v1/openapi.json`, regenerate `generated/` and run the Forge schema/TS checks documented in [docs/FORGE.md](docs/FORGE.md).
@@ -188,15 +188,12 @@ Remaining gaps before `>= 0.5.0` prereleases and `1.0.0` (extended malformed/fuz
 
 ## Roadmap
 
-1. **Foundation and portability:** qualify reproducible Forge generation, multi-platform binaries, OCI builds, security limits, and cross-surface contract tests.
-2. **Everyday PDF operations:** page reordering and better structural repair.
-3. **Documents and signatures:** inspect/fill AcroForms, add visual signatures, and separately support certificate-based digital signing/validation with preservation checks.
-4. **Richer capabilities and integration:** OCR, extraction, and cautious existing-text editing where fidelity can be demonstrated; optional backends and agent/desktop/cloud integration.
+The working roadmap and prioritized queue live in [docs/HANDOFF.md](docs/HANDOFF.md). In short: consolidate the 0.4.x line, close qualification debt, then everyday operations (page reordering, repair depth), documents and signatures, then richer capabilities and integrations.
 
 These are **intentions, not shipped features**. The guiding rule is to deliver a small set of trustworthy operations before expanding the surface area.
 
 ## Project docs
 
-[Architecture](docs/ADR-002.md) · [Forge integration](docs/FORGE.md) · [Protocols](docs/PROTOCOLS.md) · [Qualification and open gates](docs/QUALIFICATION.md) · [Security](SECURITY.md) · [OCI/build](docs/BUILD.md) · [Agent and contributor guidance](AGENTS.md)
+[Handoff — status, roadmap, next actions](docs/HANDOFF.md) · [Architecture](docs/ADR-002.md) · [Forge integration](docs/FORGE.md) · [Protocols](docs/PROTOCOLS.md) · [Qualification and open gates](docs/QUALIFICATION.md) · [Security](SECURITY.md) · [OCI/build](docs/BUILD.md) · [Compression technical review](docs/COMPRESSION-TECH-REVIEW.md) · [Agent and contributor guidance](AGENTS.md)
 
 Licensed under [Apache-2.0](LICENSE). Third-party notices and dependency licenses are tracked separately.

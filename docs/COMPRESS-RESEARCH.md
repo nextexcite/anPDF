@@ -1,5 +1,13 @@
 # Size-targeted compression for anPDF `compress` — research
 
+> **Historical survey.** This is the pre-implementation research written before
+> `maxOutputBytes`/`compressionLevel`/`onTargetMiss` shipped (they did, on the
+> 0.3.x→0.4.x line). Rows marked *researched, not shipped* remain candidate
+> mechanisms; everything that shipped is recorded with evidence and limits in
+> the living [COMPRESSION-TECH-REVIEW.md](COMPRESSION-TECH-REVIEW.md), and
+> current status in [HANDOFF.md](HANDOFF.md). Keep this file as the survey of
+> possibilities; do not add shipped claims here.
+
 Scope: a `maxOutputBytes`-style option (e.g. "below 5 MB") for `compress` on the 0.3.x line (next release: 0.3.1 per repo versioning). Research only — no code changes or PR.
 
 What was decided and shipped, with per-case evidence and limits, is tracked in [COMPRESSION-TECH-REVIEW.md](COMPRESSION-TECH-REVIEW.md) — the living record; new document classes get a case entry there.
