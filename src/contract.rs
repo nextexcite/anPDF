@@ -58,8 +58,13 @@ pub fn invalid_detail(id: &str, value: &Value) -> Option<String> {
     {
         let path = e.instance_path.as_str();
         // Validation errors render the rejected value; secret fields must
-        // report their constraint without echoing the credential.
-        let rendered = if matches!(path, "/password" | "/ownerPassword") {
+        // report their constraint without echoing the credential. The path
+        // check covers direct fields; the instance scan covers secrets
+        // nested inside a rejected container (e.g. an array request).
+        let rendered = if path.ends_with("/password")
+            || path.ends_with("/ownerPassword")
+            || contains_secret(&e.instance)
+        {
             e.masked_with("redacted").to_string()
         } else {
             e.to_string()
@@ -88,6 +93,19 @@ pub fn invalid_detail(id: &str, value: &Value) -> Option<String> {
         }
     }
     None
+}
+/// Whether a rejected instance holds a `password`/`ownerPassword` key at
+/// any depth — the reason its validation error must not render the value.
+fn contains_secret(v: &Value) -> bool {
+    match v {
+        Value::Object(m) => {
+            m.contains_key("password")
+                || m.contains_key("ownerPassword")
+                || m.values().any(contains_secret)
+        }
+        Value::Array(a) => a.iter().any(contains_secret),
+        _ => false,
+    }
 }
 pub fn valid_output(id: &str, value: &Value) -> bool {
     operation(id).is_some_and(|op| {
