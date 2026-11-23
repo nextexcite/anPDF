@@ -164,8 +164,15 @@ jobs:
           cp "$(cat build/work/pdfium-path)" target/debug/
           python3 -c 'import json,os,pathlib,stat; q=pathlib.Path(pathlib.Path("build/work/qpdf-path").read_text().strip()); p=pathlib.Path(pathlib.Path("build/work/pdfium-path").read_text().strip()); b=pathlib.Path("target/debug")/p.name; assert q.is_file() and os.access(q,os.X_OK) and p.read_bytes()==b.read_bytes(); print(json.dumps({"qpdf":str(q.resolve()),"qpdfMode":oct(stat.S_IMODE(q.stat().st_mode)),"pdfium":str(p.resolve()),"bundledPdfium":str(b.resolve())}))'
           python3 -m unittest discover -s build -p test_downloaders.py -v
+      - name: Cross-surface corpus
+        shell: bash
+        run: |
+          args=()
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ]; then
+            args+=(--routine)
+          fi
           unset ANPDF_PDFIUM_LIB
-          ANPDF_QPDF="$(cat build/work/qpdf-path)" ANPDF_TEST_FONT="$PWD/build/work/font/NotoSansSC.ttf" build/work/venv/bin/python tests/integration.py
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" ANPDF_TEST_FONT="$PWD/build/work/font/NotoSansSC.ttf" build/work/venv/bin/python tests/integration.py "${args[@]}"
   oci-smoke:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-26.04

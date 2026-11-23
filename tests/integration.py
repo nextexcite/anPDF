@@ -1,5 +1,5 @@
 """Real qpdf cross-surface qualification. Requires built anpdf, qpdf 12.4.2, Poppler."""
-import hashlib,importlib.util,json,os,pathlib,pty,shutil,socket,subprocess,sys,tempfile,time,urllib.request,urllib.error,zlib
+import argparse,hashlib,importlib.util,json,os,pathlib,pty,shutil,socket,subprocess,sys,tempfile,time,urllib.request,urllib.error,zlib
 from pypdf import PdfWriter
 from pypdf.annotations import Text, Link
 from pypdf.generic import DecodedStreamObject, NameObject
@@ -87,7 +87,7 @@ def qpdf_features(path):
     annots=[len(resolve(resolve(page['object']).get('/Annots',[]))) for page in v['pages']]
     return {'metadata':resolve(trailer.get('/Info',{})),'xmp':xmp,'outlines':[(o['title'],o['destpageposfrom1']) for o in v['outlines']],'attachments':attachments,'annotations':annots}
 
-def run():
+def run(routine=False):
  with tempfile.TemporaryDirectory(prefix='anpdf-tests-') as t:
     base=pathlib.Path(t);roots={s:base/s for s in ['cli','http','mcp']}
     if PDFOXIDE:check_license_regeneration(base/'license-inventory')
@@ -190,6 +190,7 @@ def run():
         assert http(port,token,'/v1/operations',extra={'Origin':'https://example.invalid'})[0]==403
         assert http(port,token,'/v1/operations',extra={'Host':'example.invalid'})[0]==403
         assert http(port,token,'/v1/openapi.json')[1]==json.loads((ROOT/'contracts/v1/openapi.json').read_text())
+        if routine:assert pdfium,'Routine CI must exercise the bundled PDFium provider'
         corpus=[
           ('extract-text',{'input':{'path':'three.pdf'},'pages':[1,3]},None if engines else 'BACKEND_UNAVAILABLE'),
           ('extract-text',{'input':{'path':'three.pdf'},'pages':[2,1]},'INVALID_REQUEST'),
@@ -385,6 +386,14 @@ def run():
         assert not any(w['code']=='STREAM_DECODE_UNCHECKED' for w in deep['warnings'])
         originals={surface:{f.name:digest(f) for f in root.glob('*.pdf')} for surface,root in roots.items()}
         responses={}
+        # Keep one real run of each costly compression technique. Cheaper
+        # compress cases below still compare all three transport envelopes.
+        cli_only={'resampled.pdf','traced-target.pdf'} if routine else set()
+        if routine:
+            full_only={'resampled-tight.pdf','resampled-err.pdf','level-two.pdf','bitonal-l3.pdf','mixed-target.pdf'}
+            corpus=[(cmd,req,err) for cmd,req,err in corpus
+                    if req.get('output',{}).get('path') not in full_only
+                    and not (cmd=='inspect' and req['input']['path'] in {'mixed-target.pdf','traced-target.pdf'})]
         for n,(command,request,error) in enumerate(corpus,10):
             op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf','split':'splitPdf','remove-pages':'removePages','compress':'compressPdf','extract-text':'extractText','render-page':'renderPage','encrypt':'encryptPdf','decrypt':'decryptPdf'}[command]
             if command in ('encrypt','decrypt'):
@@ -396,6 +405,12 @@ def run():
                 cli=subprocess.run([str(BIN),command,'--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps(request)],capture_output=True,text=True)
             assert bool(cli.returncode)==bool(error),(n,command,cli.returncode,cli.stderr,cli.stdout);a=json.loads(cli.stderr if error else cli.stdout)
             assert not (cli.stdout if error else cli.stderr),(n,'framing')
+            output=request.get('output',{}).get('path')
+            if output in cli_only:
+                assert error is None and a['operationId']==op,(n,a)
+                responses[output]=a
+                for name,h in originals['cli'].items():assert digest(roots['cli']/name)==h,(n,'input changed',name)
+                continue
             try:status,b=http(port,token,'/v1/'+command,request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else (180 if command=='compress' and request.get('maxOutputBytes') else 30 if command=='compress' else 15))
             except TimeoutError as e:raise AssertionError((n,command,request.get('input'),'HTTP timeout')) from e
             mcp_send(mcp,{'jsonrpc':'2.0','id':n,'method':'tools/call','params':{'name':op,'arguments':request}})
@@ -516,10 +531,11 @@ def run():
         assert responses['larger.pdf']['result']['outputSource']=='compressed' and responses['larger.pdf']['result']['bytes']>=responses['larger.pdf']['result']['inputBytes']
         resampled=responses['resampled.pdf']['result']
         assert resampled['targetBytes']==400000 and resampled['targetMet'] is True and 'image-downsample' in resampled['techniques'] and resampled['mode']=='lossy'
-        tight=responses['resampled-tight.pdf']
-        assert tight['result']['targetMet'] is False and 'image-downsample' in tight['result']['techniques'] and any(w['code']=='SIZE_TARGET_UNMET' for w in tight['warnings'])
-        assert 'image-downsample' in responses['level-two.pdf']['result']['techniques']
-        assert 'image-downsample' in responses['bitonal-l3.pdf']['result']['techniques']
+        if not routine:
+            tight=responses['resampled-tight.pdf']
+            assert tight['result']['targetMet'] is False and 'image-downsample' in tight['result']['techniques'] and any(w['code']=='SIZE_TARGET_UNMET' for w in tight['warnings'])
+            assert 'image-downsample' in responses['level-two.pdf']['result']['techniques']
+            assert 'image-downsample' in responses['bitonal-l3.pdf']['result']['techniques']
         if pdfium:
             # Traced-graphics pages resampling cannot shrink: rasterize
             # rebuilds them and the tight target is met.
@@ -530,14 +546,15 @@ def run():
             assert ins['result']['pageCount']==2 and all(p['widthPoints']==595.0 and p['heightPoints']==842.0 for p in ins['result']['pages'])
             # The mixed page's photo, live text, link and line art survive;
             # only the isolated traced page was rebuilt.
-            mixed=responses['mixed-target.pdf']['result']
-            assert mixed['pageCount']==2 and 'pageRasterization' in mixed['techniques'],mixed
-            mw=[w['code'] for w in responses['mixed-target.pdf']['warnings']]
-            assert 'PAGE_RASTERIZED' in mw and 'PAGE_RASTERIZATION_SKIPPED' in mw and 'SIZE_TARGET_UNMET' in mw,mw
-            mi=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'mixed-target.pdf'}})]))
-            assert mi['result']['pages'][1]['annotationCount']==1,(mi['result'])
-            text_r=json.loads(subprocess.check_output([str(BIN),'extract-text','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'mixed-target.pdf'},'pages':[2]})]))
-            assert 'LIVE-TEXT-ANCHOR' in text_r['result']['pages'][0]['text'],text_r
+            if not routine:
+                mixed=responses['mixed-target.pdf']['result']
+                assert mixed['pageCount']==2 and 'pageRasterization' in mixed['techniques'],mixed
+                mw=[w['code'] for w in responses['mixed-target.pdf']['warnings']]
+                assert 'PAGE_RASTERIZED' in mw and 'PAGE_RASTERIZATION_SKIPPED' in mw and 'SIZE_TARGET_UNMET' in mw,mw
+                mi=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'mixed-target.pdf'}})]))
+                assert mi['result']['pages'][1]['annotationCount']==1,(mi['result'])
+                text_r=json.loads(subprocess.check_output([str(BIN),'extract-text','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'mixed-target.pdf'},'pages':[2]})]))
+                assert 'LIVE-TEXT-ANCHOR' in text_r['result']['pages'][0]['text'],text_r
             # Tagged structure is protected: rasterize bails and the document
             # is preserved.
             tagged=responses['tagged-target.pdf']['result']
@@ -556,7 +573,7 @@ def run():
             assert limited and 'no PDFium renderer' in limited[0]['message'],nr['warnings']
         for root in roots.values():
             assert not (root/'resampled-err.pdf').exists()
-            assert digest(root/'resampled.pdf')!=digest(root/'oversampled.pdf')
+            if not routine or root==roots['cli']:assert digest(root/'resampled.pdf')!=digest(root/'oversampled.pdf')
         for root in roots.values():assert not (root/'split-rollback.pdf').exists()
         # A deadline spent mid-descent still publishes the smallest achieved
         # bytes with SIZE_TARGET_UNMET instead of failing with TIMEOUT.
@@ -702,8 +719,11 @@ def run():
         assert b'USAGE' in out and b'anpdf inspect' in out,out
         r=sh(['inspect','--root',str(roots['cli']),'--qpdf',str(QPDF)],input=json.dumps({'input':{'path':'one.pdf'}})+'\n');assert r.returncode==0 and json.loads(r.stdout)['result']['pageCount']==1,r.stderr
         mcp_send(mcp,{'jsonrpc':'2.0','id':100,'method':'tools/call','params':{'name':'fillForms','arguments':{}}});assert mcp_read(mcp)['error']['code']==-32602
-        print(json.dumps({'crossSurfaceCases':len(corpus),'surfaces':3,'inputPreservation':'passed','pageOrder':'Poppler text verified','httpPolicy':'passed','mcpLifecycle':'passed'}))
+        print(json.dumps({'crossSurfaceCases':len(corpus)-len(cli_only),'cliOnlyCases':len(cli_only),'surfaces':3,'inputPreservation':'passed','pageOrder':'Poppler text verified','httpPolicy':'passed','mcpLifecycle':'passed'}))
     finally:
         mcp.stdin.close();mcp.wait(timeout=10);assert not mcp.stderr.read(),'MCP stderr leakage'
         server.terminate();server.wait(timeout=10);assert not server.stdout.read(),'HTTP stdout leakage'
-if __name__=='__main__':run()
+if __name__=='__main__':
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--routine',action='store_true',help='Run the reduced bundled-PDFium CI corpus')
+    run(routine=parser.parse_args().routine)

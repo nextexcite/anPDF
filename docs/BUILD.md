@@ -197,11 +197,14 @@ Before separately authorizing publication:
 ## CI matrix and pinned GitHub Actions
 
 Pull requests and pushes to `main` run one default Rust build and the bundled
-PDFium integration corpus (including CJK and compression) on `ubuntu-26.04`,
+PDFium routine corpus (`tests/integration.py --routine`) on `ubuntu-26.04`,
 plus `forge-output` and `privacy`. They do not build macOS or OCI artifacts.
+The routine corpus keeps cross-surface checks, including CJK text and rendering,
+and runs one real image-downsampling and one page-rasterization case via the CLI.
 
 Run **Rust and contract qualification** manually on the exact release candidate
-ref before tagging. This adds the bundled PDFium corpus on `macos-26`, the
+ref before tagging. This runs the full bundled PDFium corpus on Linux and macOS,
+including the compression matrix across all three interfaces, and adds the
 Ubuntu `--no-default-features` corpus and reference backend benchmark, and the
 restricted linux/amd64 OCI smoke. This workflow does not publish; the separate
 release workflow still builds and verifies each shipping platform.
