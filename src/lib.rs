@@ -869,6 +869,9 @@ impl Dispatcher {
                         return Err(Error("PRESERVATION_UNMET", None));
                     }
                 }
+                if encrypting && password.is_empty() {
+                    warnings.push(json!({"code":"EMPTY_OPEN_PASSWORD","message":"The user password is empty: the file opens without one and only owner permissions apply — content confidentiality requires a non-empty password."}));
+                }
                 let omitted = ["metadata", "bookmarks", "annotations", "attachments"]
                     .into_iter()
                     .filter(|a| preservation[*a] == "omitted")
