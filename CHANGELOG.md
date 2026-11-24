@@ -4,6 +4,20 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
+## [0.4.4] - Unpublished
+
+### Fixed
+- Explicit lossless compression never enables lossy passes, even when a size target is set. Target-only requests retain their v1 behavior.
+
+### Changed
+- Clarify CLI help and shared operation discovery. MCP omits tools that cannot run in the current session.
+- Strict compression size misses explain the measured candidate size and whether any output was published.
+- Verify password protection in the staged macOS package and restricted OCI image before publication.
+
+### Added
+- Optional `lossless-only` build and MCP session controls for one allowed output path, operation, and byte ceiling.
+- anPDF agent skill and repeatable, opt-in compression evaluation runner.
+
 ## [0.4.3] - 2026-11-23
 
 ### Fixed

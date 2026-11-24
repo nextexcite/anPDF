@@ -1090,6 +1090,10 @@ fn process(arguments: &[OsString]) -> Result<Value> {
 }
 
 pub fn worker(args: impl Iterator<Item = OsString>) -> i32 {
+    if cfg!(feature = "lossless-only") {
+        println!("{}", json!({"error": "INVALID_REQUEST"}));
+        return 1;
+    }
     let arguments: Vec<OsString> = args.collect();
     match process(&arguments) {
         Ok(result) => {

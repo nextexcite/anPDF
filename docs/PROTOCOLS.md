@@ -1,9 +1,12 @@
 # Shared protocol behavior
 
 The sole PDF operation/schema authority is `contracts/v1/openapi.json` (1.0.0).
+`contractVersion` is the schema version, not the installed anPDF version.
 The contract hash and pinned Forge provenance are checked during Rust builds.
-Discovery includes resolved input, success and error schemas, limits, capability
-status, and explicit unsupported/excluded capabilities.
+CLI and HTTP discovery include resolved input, success and error schemas, limits,
+configured capabilities (not backend health), and explicit unsupported/excluded
+capabilities. MCP advertises the same operation descriptions and input/success
+schemas. The discovery wall time is an upper bound, not every job's deadline.
 
 | Operation | CLI | HTTP | MCP tool |
 |---|---|---|---|
@@ -21,6 +24,21 @@ status, and explicit unsupported/excluded capabilities.
 CLI discovery/utility commands: `operations`, `schema <operationId>`, `completions <bash|zsh|fish>`, `help [command]` / `--help` / `-h`, `version` / `--version` / `-V`.
 When neither `--qpdf` nor `ANPDF_QPDF` is set, the CLI/server checks standard system paths (`/opt/qpdf/bin/qpdf`, `/usr/bin/qpdf`, `/opt/homebrew/bin/qpdf`, `/usr/local/bin/qpdf`) and trusted `PATH` directories (absolute, owned by the effective user or root, without group/other write bits).
 
+For a single-output agent task, start MCP with a runner-owned publication policy:
+
+```sh
+anpdf mcp --root ./workspace --output-only compact.pdf \
+  --output-operation compressPdf --output-byte-ceiling 50000
+```
+
+- `--output-only` permits creation at exactly that workspace-relative path and denies replacement and other paths with `ACCESS_DENIED`. Split needs distinct destinations and cannot succeed in that session.
+- `--output-operation` optionally limits writes to one single-output operation ID. For example, `extractPdf` cannot substitute a smaller subset for a `compressPdf` job. Read-only operations are unaffected.
+- `--output-byte-ceiling` optionally caps the bytes actually published. An oversize artifact returns `LIMIT_EXCEEDED` without publishing, even if the caller omits its target or requests best effort. Strict compression still returns `SIZE_TARGET_UNMET` when it misses its own target.
+
+In a restricted session, `tools/list` omits split and any writer excluded by `--output-operation`. Read-only tools remain listed, and the available writers describe the startup policy without changing their request or response schemas. Discovery is not enforcement: a direct call to a hidden writer still goes through the publication policy. An unrestricted session still lists all ten operations.
+
+This is not an input allowlist or a sandbox: expose only the intended input workspace and give the agent no other way to write there. Use a `lossless-only` build as well when downgrades are forbidden.
+
 CLI operations also accept positional shorthand instead of `--request-json`/`--request-file`; both forms produce the same contract request and identical envelopes. `<pages>` is a comma list of 1-based numbers and `a-b` ranges.
 
 | CLI shorthand | Request fields |
@@ -36,7 +54,7 @@ CLI operations also accept positional shorthand instead of `--request-json`/`--r
 | `anpdf encrypt <doc.pdf> [<out.pdf>]` | `input`, `output` (defaults to `<name>-encrypted.pdf`) |
 | `anpdf decrypt <doc.pdf> [<out.pdf>]` | `input`, `output` (defaults to `<name>-decrypted.pdf`) |
 
-`--replace` maps to `output.replaceExisting`, and `--preserve metadata,bookmarks,annotations,attachments` (or `all`) maps to `preserve`. `--` terminates flag parsing for dash-leading filenames. `extract`, `remove-pages` and `extract-text` also accept `--pages <spec>` in place of the positional. Shorthand paths may be absolute or `~/`-prefixed: the invocation's workspace root then adapts to the files' common canonical directory, while `--root` pins it and refuses inputs outside. JSON requests (inline, file, stdin, HTTP, MCP) always stay workspace-relative to `--root`.
+Prefer `-o` for single-output shorthand, especially for merge: without it the final positional is the destination. `--replace` sets `output.replaceExisting` (for every part in split): it can overwrite a distinct destination, never an input, and does not grant any permission to change fidelity. `--preserve metadata,bookmarks,annotations,attachments` (or `all`) maps to `preserve`. `--` terminates flag parsing for dash-leading filenames. `extract`, `remove-pages` and `extract-text` also accept `--pages <spec>` in place of the positional. Shorthand paths may be absolute or `~/`-prefixed: the invocation's workspace root then adapts to the files' common canonical directory, while `--root` pins it and refuses inputs outside. JSON requests (inline, file, stdin, HTTP, MCP) always stay workspace-relative to `--root`.
 
 Error messages may append a detail suffix (` — <detail>`) naming the failing field (a JSON pointer like `/input/path`), flag or file; the envelope schema and codes are unchanged. On a terminal, a bare operation or parse-stage misuse prints usage instead of a JSON envelope or blocking on stdin, successful results print a short plain summary (the pretty envelope via `--json`), and errors print `anpdf <command>: <reason>` leading with the specific detail; non-terminal stdout/stderr keep the canonical envelopes byte-identical, and piped stdin still supplies the request. Non-UTF-8 arguments fail with `INVALID_REQUEST`.
 
@@ -55,9 +73,10 @@ Messages never include raw backend output, absolute input paths, or credentials.
 | BACKEND_UNAVAILABLE / INTERNAL | 503 / 500 | 8 |
 | UNAUTHENTICATED | 401 | HTTP only |
 
-CLI cancellation/termination exits 130 after cancelling work. `--dry-run` returns
-a surface-control response identifying that content validation still requires
-processing; it is not a PDF success result or a fourth PDF operation.
+CLI cancellation/termination exits 130 after cancelling work. CLI-only `--dry-run`
+checks the request and destination policy without writing. It does not process
+the PDF or verify credentials, page bounds against the document, preservation,
+or whether a compression target can be met.
 
 ### Text and rendering engine
 
@@ -215,6 +234,11 @@ variants and indirect Info values are not certified preserved. Annotation counts
 are structural evidence, not proof of identical appearances or action semantics.
 One `PRESERVATION_OMITTED` warning names the union of omitted aspects per response.
 
+Split accepts independently specified subsets: parts can overlap or omit pages.
+All parts are staged and verified before publication, but destination writes
+are separate. If a later publication fails, newly created outputs are rolled
+back where possible; previous contents of replaced outputs are not restored.
+
 Synthetic qpdf 12.4.2 observations (three pages, Info/custom field, XMP, two
 outlines to pages 1 and 3, embedded text file, text/link annotations on pages 1/3):
 
@@ -236,6 +260,33 @@ smaller, the already-staged validated original is committed instead. Required
 `outputSource` is `original` or `compressed`; all result measurements describe
 the published bytes (`savedBytes:0`, `compressionRatio:1.0` for original).
 `NO_SIZE_REDUCTION` identifies which bytes were kept.
+
+For a task that must never degrade fidelity, give the agent only an anPDF binary
+built with `cargo build --locked --features lossless-only`. The policy applies
+to every `compressPdf` request, including through CLI, MCP, and loopback HTTP.
+It rejects requests that would enable a lossy or layered pass with
+`INVALID_REQUEST`, before processing or publishing a PDF. This includes targets
+that implicitly enable lossy compression; choose `mode: "lossless"` explicitly.
+The build also rejects direct calls to its PDF resampling and rasterization
+workers; PNG rendering still works. The policy does not change the size-miss
+setting or authorize replacement. A trusted runner must withhold other PDF
+writers and unrestricted anPDF binaries for the same guarantee across tools.
+This is not an OS sandbox.
+
+Explicit `mode: "lossless"` never enables JPEG recompression, downsampling, or
+rasterization, even with a target. `mode: "lossy"` permits JPEG optimization and,
+with a target, downsampling and eligible traced-page rasterization. In v1, omitting
+the mode selects lossless unless level 2–3 is requested or a target is supplied
+without a level. Level 1 is lossless and conflicts with explicit lossy mode;
+levels 2–3 conflict with explicit lossless mode. Levels 2 and 3 bound image
+downsampling at roughly 200 and 120 DPI respectively; without a level the lossy
+ladder can descend to roughly 72 DPI. `jpegQuality` sets the initial JPEG pass,
+not the ladder, and requires explicit lossy mode.
+
+With a target, use `targetMet` to distinguish a successful write from meeting
+the size requirement. `onTargetMiss: "bestEffort"` (default) writes the selected
+result and warns `SIZE_TARGET_UNMET`; `"error"` returns that code (422, CLI exit 5)
+and leaves the destination untouched, even when replacement was allowed.
 
 `compressPdf.mode: "layered"` requires PDFium (`BACKEND_UNAVAILABLE` otherwise).
 It tries fixed 400 DPI layered rasterization after the lossless pass, only on

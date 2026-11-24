@@ -8,8 +8,8 @@ leave only the link.
 
 ## 1. Where the project stands
 
-**Baseline:** `0.4.3` fixes layered compression target misses and clarifies
-the CLI help. See
+**Baseline:** `0.4.4` is prepared locally; `0.4.3` is the latest published
+0.4.x milestone. See
 [GitHub Releases](https://github.com/nextexcite/anPDF/releases) for published
 development builds; they are not production-qualified. The PDFOxide engine ships separately as
 [v0.3.0-pdfoxide-preview.1](https://github.com/nextexcite/anPDF/releases/tag/v0.3.0-pdfoxide-preview.1);
@@ -73,15 +73,11 @@ Intention ordering, not commitments. Each phase ships only with the gates in
 Ordered. "Done" means the acceptance criteria hold with execution evidence
 linked in the owning doc.
 
-1. **Close installed-binary gaps on the macOS package (release gate).**
-   The real Homebrew install path is proven on macOS arm64 CI (`macos-26`
-   runner: formula install, `brew test`, bundled renderer, rasterize-backed
-   `compress --max-bytes`); the fixture document was synthetic. Still missing:
-   any `encrypt`/`decrypt` smoke on the installed binary (formula `test` block
-   and `containers/smoke.sh` both skip it) and a human-driven `brew install`
-   session log. *Acceptance:* formula test or tap CI exercises encrypt/decrypt
-   on the installed build; `smoke.sh` gains an encrypt step; one real
-   `brew install anpdf` run logged in QUALIFICATION.md.
+1. **Installed-binary password protection (release gate).** The macOS
+   `brew install`, `brew test`, and installed-binary password round-trip are
+   recorded in [QUALIFICATION.md](QUALIFICATION.md#044-unpublished). The tag
+   workflow now runs the same round-trip on the staged macOS executable and
+   within each restricted OCI image before publication.
 2. **Record prerelease evidence.** The tag workflow runs
    [full qualification](BUILD.md#ci-matrix-and-pinned-github-actions)
    before publishing. Record the verified GHCR index and macOS tarball;
@@ -117,29 +113,19 @@ linked in the owning doc.
 Recorded as plan items, not implementation changes. Each is a decision plus a
 small contract/doc touch-up; implement deliberately, not opportunistically.
 
-9. **`--dry-run` parity decision.** CLI-only today; HTTP/MCP dispatch
-   `dry_run=false`. AGENTS.md rule 1 wants equivalent dry-run behavior across
-   surfaces; the contract has no `dryRun` schema and the response bypasses
-   `valid_output`. *Acceptance:* either `dryRun` is added to request schemas for
-   HTTP/MCP parity, or AGENTS.md/PROTOCOLS.md scope it explicitly as CLI-only —
-   one statement of the rule, no drift.
+9. **Dry run is CLI-only.** [Protocol docs](PROTOCOLS.md) distinguish request
+   preflight from processing and explain what it does not validate.
 10. **Discovery can't disclose resampler/rasterizer availability.** `engines`
    lists text/render providers; a client learns `pageRasterization` didn't run
    only at miss time via `IMAGE_RESAMPLE_LIMITED`. *Acceptance:* discovery
    surfaces resample-worker/rasterizer presence (e.g. a compress `techniques`/
    `engines` field), or the omission is waived with rationale in PROTOCOLS.md.
-11. **Deadline ceiling vs per-operation defaults.** Discovery advertises
-    `wallSeconds:600`; `Control::default()` is 60s and compress scales 60→600.
-    The advertised number is a ceiling, not a per-op bound. *Acceptance:*
-    discovery output or PROTOCOLS.md states the ceiling semantics; no false
-    per-operation claim.
-12. **Stale contract metadata (tracked follow-up, not in this docs PR).**
-    `x-anpdf-status` still reads "development 0.3.0 contract" and the Dockerfile
-    `APP_VERSION` default is `0.3.0`; `contractVersion:1.0.0` is a schema
-    version, not the product version, and docs should say so. Updating them
-    alters the published schema/hash surface, so it rides the next contract
-    touch. *Acceptance:* both corrected with the next contract change, and
-    PROTOCOLS.md explains `contractVersion` semantics.
+11. **Deadline and version labels clarified.** [Protocol docs](PROTOCOLS.md)
+    define `wallSeconds` as a ceiling and distinguish contract from product
+    versions. `x-anpdf-status` no longer embeds a product version.
+12. **Real-agent usability evidence.** Run the paired pilot in
+    [AGENT-EVALS.md](AGENT-EVALS.md) against the real CLI and MCP tools before
+    making any claim about skill effectiveness or agent task completion.
 
 Audit verified-consistent (no action): ContentEngine length bound is 32 on both
 schema and registry; HTTP `Host` pinning and the pinned MCP `protocolVersion`

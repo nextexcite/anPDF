@@ -31,6 +31,7 @@ use std::{
 pub struct Dispatcher {
     workspace: Workspace,
     registry: BackendRegistry,
+    output_operation: Option<String>,
     active: AtomicUsize,
     shutdown: std::sync::atomic::AtomicBool,
     controls: std::sync::Mutex<Vec<std::sync::Weak<std::sync::atomic::AtomicBool>>>,
@@ -55,10 +56,28 @@ impl Dispatcher {
         Ok(Self {
             workspace: Workspace::new(root)?,
             registry,
+            output_operation: None,
             active: AtomicUsize::new(0),
             shutdown: std::sync::atomic::AtomicBool::new(false),
             controls: std::sync::Mutex::new(Vec::new()),
         })
+    }
+    /// Restrict artifact publication before sharing this dispatcher with MCP.
+    pub fn restrict_output(
+        mut self,
+        path: String,
+        byte_ceiling: Option<u64>,
+        operation: Option<String>,
+    ) -> Result<Self> {
+        if let Some(id) = &operation
+            && !contract::input(id).is_some_and(|s| s["properties"].get("output").is_some())
+        {
+            return Err(Error("INVALID_REQUEST", None)
+                .with("--output-operation must name a single-output operation ID"));
+        }
+        self.workspace.restrict_output(path, byte_ceiling)?;
+        self.output_operation = operation;
+        Ok(self)
     }
     pub fn discovery(&self) -> Value {
         contract::discovery_with(&self.registry)
@@ -111,6 +130,14 @@ impl Dispatcher {
         }
         control.check()?;
         let plan = self.registry.plan(id, request)?;
+        if plan.job.writes_output()
+            && let Some(allowed) = &self.output_operation
+            && allowed != id
+        {
+            return Err(Error("ACCESS_DENIED", None).with(format!(
+                "This MCP session permits output only from {allowed}"
+            )));
+        }
         // Only decryptPdf opens an encrypted input; the contract already
         // bound `password` to its UTF-8 127-byte specification maximum.
         let open_password = match plan.job {
@@ -173,7 +200,7 @@ impl Dispatcher {
             (72, 45),
         ];
         let compress_spec = if matches!(plan.job, Job::Compress) {
-            let mode_str = request["mode"].as_str().unwrap_or("lossless");
+            let mode_str = request["mode"].as_str();
             let jpeg_quality = request["jpegQuality"].as_u64();
             let max_output = request
                 .get("maxOutputBytes")
@@ -189,8 +216,8 @@ impl Dispatcher {
                     Some("onTargetMiss requires maxOutputBytes".into()),
                 ));
             }
-            let lossy_requested = mode_str == "lossy";
-            let layered = mode_str == "layered";
+            let lossy_requested = mode_str == Some("lossy");
+            let layered = mode_str == Some("layered");
             if layered && (level.is_some() || jpeg_quality.is_some()) {
                 return Err(Error(
                     "INVALID_REQUEST",
@@ -204,7 +231,7 @@ impl Dispatcher {
                         Some("compressionLevel 1 is strictly lossless and conflicts with mode \"lossy\"".into()),
                     ));
                 }
-                Some(2..=3) if mode_str == "lossless" && request.get("mode").is_some() => {
+                Some(2..=3) if mode_str == Some("lossless") => {
                     return Err(Error(
                         "INVALID_REQUEST",
                         Some("compressionLevel 2..3 performs lossy resampling and conflicts with mode \"lossless\"".into()),
@@ -213,21 +240,22 @@ impl Dispatcher {
                 Some(1..=3) | None => {}
                 Some(_) => return Err(Error("INVALID_REQUEST", None)),
             }
-            // A bare target still implies lossy descent — except at level 1,
-            // which stays strictly lossless and simply reports the miss.
+            // Preserve v1 target-only behavior, but never infer permission
+            // to degrade fidelity when a caller chose a mode explicitly.
             let lossy = lossy_requested
-                || level.is_some_and(|l| l >= 2)
-                || (!layered && max_output.is_some() && level != Some(1));
+                || (mode_str.is_none()
+                    && (level.is_some_and(|l| l >= 2)
+                        || (level.is_none() && max_output.is_some())));
+            if cfg!(feature = "lossless-only") && (lossy || layered) {
+                return Err(Error(
+                    "INVALID_REQUEST",
+                    Some("This anPDF build permits lossless compression only. Use mode \"lossless\"; do not retry with lossy settings.".into()),
+                ));
+            }
             if jpeg_quality.is_some() && !lossy_requested {
                 return Err(Error(
                     "INVALID_REQUEST",
                     Some("jpegQuality applies only to mode \"lossy\"".into()),
-                ));
-            }
-            if lossy_requested && level == Some(1) {
-                return Err(Error(
-                    "INVALID_REQUEST",
-                    Some("mode \"lossy\" requires compressionLevel 2 or 3".into()),
                 ));
             }
             let mode = if lossy {
@@ -566,8 +594,7 @@ impl Dispatcher {
                 // target can descend to the level floor (72 DPI by default),
                 // and a level without a target pins exactly its rung.
                 let rungs_base: &[(u32, u8)] = match (spec.max_output_bytes.is_some(), spec.level) {
-                    _ if spec.layered => &[],
-                    (_, Some(1)) => &[],
+                    _ if !spec.lossy => &[],
                     (true, Some(2)) => &LADDER[..2],
                     (true, Some(3)) => &LADDER[..4],
                     (true, _) => LADDER,
@@ -905,9 +932,11 @@ impl Dispatcher {
                     }));
                 }
                 let target_met = spec.max_output_bytes.map(|t| bytes <= t);
-                if target_met == Some(false) {
+                if let Some(target) = spec.max_output_bytes.filter(|&target| bytes > target) {
                     if spec.error_on_miss {
-                        return Err(Error("SIZE_TARGET_UNMET", None));
+                        return Err(Error("SIZE_TARGET_UNMET", None).with(format!(
+                            "The result would be {bytes} bytes against a {target}-byte limit. This is not a transient error. Report the size miss and that no output was published. Retry only if the caller authorizes a change to the constraints."
+                        )));
                     }
                     warnings.push(json!({
                         "code": "SIZE_TARGET_UNMET",

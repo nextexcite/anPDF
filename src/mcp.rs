@@ -22,14 +22,26 @@ fn protocol(output: &Mutex<std::io::Stdout>, id: Value, code: i32) {
     );
 }
 pub fn tools() -> Value {
-    json!({"tools":contract::operations().into_iter().map(|(_,op)|{
+    tools_with_output_policy(None, None)
+}
+fn tools_with_output_policy(policy: Option<(&str, Option<u64>)>, writer: Option<&str>) -> Value {
+    json!({"tools":contract::operations().into_iter().filter_map(|(_,op)|{
     let id=op["operationId"].as_str().unwrap();
     let read_only = matches!(id, "inspectPdf" | "extractText");
-    let summary = op["summary"].as_str().unwrap();
-    let description = op["description"].as_str().map_or_else(|| summary.to_owned(), |details| format!("{summary}. {details}"));
-    json!({"name":id,"description":description,"inputSchema":contract::input(id),
+    let mut description = contract::description(op);
+    if let Some((path, ceiling)) = policy.filter(|_| !read_only) {
+        if id == "splitPdf" || writer.is_some_and(|writer| writer != id) {
+            return None;
+        }
+        use std::fmt::Write as _;
+        let _ = write!(description, " This session permits new output only at {path:?}; replacement is disabled.");
+        if let Some(ceiling) = ceiling {
+            let _ = write!(description, " Publication is limited to {ceiling} bytes.");
+        }
+    }
+    Some(json!({"name":id,"description":description,"inputSchema":contract::input(id),
     "outputSchema":contract::resolve(&op["responses"]["200"]["content"]["application/json"]["schema"]),
-    "annotations":{"readOnlyHint":read_only,"destructiveHint":!read_only,"idempotentHint":read_only,"openWorldHint":false}})
+    "annotations":{"readOnlyHint":read_only,"destructiveHint":!read_only,"idempotentHint":read_only,"openWorldHint":false}}))
 }).collect::<Vec<_>>()})
 }
 pub fn serve(dispatcher: Arc<Dispatcher>) -> Result<()> {
@@ -113,7 +125,11 @@ pub fn serve(dispatcher: Arc<Dispatcher>) -> Result<()> {
             if v["params"].get("cursor").is_some() {
                 protocol(&output, id, -32602)
             } else {
-                send(&output, json!({"jsonrpc":"2.0","id":id,"result":tools()}))
+                let tools = tools_with_output_policy(
+                    dispatcher.workspace.output_only(),
+                    dispatcher.output_operation.as_deref(),
+                );
+                send(&output, json!({"jsonrpc":"2.0","id":id,"result":tools}))
             }
             continue;
         }

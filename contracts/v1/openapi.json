@@ -12,7 +12,8 @@
     "/v1/inspect": {
       "post": {
         "operationId": "inspectPdf",
-        "summary": "Inspect and structurally validate a PDF",
+        "summary": "Inspect PDF structure, page count, and document features",
+        "description": "Read-only. Use deepCheck to decode and check streams; the default is a shallow structural check. Neither is a visual, PDF/A, signature-trust, or malware verdict.",
         "requestBody": {
           "required": true,
           "content": {
@@ -263,7 +264,7 @@
             }
           }
         },
-        "description": "Retain the first input as primary and report per-output preservation. Required preserve aspects fail with PRESERVATION_UNMET (422) before publication if omitted or unverified."
+        "description": "Write one PDF in the given input order. The first input is the primary document for preservation; metadata, bookmarks, and attachments from later inputs may not carry over. Set preserve for any aspect that must carry over; failure to verify it returns PRESERVATION_UNMET without writing."
       }
     },
     "/v1/extract": {
@@ -392,7 +393,7 @@
             }
           }
         },
-        "description": "Retain the first input as primary and report per-output preservation. Required preserve aspects fail with PRESERVATION_UNMET (422) before publication if omitted or unverified."
+        "description": "Keep only the selected pages in a new output. Selections are strictly increasing, unique, and 1-based; this does not reorder pages. Set preserve for any aspect that must carry over; failure to verify it returns PRESERVATION_UNMET without writing."
       }
     },
     "/v1/split": {
@@ -521,7 +522,7 @@
             }
           }
         },
-        "description": "Retain the first input as primary and report per-output preservation. Required preserve aspects fail with PRESERVATION_UNMET (422) before publication if omitted or unverified."
+        "description": "Write 2–20 explicitly named page subsets from one PDF. Parts may overlap or leave pages unused; each part has its own strictly increasing, unique, 1-based selection and distinct output. Required preservation is checked for every part before publishing any part."
       }
     },
     "/v1/remove-pages": {
@@ -650,13 +651,13 @@
             }
           }
         },
-        "description": "Retain the first input as primary and report per-output preservation. Required preserve aspects fail with PRESERVATION_UNMET (422) before publication if omitted or unverified."
+        "description": "Drop the selected pages and write the remaining pages in original order. Selections are strictly increasing, unique, and 1-based; at least one page must remain. Set preserve for any aspect that must carry over; failure to verify it returns PRESERVATION_UNMET without writing."
       }
     },
     "/v1/compress": {
       "post": {
         "operationId": "compressPdf",
-        "summary": "Compress PDF streams and optionally optimize embedded images",
+        "summary": "Write a smaller PDF copy when possible",
         "requestBody": {
           "required": true,
           "content": {
@@ -779,7 +780,7 @@
             }
           }
         },
-        "description": "Keep validated original bytes when compressed output is not smaller, unless allowLargerOutput is true. outputSource identifies the published bytes. maxOutputBytes requests a byte ceiling: layered mode checks the fixed-resolution result; other modes may descend DPI/quality rungs to the compressionLevel floor. Results report targetBytes, targetMet, and techniques; an unmet target warns (bestEffort) or fails SIZE_TARGET_UNMET (error)."
+        "description": "Choose mode explicitly. Lossless never degrades images or rasterizes pages, even with a size target. Lossy with a target may downsample images and rasterize eligible traced pages. Layered tries fixed-resolution lossy reconstruction. For compatibility, a target without mode or level can enable lossy processing. Check targetMet, outputSource, techniques, and warnings; strict misses write nothing."
       }
     },
     "/v1/extract-text": {
@@ -908,7 +909,7 @@
             }
           }
         },
-        "description": "Requires a configured text engine. Does not perform OCR or modify the PDF. The compact JSON success envelope may not exceed 8 MiB; reduce the page selection if it does."
+        "description": "Read-only. Returns embedded text and positioned spans, not OCR; scan-only pages can return empty text. Requires a configured text engine. Reduce the page selection if the compact JSON result exceeds 8 MiB."
       }
     },
     "/v1/render-page": {
@@ -1037,7 +1038,7 @@
             }
           }
         },
-        "description": "Requires a configured rendering engine. Render the visible page (effective crop and rotation) on an opaque white background, without annotations. The output is limited to 16,777,216 pixels, 8192 pixels per side, and 64 MiB. The source PDF is not modified."
+        "description": "Write a PNG file, not inline image data, for one 1-based page (144 DPI by default). Applies crop and rotation, with a white background and no annotations. Requires a configured rendering engine. Output is limited to 8192 pixels per side, 16,777,216 total pixels, and 64 MiB."
       }
     },
     "/v1/encrypt": {
@@ -1166,7 +1167,7 @@
             }
           }
         },
-        "description": "Encrypt the input with AES-256 (revision 6), the standard protection of the current PDF specification. `password` is the user password required to open the output; `ownerPassword` optionally holds the owner (permissions) password — when omitted, a random unguessable owner password is generated so the document still opens with `password` and no empty-owner backdoor exists. Literal passwords are refused in --request-json and never echoed in errors or written to logs — argv was already exposed to the OS at launch, so rejection cannot undo that; the CLI takes them from an interactive prompt, piped stdin, --request-file or --password-file instead. The input must not already be encrypted; form content is preserved, while signature-bearing documents stay rejected because a rewrite invalidates them."
+        "description": "Write a password-protected copy of an unencrypted PDF. A nonempty password is required for confidentiality; an intentionally empty password leaves open access and emits EMPTY_OPEN_PASSWORD. Omitted ownerPassword is generated randomly. Form content is preserved; signed inputs are rejected. Keep credentials out of CLI arguments and agent transcripts."
       }
     },
     "/v1/decrypt": {
@@ -1295,7 +1296,7 @@
             }
           }
         },
-        "description": "Remove encryption from the input, producing a fully readable copy. `password` must be the document's user or owner password — the operation fails INVALID_PASSWORD (403) when it does not open the file (supply an empty string for owner-only files). The input must be encrypted; form content is preserved, while signature-bearing documents stay rejected because a rewrite invalidates them."
+        "description": "Write an unencrypted copy of an encrypted PDF using its known user or owner password. An intentionally empty password opens supported owner-only files; a wrong password returns INVALID_PASSWORD without writing. Form content is preserved; signed inputs are rejected. Keep credentials out of CLI arguments and agent transcripts."
       }
     }
   },
@@ -1309,7 +1310,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 4096,
-            "description": "Relative regular-file path inside a configured workspace root; URLs, traversal and symlink escape forbidden."
+            "description": "Existing regular file relative to the configured workspace root, e.g. reports/input.pdf. Absolute paths, URLs, traversal and symlinks are forbidden."
           }
         },
         "required": [
@@ -1324,12 +1325,12 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 4096,
-            "description": "Relative regular-file path inside a configured workspace root; URLs, traversal and symlink escape forbidden."
+            "description": "Destination relative to the configured workspace root, e.g. reports/output.pdf. Parent directories must already exist. Cannot name or alias any input."
           },
           "replaceExisting": {
             "type": "boolean",
             "default": false,
-            "description": "Allows replacing a distinct output only; never any input."
+            "description": "Allow overwriting a distinct existing destination. By default an existing destination returns OUTPUT_EXISTS. This never authorizes changing the input."
           }
         },
         "required": [
@@ -1577,8 +1578,7 @@
               "lossy",
               "layered"
             ],
-            "default": "lossless",
-            "description": "Lossless recompresses streams; lossy additionally optimizes images. Layered requires PDFium and tries a fixed 400 DPI reconstruction of eligible traced pages using a bilevel base and separate grayscale/color regions. It is visually lossy, preserves unsupported pages, and adopts the candidate only if smaller than the lossless pass. It does not accept jpegQuality or compressionLevel. An optional maxOutputBytes is checked without descending to lower DPI."
+            "description": "Explicit lossless never degrades images or rasterizes pages, including with maxOutputBytes. Lossy allows JPEG optimization and, with a target, image downsampling and eligible page rasterization. Layered requires PDFium and tries a fixed 400 DPI lossy reconstruction of eligible traced pages; jpegQuality and compressionLevel do not apply. If omitted: lossless unless compressionLevel is 2–3 or a target is supplied without a level."
           },
           "jpegQuality": {
             "type": "integer",
@@ -1595,7 +1595,7 @@
           "maxOutputBytes": {
             "type": "integer",
             "minimum": 1,
-            "description": "Requested byte ceiling. In layered mode this is checked against the fixed-resolution result; otherwise it enables lossy descent unless compressionLevel is 1."
+            "description": "Requested maximum output size in bytes. Explicit lossless (or compressionLevel 1) checks lossless output only. Layered checks its fixed-resolution result. With lossy or omitted mode and no level 1, the target can trigger lossy descent and eligible page rasterization."
           },
           "onTargetMiss": {
             "type": "string",
@@ -2609,7 +2609,7 @@
       }
     }
   },
-  "x-anpdf-status": "development 0.3.0 contract; qpdf 12.x >=12.4.2 required; only 12.4.2 qualified; strict mode requires exact; PDFium is the default text/render engine",
+  "x-anpdf-status": "Development contract; qpdf 12.x >=12.4.2 required; only 12.4.2 qualified; strict mode requires exact; PDFium is the default text/render engine",
   "security": [
     {
       "localBearer": []

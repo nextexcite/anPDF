@@ -45,9 +45,7 @@ impl Error {
             "FORM_UNSUPPORTED" => "Transforming form-bearing PDFs is unsupported.",
             "PRESERVATION_UNKNOWN" => "Preservation could not be established.",
             "PRESERVATION_UNMET" => "Required document aspects could not be fully preserved.",
-            "SIZE_TARGET_UNMET" => {
-                "Compressed output could not meet the requested maximum size without discarding content."
-            }
+            "SIZE_TARGET_UNMET" => "Size target not met; no output was published.",
             "UNSUPPORTED_OPERATION" => "Operation is unsupported.",
             "LIMIT_EXCEEDED" => "A configured processing limit was exceeded.",
             "TIMEOUT" => "Processing was cancelled or exceeded its deadline.",

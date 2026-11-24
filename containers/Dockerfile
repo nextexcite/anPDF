@@ -34,7 +34,7 @@ RUN find /usr/share/doc -type f ! -iname 'copyright*' ! -iname 'license*' ! -ina
 
 FROM scratch
 COPY --from=rootfs / /
-ARG APP_VERSION=0.4.3
+ARG APP_VERSION=0.4.4
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV ANPDF_QPDF=/opt/qpdf/bin/qpdf
 ENV ANPDF_PDFIUM_LIB=/usr/local/lib/anpdf/libpdfium.so

@@ -14,6 +14,56 @@ def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def mcp_send(p,v):p.stdin.write(json.dumps(v)+'\n');p.stdin.flush()
 def mcp_read(p):
     line=p.stdout.readline();assert line,'MCP closed unexpectedly';return json.loads(line)
+
+def check_mcp_destination_guard(root):
+    root.mkdir()
+    traced=root/'traced.pdf';traced.write_bytes(gen.traced_pdf(2))
+    small=root/'small.pdf';small.write_bytes(gen.pdf(['ALLOWED']))
+    before={p.name:digest(p) for p in root.iterdir()}
+    with subprocess.Popen([str(BIN),'mcp','--root',str(root),'--qpdf',str(QPDF),
+                           '--output-only','compact.pdf','--output-byte-ceiling','50000','--output-operation','compressPdf'],
+                          stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) as p:
+        next_id=0
+        def ask(method,params):
+            nonlocal next_id
+            next_id+=1
+            mcp_send(p,{'jsonrpc':'2.0','id':next_id,'method':method,'params':params})
+            response=mcp_read(p)
+            assert response.get('id')==next_id and 'result' in response,response
+            return response['result']
+        def call(name,arguments,error=None):
+            response=ask('tools/call',{'name':name,'arguments':arguments})
+            assert response['isError']==bool(error),response
+            if error:assert json.loads(response['content'][0]['text'])['error']['code']==error,response
+            return response
+        try:
+            ask('initialize',{'protocolVersion':'2025-11-25','clientInfo':{'name':'test','version':'1'},'capabilities':{}})
+            mcp_send(p,{'jsonrpc':'2.0','method':'notifications/initialized'})
+            tools={t['name']:t for t in ask('tools/list',{})['tools']}
+            assert set(tools)=={'inspectPdf','extractText','compressPdf'},tools.keys()
+            desc=tools['compressPdf']['description']
+            assert 'compact.pdf' in desc and '50000 bytes' in desc,desc
+            request={'input':{'path':'traced.pdf'},'mode':'lossless','output':{'path':'compact.pdf'}}
+            call('inspectPdf',{'input':request['input']})
+            call('compressPdf',dict(request,output={'path':'probe.pdf'}),'ACCESS_DENIED')
+            call('extractPdf',{'input':request['input'],'pages':[1],'output':request['output']},'ACCESS_DENIED')
+            call('splitPdf',{'input':request['input'],'parts':[
+                {'pages':[1],'output':request['output']},{'pages':[2],'output':{'path':'probe.pdf'}}]},'ACCESS_DENIED')
+            miss=call('compressPdf',dict(request,maxOutputBytes=50000,onTargetMiss='error'),'SIZE_TARGET_UNMET')
+            error=json.loads(miss['content'][0]['text'])['error']
+            assert error['retryable'] is False and '50000-byte limit' in error['message'],error
+            assert 'no output was published' in error['message'] and 'Retry only if the caller authorizes' in error['message'],error
+            call('compressPdf',dict(request,maxOutputBytes=50000,onTargetMiss='bestEffort'),'LIMIT_EXCEEDED')
+            call('compressPdf',request,'LIMIT_EXCEEDED')
+            assert {f.name:digest(f) for f in root.iterdir()}==before
+            call('compressPdf',dict(request,input={'path':'small.pdf'}))
+            output=root/'compact.pdf';after=digest(output)
+            assert output.stat().st_size<=50000 and subprocess.check_output(['pdftotext',output,'-']).strip()==b'ALLOWED'
+            call('compressPdf',dict(request,output={'path':'compact.pdf','replaceExisting':True}),'ACCESS_DENIED')
+            assert {f.name:digest(f) for f in root.iterdir()}==dict(before,**{'compact.pdf':after})
+        finally:
+            p.stdin.close();assert p.wait(timeout=10)==0 and not p.stderr.read()
+
 def http(port,token,path,data=None,extra=None,timeout=15):
     headers={'Authorization':'Bearer '+token};headers.update(extra or {})
     if data is not None:headers['Content-Type']='application/json'
@@ -91,6 +141,7 @@ def qpdf_features(path):
 def run(routine=False):
  with tempfile.TemporaryDirectory(prefix='anpdf-tests-') as t:
     base=pathlib.Path(t);roots={s:base/s for s in ['cli','http','mcp']}
+    check_mcp_destination_guard(base/'mcp-guard')
     if PDFOXIDE:check_license_regeneration(base/'license-inventory')
     # Fine outlined rules, a dark anchor, and a separate color patch. Split
     # each rule into uneven collinear segments to exercise dense path input.
@@ -190,7 +241,8 @@ def run(routine=False):
         mcp_send(mcp,{'jsonrpc':'2.0','id':2,'method':'tools/list'});tools=mcp_read(mcp)['result']['tools']
         assert {t['name'] for t in tools}=={o['operationId'] for o in discovery['operations']}
         for tool in tools:
-            op=next(o for o in discovery['operations'] if o['operationId']==tool['name']);assert tool['inputSchema']==op['inputSchema'];assert tool['outputSchema']==op['outputSchema']
+            op=next(o for o in discovery['operations'] if o['operationId']==tool['name'])
+            for key in ('description','inputSchema','outputSchema'):assert tool[key]==op[key],(tool['name'],key)
         pdfium=any(o['operationId']=='extractText' and 'pdfium' in o['engines'] for o in discovery['operations'])
         engines=(['pdfium'] if pdfium else [])+(['pdfoxide'] if PDFOXIDE else [])
         preferred=next(iter(engines),None)
@@ -389,6 +441,8 @@ def run(routine=False):
               # A tight target on traced-graphics pages resampling cannot
               # reach: positive-evidence rasterization rebuilds them.
               ('compress',{'input':{'path':'traced.pdf'},'output':{'path':'traced-target.pdf'},'maxOutputBytes':50000},None),
+              ('compress',{'input':{'path':'traced.pdf'},'output':{'path':'traced-lossless.pdf'},'mode':'lossless','maxOutputBytes':50000},None),
+              ('compress',{'input':{'path':'traced.pdf'},'output':{'path':'traced-lossless.pdf','replaceExisting':True},'mode':'lossless','maxOutputBytes':1,'onTargetMiss':'error'},'SIZE_TARGET_UNMET'),
               ('inspect',{'input':{'path':'traced-target.pdf'}},None),
               # Same-page conservatism: photo+text+link+line-art page keeps its
               # objects; only the isolated traced page is rebuilt.
@@ -613,6 +667,14 @@ def run(routine=False):
                 assert before==after,geometry
             # Check where the ink landed with Poppler, independently of the
             # PDFium renderer used by compress. Box metadata alone misses this.
+            lossless=responses['traced-lossless.pdf']
+            assert lossless['result']['mode']=='lossless' and not lossless['result']['targetMet'],lossless
+            assert set(lossless['result']['techniques']).isdisjoint({'jpeg-recompress','image-downsample','pageRasterization','layeredRasterization'}),lossless
+            assert 'SIZE_TARGET_UNMET' in {w['code'] for w in lossless['warnings']},lossless
+            assert 'PAGE_RASTERIZED' not in {w['code'] for w in lossless['warnings']},lossless
+            for root in roots.values():
+                assert digest(root/'traced-lossless.pdf')==lossless['result']['sha256']
+                assert subprocess.check_output(['pdfimages','-list',str(root/'traced-lossless.pdf')]).count(b'\n')==2
             for page in ('1','2'):
                 bounds=[]
                 for name in ('traced.pdf','traced-target.pdf'):

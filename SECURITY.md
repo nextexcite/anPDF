@@ -22,6 +22,11 @@ Workspace roots require a local filesystem supporting these primitives. Cleanup
 is attempted after failures/cancellation; abrupt SIGKILL/host loss can leave
 private staging, so a bounded disposable temporary filesystem is recommended.
 
+The trusted MCP launcher can restrict publication to one exact workspace path,
+without replacement, with an optional writer operation and byte ceiling. This
+does not isolate the workspace from other tools, limit which inputs can be read,
+or prohibit temporary staging. Keep unrestricted tools out of constrained jobs.
+
 Limits: 100 MiB/input, 250 MiB total input and output, 20 files, 2,000 total pages,
 two active jobs, 60 seconds/job, bounded JSON requests and subprocess capture.
 qpdf runs without a shell, with cleared environment, private staged absolute

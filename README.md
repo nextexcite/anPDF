@@ -16,7 +16,7 @@ The goal is to **own the interface and the workflow**, while reusing proven PDF 
 
 ## What works today
 
-**Version:** `0.4.3` — development milestone (**not production-qualified**).
+**Version:** `0.4.4` (unpublished) — development milestone (**not production-qualified**).
 
 See [GitHub Releases](https://github.com/nextexcite/anPDF/releases) for published builds, [CHANGELOG.md](CHANGELOG.md), the
 [release checklist](docs/BUILD.md#release-checklist), and the [project handoff](docs/HANDOFF.md) for status, roadmap and next actions.
@@ -54,11 +54,13 @@ Merge, extract, split and remove-pages retain the first input as the primary doc
 
 Compression keeps the validated original bytes if compressed output is not smaller, unless `allowLargerOutput:true` is requested. Required `outputSource` identifies `original` or `compressed`; reported hashes, sizes and savings describe the bytes actually written. `NO_SIZE_REDUCTION` names which was kept.
 
-`compress` also accepts `maxOutputBytes`, `compressionLevel` (1–3) and `onTargetMiss` (`bestEffort` default, or `error`). A byte target selects from a DPI/JPEG-quality ladder — `image-downsample` decodes each placed image once, measures every rung, and applies the gentlest rung fitting the target through a sandboxed worker — bounded by the level's floor (2 ≈ 200dpi, 3 ≈ 120dpi; a bare target may descend to ~72dpi; level 1 stays lossless). Results report `techniques`, `targetBytes` and `targetMet`; an unmet target warns `SIZE_TARGET_UNMET` or fails 422.
+Choose a compression mode explicitly when setting a byte target. `--mode lossless --max-bytes 3MB` checks the target without degrading images or rasterizing pages. `--mode lossy` permits those methods with a target. For v1 compatibility, a target without mode or level can also enable lossy processing. Add `--on-target-miss error` for a hard limit: an unmet target leaves the destination untouched. Otherwise check `targetMet` and warnings even on success. See [compression options](docs/PROTOCOLS.md#preservation-and-compression).
 
 Opt in with `anpdf compress input.pdf output.pdf --mode layered` (HTTP/MCP: `"mode":"layered"`). With PDFium, this tries rebuilding eligible traced pages at 400 DPI: a bilevel base uses Group 4 or Flate, with separate grayscale and color patches. It keeps live-text and other ineligible pages out of the raster pass. Rebuilt pages lose vector detail; the layered candidate is used only if it beats the lossless pass. `--max-bytes` checks the fixed-resolution result without lowering DPI; `--level` and `--jpeg-quality` do not apply.
 
 ## Basic usage
+
+For tool-using agents, see the [anPDF skill](.agents/skills/processing-pdfs-with-anpdf/SKILL.md) and [agent evaluation plan](docs/AGENT-EVALS.md).
 
 ### macOS (Apple Silicon)
 

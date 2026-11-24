@@ -479,6 +479,44 @@ fn compression_fallback_and_opt_out_describe_published_bytes() {
 }
 
 #[test]
+#[cfg(feature = "lossless-only")]
+fn compression_policy_rejects_explicit_and_inferred_lossy_modes() {
+    use crate::{Dispatcher, backend::Control};
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("in.pdf"), b"original bytes").unwrap();
+    fs::write(root.path().join("out.pdf"), b"existing destination").unwrap();
+    let dispatcher = Dispatcher::with_backend(
+        root.path(),
+        std::sync::Arc::new(PreservationBackend {
+            input: preservation_report(),
+            output: preservation_report(),
+            bytes: b"lossless".to_vec(),
+        }),
+    )
+    .unwrap();
+    for options in [
+        json!({"mode":"lossy"}),
+        json!({"mode":"layered"}),
+        json!({"maxOutputBytes":1}),
+        json!({"compressionLevel":2}),
+    ] {
+        let mut request = options;
+        request["input"] = json!({"path":"in.pdf"});
+        request["output"] = json!({"path":"out.pdf","replaceExisting":true});
+        let error = dispatcher
+            .dispatch("compressPdf", &request, false, &Control::default())
+            .unwrap_err();
+        assert_eq!(error.0, "INVALID_REQUEST");
+        assert!(error.message().contains("lossless compression only"));
+        assert_eq!(
+            fs::read(root.path().join("out.pdf")).unwrap(),
+            b"existing destination"
+        );
+    }
+}
+
+#[test]
+#[cfg(not(feature = "lossless-only"))]
 fn layered_timeout_keeps_lossless_output_unless_strict_or_cancelled() {
     use crate::{
         BackendRegistry, Dispatcher,

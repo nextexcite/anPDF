@@ -4,6 +4,28 @@ Only the newest section describes the current baseline; older sections are
 historical evidence kept for audit. Status and the prioritized queue live in
 [HANDOFF.md](HANDOFF.md).
 
+## 0.4.4 (unpublished)
+
+On Apple Silicon, a local 0.4.4 release tarball passed bundled PDFium and
+password-protection smoke tests. `brew install` and `brew test` passed using a
+local copy of the public tap formula pointed at that tarball. The Homebrew-
+installed executable also passed `build/smoke-protection.sh` with Homebrew's
+qpdf 12.4.2 on PATH and no `ANPDF_QPDF` or `ANPDF_PDFIUM_LIB` override: qpdf
+confirmed the encrypted file required a password, and the decrypted copy was
+valid and retained its single page and `PAGE-ONE` text. Homebrew needed a
+metadata refresh to replace the satellite's older qpdf 12.3.2 bottle.
+
+The local install does not verify a published release URL or the tap update.
+
+The local `linux/amd64` image built from `containers/Dockerfile` passed
+`containers/smoke.sh` as UID 65532 with a read-only root and no network,
+including the password round-trip. Pinned Syft/Grype and `build/oci-audit.py`
+passed on the saved image: 269 SBOM packages, no unexpected Rust crates or
+disallowed licenses, and no fixable High/Critical matches. The scan still
+reported 81 High and 64 Medium matches; a passing policy gate is not a
+vulnerability-free claim. Hosted `linux/arm64` evidence and published artifact
+checks are pending the authorized release workflow.
+
 ## 0.4.3
 
 Adds cross-surface coverage for a layered compression target miss: the

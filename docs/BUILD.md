@@ -7,7 +7,7 @@ Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on 
 tag pushes except PDFOxide preview tags, and on `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
 tag alignment on tag pushes), so untrusted PRs never receive package or release write permissions.
 
-The `0.4.3` baseline includes opt-in layered compression alongside the
+The `0.4.4` release candidate includes opt-in layered compression alongside the
 capability registry, default PDFium content operations, qpdf preservation reporting,
 size-targeted compression with automatic page rasterization, AES-256 encrypt/decrypt,
 and the synthetic comparison harness in `docs/BENCHMARK.md`. Status and the
@@ -191,8 +191,12 @@ authorizing publication.
    library layout without `ANPDF_PDFIUM_LIB`. Regenerate licenses without drift,
    and run Forge qualification, privacy and gitleaks checks.
 3. Build an auditable release binary, stage the native tarball with its PDFium
-   library and notices, and smoke-test that staged binary. A Linux simulation is
-   not macOS qualification; retain hosted macOS evidence separately.
+   library and notices, and smoke-test that staged binary. On Apple Silicon,
+   install the local tarball with the tap formula pointed at its local URL and
+   checksum, run `brew test`, then run `build/smoke-protection.sh` against the
+   installed binary and a generated `one.pdf`. Use qpdf 12.4.2; refresh Homebrew
+   metadata if it offers an older dependency. A Linux simulation is not macOS
+   qualification.
 4. Build the local OCI image, run `containers/smoke.sh`, export an OCI archive,
    and run pinned Syft, Grype and `build/oci-audit.py` exactly as in `oci.yml`.
    Review failures; do not waive CVE/license gates to publish.

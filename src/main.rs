@@ -57,7 +57,7 @@ enum Action {
     Help(Option<String>),
     Version,
     Completions(Shell),
-    Run(Options),
+    Run(Box<Options>),
 }
 
 #[derive(Debug)]
@@ -72,6 +72,9 @@ struct Options {
     json: bool,
     port: u16,
     token_file: Option<PathBuf>,
+    output_only: Option<String>,
+    output_byte_ceiling: Option<u64>,
+    output_operation: Option<String>,
     schema: Option<String>,
     password_file: Option<String>,
     owner_password_file: Option<String>,
@@ -80,20 +83,22 @@ struct Options {
 const TOP_AFTER_HELP: &str = "\
 SHORTHAND (paths workspace-relative to --root, or absolute/~ adapting it):
   anpdf inspect <doc.pdf>
-  anpdf merge <a.pdf> <b.pdf> [...] [-o <merged.pdf>]
-  anpdf extract <doc.pdf> <pages> [-o <subset.pdf>]
+  anpdf merge <a.pdf> <b.pdf> [...] -o <merged.pdf>
+  anpdf extract <doc.pdf> <pages> -o <subset.pdf>
   anpdf split <doc.pdf> <part.pdf=pages> [<part.pdf=pages> ...]
-  anpdf remove-pages <doc.pdf> <pages> [-o <trimmed.pdf>]
-  anpdf compress <doc.pdf> [<out.pdf>] [--mode lossy] [--level 1-3] [--max-bytes N]
+  anpdf remove-pages <doc.pdf> <pages> -o <trimmed.pdf>
+  anpdf compress <doc.pdf> [-o <out.pdf>] [--mode lossless|lossy|layered] [--max-bytes N]
   anpdf extract-text <doc.pdf> <pages> [--engine <id>]
-  anpdf render-page <doc.pdf> <page> [-o <page.png>] [--dpi 36-300] [--engine <id>]
+  anpdf render-page <doc.pdf> <page> -o <page.png> [--dpi 36-300] [--engine <id>]
   anpdf encrypt <doc.pdf> [<out.pdf>]   AES-256 + user password (+ optional owner)
   anpdf decrypt <doc.pdf> [<out.pdf>]   strip password protection (password required)
 
 <pages> are 1-based numbers or ranges: \"1,3\", \"2-5\" (positional or --pages).
-The output is -o/--output, a trailing positional path, or <name>-compressed.pdf
-for compress; --replace allows replacing an existing output. Inputs are never
-overwritten. Shorthand paths may be absolute or start with ~: the workspace
+Use -o/--output to name a destination. A trailing output path also works
+for single-output commands. Compress, encrypt and decrypt can derive an output
+name. --replace overwrites an existing destination, never an input. A size
+target without a mode or level can enable lossy compression; choose mode explicitly.
+Shorthand paths may be absolute or start with ~: the workspace
 root adapts to the files' common directory (--root pins it); JSON requests
 stay relative to --root. A full JSON request may instead be passed via
 --request-json, --request-file or piped stdin; a bare operation on a
@@ -107,7 +112,7 @@ carrying the JSON fields.
 COMMON OPTIONS:
   -o, --output <path>  Output path
   --pages <spec>       Page spec for extract/remove-pages/extract-text
-  --replace            Allow replacing an existing output
+  --replace            Overwrite an existing destination, never the input
   --preserve <list>    Required aspects: metadata,bookmarks,annotations,attachments (or \"all\")
   --root <dir>         Workspace root (default: .; adapts to absolute shorthand paths)
   --qpdf <abs-path>    Absolute path to qpdf 12.x >=12.4.2 (tested: 12.4.2)
@@ -192,7 +197,7 @@ struct Out {
         help = "Output path"
     )]
     output: Option<String>,
-    #[arg(long, help = "Allow replacing an existing output")]
+    #[arg(long, help = "Overwrite an existing destination, never the input")]
     replace: bool,
 }
 
@@ -334,7 +339,7 @@ doc_args!(RenderArgs {
 
 #[derive(clap::Args)]
 struct ReplaceOnly {
-    #[arg(long, help = "Allow replacing existing part outputs")]
+    #[arg(long, help = "Overwrite existing part destinations, never the input")]
     replace: bool,
 }
 
@@ -344,7 +349,7 @@ struct Dpi {
         long,
         value_name = "36-300",
         allow_hyphen_values = true,
-        help = "Render DPI, 36-300"
+        help = "Render DPI (36–300; default: 144)"
     )]
     dpi: Option<String>,
 }
@@ -462,6 +467,21 @@ struct ServeArgs {
 struct McpArgs {
     #[command(flatten)]
     backends: Backends,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Allow new output only at this workspace-relative path; disallow replacement"
+    )]
+    output_only: Option<String>,
+    #[arg(long, requires = "output_only", value_name = "BYTES", value_parser = clap::value_parser!(u64).range(1..=250 * 1024 * 1024), help = "Maximum published bytes at --output-only (integer bytes)")]
+    output_byte_ceiling: Option<u64>,
+    #[arg(
+        long,
+        requires = "output_only",
+        value_name = "OPERATION_ID",
+        help = "Allow only this operation to write the approved output"
+    )]
+    output_operation: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -508,7 +528,7 @@ enum Cmd {
     Validate(InspectArgs),
     #[command(about = "Merge 2..20 PDFs in input order",
         help_template = SUB_HELP_TEMPLATE,
-        after_help = "Operation: mergePdf (2..20 inputs); without -o the last positional is the output.\nRequest: {\"inputs\":[{\"path\":\"a.pdf\"},{\"path\":\"b.pdf\"}],\"output\":{\"path\":\"merged.pdf\"}}")]
+        after_help = "Operation: mergePdf. The first input is primary for preservation. Use -o to mark the output; without it, the last positional is the output.\nExample: anpdf merge cover.pdf report.pdf -o packet.pdf\nRequest: {\"inputs\":[{\"path\":\"a.pdf\"},{\"path\":\"b.pdf\"}],\"output\":{\"path\":\"merged.pdf\"}}")]
     Merge(MergeArgs),
     #[command(about = "Extract an ascending unique page subset",
         help_template = SUB_HELP_TEMPLATE,
@@ -516,7 +536,7 @@ enum Cmd {
     Extract(ExtractArgs),
     #[command(about = "Split a PDF into 2..20 page-subset outputs",
         help_template = SUB_HELP_TEMPLATE,
-        after_help = "Operation: splitPdf (2..20 parts); each part is written as <output>=<pages>.\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"parts\":[{\"pages\":[1],\"output\":{\"path\":\"p1.pdf\"}},{\"pages\":[2,3],\"output\":{\"path\":\"p2.pdf\"}}]}")]
+        after_help = "Operation: splitPdf (2..20 parts); each part is <output>=<pages>. Parts can overlap or leave pages unused.\nExample: anpdf split report.pdf cover.pdf=1 body.pdf=2-5\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"parts\":[{\"pages\":[1],\"output\":{\"path\":\"p1.pdf\"}},{\"pages\":[2,3],\"output\":{\"path\":\"p2.pdf\"}}]}")]
     Split(SplitArgs),
     #[command(about = "Remove selected pages and keep the remaining pages",
         help_template = SUB_HELP_TEMPLATE,
@@ -524,10 +544,12 @@ enum Cmd {
     RemovePages(RemoveArgs),
     #[command(about = "Compress PDF streams, images, or eligible traced pages",
         help_template = SUB_HELP_TEMPLATE,
-        after_help = "Modes:
+        after_help = if cfg!(feature = "lossless-only") {
+            "This build permits lossless compression only. With --max-bytes, set\n--mode lossless explicitly and use --on-target-miss error for a hard limit.\n\nExample:\n  anpdf compress input.pdf -o output.pdf --mode lossless --max-bytes 3MiB --on-target-miss error\n\nJSON schema: anpdf schema compressPdf"
+        } else { "Modes:
   lossless  Recompress streams without degrading images (default without a
-            size target or --level 2/3). With --max-bytes, use --level 1
-            to guarantee lossless output.
+            size target or --level 2/3). An explicit choice stays lossless
+            with any target and never rasterizes pages.
   lossy     Recompress images. With a target, try lower resolutions and, if
             needed, rasterize eligible traced pages. Levels 2 and 3 limit
             how far image resolution can drop.
@@ -536,20 +558,24 @@ enum Cmd {
             vector detail. No lower-resolution retries; --level and
             --jpeg-quality are not accepted.
 
+With no mode or level, --max-bytes can enable lossy processing for v1
+compatibility. Choose a mode explicitly. Use --on-target-miss error if
+the byte limit is mandatory; a miss then leaves the destination untouched.
+
 Examples:
   anpdf compress input.pdf
-  anpdf compress input.pdf output.pdf --mode layered --max-bytes 3MB
-  anpdf compress input.pdf output.pdf --level 1 --max-bytes 3MiB
+  anpdf compress input.pdf -o output.pdf --mode lossless --max-bytes 3MiB
+  anpdf compress input.pdf -o output.pdf --mode lossy --max-bytes 3MB
 
-JSON schema: anpdf schema compressPdf")]
+JSON schema: anpdf schema compressPdf" })]
     Compress(CompressArgs),
-    #[command(about = "Extract embedded text and bounding boxes (optional engine)",
+    #[command(about = "Extract embedded text and bounding boxes (no OCR)",
         help_template = SUB_HELP_TEMPLATE,
-        after_help = "Operation: extractText (optional text engine required)\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[1,3]}")]
+        after_help = "Operation: extractText. Requires a configured text engine; scan-only pages can return empty text.\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[1,3]}")]
     ExtractText(ExtractTextArgs),
     #[command(about = "Render one page to PNG (optional engine)",
         help_template = SUB_HELP_TEMPLATE,
-        after_help = "Operation: renderPage (optional rendering engine required)\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"page\":1,\"output\":{\"path\":\"page.png\"}}")]
+        after_help = "Operation: renderPage. Writes a PNG with crop and rotation applied, without annotations. Requires a configured rendering engine.\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"page\":1,\"output\":{\"path\":\"page.png\"}}")]
     RenderPage(RenderArgs),
     #[command(about = "Encrypt a PDF with AES-256 (user password, optional owner)",
         help_template = SUB_HELP_TEMPLATE,
@@ -557,7 +583,7 @@ JSON schema: anpdf schema compressPdf")]
     Encrypt(EncryptArgs),
     #[command(about = "Decrypt a password-protected PDF (password required)",
         help_template = SUB_HELP_TEMPLATE,
-        after_help = "Operation: decryptPdf; output defaults to <name>-decrypted.pdf.\nThe password never goes inline — omit --password-file on a terminal for a\nhidden prompt, or use a private file, --request-file or piped stdin carrying\n\"password\".\nRequest: {\"input\":{\"path\":\"locked.pdf\"},\"password\":\"…\",\"output\":{\"path\":\"open.pdf\"}}")]
+        after_help = "Operation: decryptPdf; writes an unencrypted copy (default: <name>-decrypted.pdf).\nOmit --password-file on a terminal for a hidden prompt, or use a private\n--password-file, --request-file or piped stdin. Never put a password in argv.\nExample: anpdf decrypt locked.pdf -o open.pdf --password-file ./private-password\nJSON schema: anpdf schema decryptPdf")]
     Decrypt(DecryptArgs),
     #[command(about = "Run authenticated loopback HTTP server (127.0.0.1)",
         help_template = SUB_HELP_TEMPLATE,
@@ -1637,6 +1663,9 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                     json: false,
                     port: 8787,
                     token_file: None,
+                    output_only: None,
+                    output_byte_ceiling: None,
+                    output_operation: None,
                     schema: None,
                     password_file: None,
                     owner_password_file: None,
@@ -1741,7 +1770,7 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                         command
                     )))
                 } else {
-                    Ok(Action::Run(opt))
+                    Ok(Action::Run(Box::new(opt)))
                 };
             }
             Err(e) => return Err(clap_error(&command, e)),
@@ -1759,6 +1788,9 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
         json: false,
         port: 8787,
         token_file: None,
+        output_only: None,
+        output_byte_ceiling: None,
+        output_operation: None,
         schema: None,
         password_file: None,
         owner_password_file: None,
@@ -1881,7 +1913,12 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                 .unwrap_or(8787);
             o.token_file = token_file;
         }
-        Cmd::Mcp(McpArgs { backends: b }) => backends!(b),
+        Cmd::Mcp(a) => {
+            backends!(a.backends);
+            o.output_only = a.output_only;
+            o.output_byte_ceiling = a.output_byte_ceiling;
+            o.output_operation = a.output_operation;
+        }
         Cmd::Operations(OperationsArgs { backends: b }) => backends!(b),
         Cmd::Inspect(a) | Cmd::Validate(a) => {
             positionals = a.doc.into_iter().collect();
@@ -2060,7 +2097,7 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
             std::env::var_os("PATH"),
         )?;
     }
-    Ok(Action::Run(o))
+    Ok(Action::Run(Box::new(o)))
 }
 
 /// `--request-json` puts its payload on argv: the OS and shell record it
@@ -2631,7 +2668,8 @@ async fn async_main() {
                 clap_complete::generate(shell.clap(), &mut Cli::command(), "anpdf", &mut out);
                 Ok(None)
             }
-            Action::Run(mut o) => {
+            Action::Run(o) => {
+                let mut o = *o;
                 if o.command == "operations" {
                     return Ok(Some(contract::discovery_with(&configured_registry(
                         o.qpdf,
@@ -2661,10 +2699,14 @@ async fn async_main() {
                 // lift the secret-channel flags first for the fill below.
                 let password_file = o.password_file.take();
                 let owner_password_file = o.owner_password_file.take();
-                let d = Arc::new(Dispatcher::with_registry(
+                let d = Dispatcher::with_registry(
                     &o.root,
                     configured_registry(o.qpdf, o.qpdf_exact, o.pdfium_lib)?,
-                )?);
+                )?;
+                let d = Arc::new(match o.output_only {
+                    Some(path) => d.restrict_output(path, o.output_byte_ceiling, o.output_operation)?,
+                    None => d,
+                });
                 match o.command.as_str() {
                     "serve" => {
                         let file = o.token_file.ok_or(Error("INVALID_REQUEST", None))?;

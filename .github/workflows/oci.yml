@@ -310,6 +310,7 @@ jobs:
           cp -R build/work/pdfium/licenses "$stage/PDFIUM_LICENSES/"
           cp -R THIRD_PARTY_LICENSES "$stage/"
           ANPDF_QPDF="$(cat build/work/qpdf-path)" python3 build/smoke-content.py "$stage/anpdf" build/work/fixtures
+          ANPDF_QPDF="$(cat build/work/qpdf-path)" sh build/smoke-protection.sh "$stage/anpdf" "$PWD/build/work/fixtures" one.pdf .
           tar -C build/artifacts -czf "build/artifacts/anpdf-${VERSION}-macos-arm64.tar.gz" "anpdf-${VERSION}-macos-arm64"
           (cd build/artifacts && shasum -a 256 "anpdf-${VERSION}-macos-arm64.tar.gz" > SHA256SUMS-macos-arm64.txt)
       - name: Upload macOS arm64 release artifact

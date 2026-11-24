@@ -24,6 +24,16 @@ pub fn operation(id: &str) -> Option<&'static Value> {
         .find(|(_, op)| op["operationId"] == id)
         .map(|(_, op)| op)
 }
+pub fn description(op: &Value) -> String {
+    if cfg!(feature = "lossless-only") && op["operationId"] == "compressPdf" {
+        return "Write a smaller PDF copy using lossless compression only. For byte targets, choose mode lossless explicitly; a target alone can imply lossy processing and will be rejected. Use onTargetMiss: error if an over-target output must not be written.".into();
+    }
+    let summary = op["summary"].as_str().unwrap();
+    op["description"].as_str().map_or_else(
+        || summary.to_owned(),
+        |details| format!("{summary}. {details}"),
+    )
+}
 pub fn resolve(schema: &Value) -> Value {
     if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
         return resolve(
@@ -130,7 +140,7 @@ pub fn discovery_with(registry: &BackendRegistry) -> Value {
             "implemented; qpdf 12.x >=12.4.2 required; only 12.4.2 qualified; strict mode requires exact"
         };
         json!({
-            "operationId": id, "description": op["summary"], "path":path,
+            "operationId": id, "description": description(op), "path":path,
             "status":status, "engines":engines, "inputSchema":input(id),
             "outputSchema":resolve(&op["responses"]["200"]["content"]["application/json"]["schema"]),
             "errorSchema":resolve(&document()["components"]["schemas"]["Error"])

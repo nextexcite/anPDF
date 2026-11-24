@@ -719,6 +719,11 @@ fn decode_text(values: impl IntoIterator<Item = u32>) -> String {
 }
 
 fn process(library: &Path, request: &Value) -> Result<Value> {
+    if cfg!(feature = "lossless-only")
+        && (request["layered"] == true || request["rasterize"] == true)
+    {
+        return Err(Error("INVALID_REQUEST", None));
+    }
     if !library.is_absolute() {
         return Err(Error("BACKEND_UNAVAILABLE", None));
     }

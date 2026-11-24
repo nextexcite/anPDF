@@ -1,6 +1,6 @@
 [package]
 name = "anpdf"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 license = "Apache-2.0"
 description = "Local agent-native PDF toolkit"
@@ -25,6 +25,7 @@ pdf_oxide = { version = "=0.3.78", optional = true, features = ["rendering"] }
 
 [features]
 default = ["pdfium"]
+lossless-only = []
 pdfium = ["dep:pdfium-render", "dep:fax"]
 pdfoxide = ["dep:pdf_oxide"]
 

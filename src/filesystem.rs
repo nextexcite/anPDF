@@ -15,6 +15,7 @@ pub const FILE_LIMIT: u64 = 100 * 1024 * 1024;
 pub const TOTAL_LIMIT: u64 = 250 * 1024 * 1024;
 pub struct Workspace {
     dir: File,
+    output_only: Option<(String, Option<u64>)>,
 }
 pub struct Input {
     pub file: File,
@@ -28,6 +29,7 @@ pub struct Destination {
     dir: File,
     name: CString,
     replace: bool,
+    byte_ceiling: Option<u64>,
 }
 fn c(s: &str) -> Result<CString> {
     CString::new(s)
@@ -105,7 +107,24 @@ impl Workspace {
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(root)?;
         trusted_dir(&dir)?;
-        Ok(Self { dir })
+        Ok(Self {
+            dir,
+            output_only: None,
+        })
+    }
+    pub(crate) fn restrict_output(
+        &mut self,
+        path: String,
+        byte_ceiling: Option<u64>,
+    ) -> Result<()> {
+        parts(&path)?;
+        self.output_only = Some((path, byte_ceiling));
+        Ok(())
+    }
+    pub(crate) fn output_only(&self) -> Option<(&str, Option<u64>)> {
+        self.output_only
+            .as_ref()
+            .map(|(path, limit)| (path.as_str(), *limit))
     }
     fn parent(&self, path: &str) -> Result<(File, CString)> {
         let p = parts(path)?;
@@ -163,6 +182,15 @@ impl Workspace {
         })
     }
     pub fn destination(&self, path: &str, replace: bool, inputs: &[Input]) -> Result<Destination> {
+        let mut byte_ceiling = None;
+        if let Some((allowed, limit)) = self.output_only() {
+            if path != allowed || replace {
+                return Err(Error("ACCESS_DENIED", None).with(format!(
+                    "This MCP session permits new output only at {allowed:?}; replacement is disabled"
+                )));
+            }
+            byte_ceiling = limit;
+        }
         let ctx = |e: Error| match e.1 {
             Some(d) => Error(e.0, Some(format!("output '{path}': {d}"))),
             None if e.0 == "NOT_FOUND" => e.with(format!("output '{path}' does not exist")),
@@ -170,7 +198,12 @@ impl Workspace {
             None => e.with(format!("output '{path}'")),
         };
         let (dir, name) = self.parent(path).map_err(ctx)?;
-        let d = Destination { dir, name, replace };
+        let d = Destination {
+            dir,
+            name,
+            replace,
+            byte_ceiling,
+        };
         d.check(inputs).map_err(ctx)?;
         Ok(d)
     }
@@ -282,6 +315,9 @@ impl Destination {
         inputs: &[Input],
         limit: u64,
     ) -> Result<()> {
+        let limit = self
+            .byte_ceiling
+            .map_or(limit, |ceiling| limit.min(ceiling));
         self.check(inputs)?;
         let name = c(&format!(
             ".anpdf-{}",
@@ -303,7 +339,9 @@ impl Destination {
         let result = (|| {
             let n = std::io::copy(&mut source.take(limit + 1), &mut temp)?;
             if n > limit {
-                return Err(Error("LIMIT_EXCEEDED", None));
+                let detail = self.byte_ceiling.filter(|ceiling| *ceiling == limit)
+                    .map(|ceiling| format!("This MCP session cannot publish more than {ceiling} bytes; no output was written"));
+                return Err(Error("LIMIT_EXCEEDED", detail));
             }
             temp.flush()?;
             temp.sync_all()?;
