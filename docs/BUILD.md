@@ -7,7 +7,7 @@ Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on 
 tag pushes except PDFOxide preview tags, and on `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
 tag alignment on tag pushes), so untrusted PRs never receive package or release write permissions.
 
-The `0.4.4` release candidate includes opt-in layered compression alongside the
+The published `0.4.4` milestone includes opt-in layered compression alongside the
 capability registry, default PDFium content operations, qpdf preservation reporting,
 size-targeted compression with automatic page rasterization, AES-256 encrypt/decrypt,
 and the synthetic comparison harness in `docs/BENCHMARK.md`. Status and the
@@ -117,8 +117,8 @@ describe that amd64 run, not a cross-platform guarantee. Arm64 requires hosted
 qualification; changing base pins or package versions requires remeasurement.
 
 ```sh
-docker build -f containers/Dockerfile -t anpdf:0.4.1-local .
-sh containers/smoke.sh anpdf:0.4.1-local
+docker build -f containers/Dockerfile -t anpdf:local .
+sh containers/smoke.sh anpdf:local
 ```
 
 The smoke test uses numeric non-root UID `65532`, read-only rootfs, `--network=none`,

@@ -4,7 +4,9 @@ Only the newest section describes the current baseline; older sections are
 historical evidence kept for audit. Status and the prioritized queue live in
 [HANDOFF.md](HANDOFF.md).
 
-## 0.4.4 (unpublished)
+## 0.4.4
+
+[v0.4.4](https://github.com/nextexcite/anPDF/releases/tag/v0.4.4) was published on 2026-11-24 after the [release workflow](https://github.com/nextexcite/anPDF/actions/runs/45366810966) passed. The GHCR `0.4.4` index digest was `sha256:41081c3e31c8ae12f529e51f32c6312e2dc808b92bd91df7fca33b4e3614f207`; it contains the release builds for Linux amd64 and arm64. The downloaded macOS arm64 tarball, published checksum, and updated Homebrew formula agreed on SHA-256 `9c85e6c97ad4b6dce2f4e4f75a882bcb70e31f86d79c7d3e254f893dbd2f3a46`.
 
 On Apple Silicon, a local 0.4.4 release tarball passed bundled PDFium and
 password-protection smoke tests. `brew install` and `brew test` passed using a
@@ -15,16 +17,13 @@ confirmed the encrypted file required a password, and the decrypted copy was
 valid and retained its single page and `PAGE-ONE` text. Homebrew needed a
 metadata refresh to replace the satellite's older qpdf 12.3.2 bottle.
 
-The local install does not verify a published release URL or the tap update.
-
 The local `linux/amd64` image built from `containers/Dockerfile` passed
 `containers/smoke.sh` as UID 65532 with a read-only root and no network,
 including the password round-trip. Pinned Syft/Grype and `build/oci-audit.py`
 passed on the saved image: 269 SBOM packages, no unexpected Rust crates or
 disallowed licenses, and no fixable High/Critical matches. The scan still
 reported 81 High and 64 Medium matches; a passing policy gate is not a
-vulnerability-free claim. Hosted `linux/arm64` evidence and published artifact
-checks are pending the authorized release workflow.
+vulnerability-free claim. The hosted release includes per-architecture audit reports; the arm64 image smoke is not the full native arm64 integration corpus.
 
 ## 0.4.3
 

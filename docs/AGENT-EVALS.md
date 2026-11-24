@@ -1,6 +1,6 @@
 # Evaluating anPDF with real agents
 
-Grade what the agent did and what it wrote, not whether its final answer sounds right. This is a proposed, opt-in model evaluation; the deterministic transport integration suite remains the release check and does not measure agent behavior.
+Grade what the agent did and what it wrote, not whether its final answer sounds right. Live model evaluation is opt-in; the deterministic transport integration suite remains the release check and does not measure agent behavior.
 
 ## Run a small paired pilot
 
@@ -16,6 +16,8 @@ To evaluate the destination guard separately, keep the same MCP task and run wit
 To measure filtering of the MCP tool list, compare a session that advertises blocked writers with one that omits them, under the same enforcement and prompt. Count all MCP calls after the first strict miss and report compression retries separately from wrong-operation calls. Less tool churn is not a clean pass if the agent still tries to lower fidelity.
 
 ## Compare size-miss wording
+
+**0.4.4 result:** 18 completed cells (three prompts × three models × two wordings; skills disabled). On hard misses, unnecessary compression retries fell from two to zero; both retries were in the same baseline cell. All three models made the single authorized fallback retry with either wording. All 18 artifact checks passed. Seven rate-limited attempts were not scored as decisions. This is one completed run per cell, not a reliability estimate or evidence of skill effectiveness. Reopen this comparison for a changed behavior or a specific regression, not for routine release qualification.
 
 The [repository runner](../tests/agent_eval.py) implements the three compression cases below. It requires Linux with working Bubblewrap namespaces, Python 3.10+, qpdf 12.4.2 (`ANPDF_QPDF` or `PATH`), and Poppler (`pdftoppm`). If qpdf is outside `/usr`, set `ANPDF_QPDF` to the executable within a dedicated qpdf installation prefix; the runner mounts that prefix read-only so its linked libraries are available. Set `ANPDF_PDFIUM_LIB` if you want the same optional text provider in both arms.
 

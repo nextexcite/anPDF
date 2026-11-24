@@ -1,71 +1,38 @@
-# AGENTS.md — working guide for coding agents
+# Developing anPDF
 
-Applies to this entire repository. Read `README.md`, `docs/HANDOFF.md` (current status and queue), `docs/ADR-002.md`, `docs/FORGE.md`, `docs/PROTOCOLS.md`, `docs/QUALIFICATION.md`, and `SECURITY.md` before changing an interface or a safety property.
+This guide applies to the repository. For **using** the installed tool on PDFs, follow the [user guide](README.md) or the [document-processing skill](.agents/skills/processing-pdfs-with-anpdf/SKILL.md). For **changing** anPDF, start with the [maintainer handoff](docs/HANDOFF.md); it owns current status and priorities.
 
-## Mission and intended users
+## Change the contract once
 
-Build **anPDF**, an independent, open-source, agent-native PDF toolkit. It should provide dependable document primitives to **coding agents, personal agents, desktop automations, scripts, self-hosted APIs, and OCI/cloud jobs**. A user should be able to inspect a document, extract pages, combine files, or eventually fill a form and sign it without a heavyweight editor, a remote SaaS account, or an always-on background process.
+- Before changing an interface or safety property, read the README, handoff, [architecture decision](docs/ADR-002.md), [protocols](docs/PROTOCOLS.md), [Forge notes](docs/FORGE.md), [qualification record](docs/QUALIFICATION.md), and [security boundaries](SECURITY.md).
+- Define operation semantics in `contracts/v1/openapi.json` first. Implement them in the shared Rust dispatcher (`src/lib.rs`), validation (`src/contract.rs`), and backend planner (`src/planner.rs`). Keep the CLI, HTTP, and MCP adapters thin. CLI `--dry-run` is preflight, not an operation result. MCP discovery may hide writers disallowed by session policy; the dispatcher must still enforce that policy on direct calls.
+- Use the pinned Forge generation procedure and executable probes; never hand-edit `generated/`. If the pinned archive is unavailable, report the blocker. Generated TS/MCP/Cap’n Web artifacts do not implement the running Rust adapters.
+- Keep CLI and MCP usable without Node, an account, a listener, or a resident daemon. qpdf is the qualified structural backend, PDFium the standard content provider, and PDFOxide a separate preview. Keep unsupported operations explicit in discovery and docs.
 
-Treat the CLI, MCP, and HTTP API as three interfaces to **one owned operation contract**; do not create a separate semantics layer per transport. A desktop UI or remote/cloud service may be added later as a client of these primitives. This project is **not** a PDF viewer, a fork of another PDF product, or an attempt to rewrite the PDF specification.
+## Preserve inputs, fidelity, and credentials
 
-Examples and fixtures must be entirely generic: synthetic reports, blank forms, sample contracts, numbered pages. Do not insert real users' documents or personal workflows.
+- Enforce workspace-relative requests, trusted directories, distinct destinations, and input-alias checks in `src/filesystem.rs`. Keep encrypted, signed, form/XFA and preservation-unknown transforms fail-closed except where the operation has a tested policy. Distinguish visual marks from certificate signatures.
+- Treat quality, size, and replacement as separate choices. A byte target never overrides explicit lossless mode. Test strict misses against an existing distinct destination and verify it and the input are unchanged.
+- Keep credentials out of argv, environment, logs and errors. Retain bounded subprocesses, private staging and cancellation; do not invoke a shell for backend work. HTTP is authenticated and loopback-only. Use OS/container isolation for network denial, not claims about the Rust process.
+- Treat fixtures, examples, history and CI output as public. Use synthetic or properly licensed fixtures, never private PDFs, identifying filenames, personal paths, private prompts or customer workflows.
 
-## Current baseline (do not overclaim)
+## Verify the changed behavior
 
-- `0.4.1` staged on `main` (`< 0.5.0` dev milestone; SemVer prerelease suffixes start at `>= 0.5.0`; latest published build `v0.4.0`): Rust 1.100.0 runtime; capability registry; qpdf **12.x >=12.4.2** adapter (only **12.4.2** qualified; other accepted versions warn; CI/OCI require exact via `ANPDF_QPDF_EXACT=1`); inspect/validate with annotation counts, primary-document merge/extract/split/removal with per-artifact preservation reporting and optional required aspects, compression with original-byte fallback unless `allowLargerOutput:true`, plus size-targeted compression (`maxOutputBytes`, `compressionLevel` 1–3, `onTargetMiss`) via a subprocess-isolated native resample worker (lopdf + image + flate2) and automatic page rasterization on a descent miss (`pageRasterization`); AES-256 R6 `encryptPdf`/`decryptPdf` with secrets accepted via echo-off prompts, `chmod 600` files, stdin and request bodies (`--request-json` refuses literal password fields — argv is machine-readable at launch), handed to qpdf via memfd/private staging, never argv/env/logs; clap-built CLI with positional shorthand, terminal-aware usage/progress output (piped stdin still accepts JSON requests); and `bash`/`zsh`/`fish` shell completions. The synthetic benchmark corpus/harness compares external engines without extending the product contract. Current status, roadmap and the prioritized queue live in `docs/HANDOFF.md`.
-- CLI JSON, optional authenticated **loopback-only** HTTP, and local MCP stdio use the same validated dispatcher.
-- Standard builds/releases use dynamically loaded PDFium for `extractText` and `renderPage`; qpdf remains structural. `--no-default-features` disables PDFium. Standard release recipes bundle the pinned library and notices; source builds must configure or install it. PDFOxide is a separate preview tag, not part of the standard release.
-- `contracts/v1/openapi.json` is canonical. Pinned upstream Cloudflare **Forge 0.2.0** generates qualified TypeScript/MCP/Cap'n Web artifacts at build time. The Rust runtime adapters are **handwritten**, not Forge-generated Rust.
-- Hosted CI (`ci.yml`) qualifies `ubuntu-26.04` (Linux amd64) and `macos-26` (macOS arm64), plus Forge output probes and full-history privacy checks. Release publication (`.github/workflows/oci.yml`) targets the multi-arch `linux/amd64` + `linux/arm64` OCI image index (GHCR) and the native `macos/arm64` release tarball (GitHub Release + the `nextexcite/homebrew-anpdf` tap). Remote HTTP hosting and full `>= 0.5.0`/`1.0.0` release gates have **not** been established. See `docs/QUALIFICATION.md` and `docs/BUILD.md` for what actually passed.
-- Page reordering, forms, signatures, OCR, and existing-text replacement are **not implemented**. State that explicitly in API discovery, docs, and reports.
-
-## Repository map
-
-- `contracts/v1/openapi.json`: operation IDs, schemas, versioned API authority.
-- `src/contract.rs`, `src/lib.rs`, `src/error.rs`: contract validation, shared dispatcher, canonical errors.
-- `src/main.rs`, `src/http.rs`, `src/mcp.rs`: CLI and transport adapters.
-- `src/backend.rs`, `src/filesystem.rs`: qpdf adapter, process controls, path and output policy.
-- `src/planner.rs`: capability registry and engine selection.
-- `src/pdfium.rs`, `src/content.rs`: PDFium worker adapter and content bounds (text/PNG).
-- `src/pdfoxide.rs`: PDFOxide preview worker (feature-gated, non-default).
-- `src/resample.rs`: subprocess-isolated image resample worker for targeted compression.
-- `generated/`, `build/forge-pin.json`, `build/generate.py`: pinned Forge outputs, provenance and regeneration.
-- `fixtures/`, `tests/integration.py`, `src/tests.rs`: synthetic corpus and cross-surface tests.
-- `containers/`, `.github/workflows/`, `docs/BUILD.md`: pending and preliminary OCI/CI qualification.
-- `build/privacy.py`, `SECURITY.md`, `license-manifest.json`: privacy, threat model, license evidence.
-
-## Implementation rules
-
-1. **Contract first.** Define or update versioned operation semantics and JSON schemas before changing implementations. Keep operation semantics, errors, discovery, and cancellation equivalent across CLI, HTTP, and MCP. CLI `--dry-run` is a surface control, not an operation request or success result. Unsupported features must fail explicitly; never simulate success.
-2. **Use Forge, but verify it.** Keep the upstream source/version/checksum pin. Generate via the documented official pipeline, review the resulting artifacts and executable schema-fidelity probes, and update provenance and tests. Do not hand-edit `generated/`; do not represent Forge's generated MCP/TS artifacts as the running Rust adapter. Known upstream fidelity gaps are documented in `docs/FORGE.md`. If the pinned archive is unavailable, report the blocker rather than fabricating regenerated output.
-3. **Keep the core small.** Ordinary CLI/MCP use must not require Node, a web server, a cloud account, or a resident daemon. Rust owns the runtime and transport-neutral dispatcher; backends are replaceable. qpdf remains the qualified structural backend until another passes the same tests. Evaluate alternate engines as **optional adapters**, not the project identity.
-4. **Preserve document semantics.** Do not overwrite inputs. Paths must remain workspace-relative; no URL inputs, path traversal, symlinks, device files, or silent fallback to flatten/rasterize. Respect encrypted/form/XFA/signed/preservation-unknown rejection until a tested preservation policy exists. Distinguish visual signatures from certificate-based digital signatures.
-5. **Keep security boundaries explicit.** CLI/MCP initiate no listener. HTTP remains loopback-only with required bearer authentication until a separate remote-serving threat model and tests exist. A Rust process is not a network sandbox: use OS/container controls for network denial and resource isolation. Avoid shell execution, unbounded allocations/streams, raw backend errors, and secret-bearing logs.
-6. **Be portability-minded.** Prefer OCI-compatible, non-root, read-only, ephemeral workflows with pinned versions and inspectable SBOMs. Don't introduce OS-specific assumptions without isolating and testing them.
-
-## Practical usage scenarios
-
-- **Local/desktop automation:** one-shot `anpdf inspect|merge|extract|split|remove-pages|compress` in a private, dedicated workspace; JSON result to stdout, canonical error to stderr. No background worker.
-- **Coding/personal-agent tool use:** `anpdf operations` / `anpdf schema <operationId>` for discovery, then `anpdf mcp --root <workspace>` using stdio. Agent requests must be schema-valid, scoped to that root, and checked for side effects.
-- **Local service integration:** `anpdf serve --root <workspace> --token-file <private-file>` on 127.0.0.1; keep credentials and client configuration outside the repository.
-- **OCI and future cloud:** run against explicitly mounted inputs/outputs, as non-root with network disabled by default. Remote multi-user hosting is a **future security and architecture project**, not today's loopback listener.
-
-## Verification required before merging
+For runtime changes, run these checks before merge. Use qpdf **12.4.2**, Poppler, PDFium and the Python test dependencies. In a prepared orb, source `build/work/orb-env.sh` to use its pinned paths.
 
 ```sh
 cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --locked
-ANPDF_QPDF="$(command -v qpdf)" python3 tests/integration.py
+python3 tests/integration.py
 ```
 
-The integration suite requires qpdf 12.4.2 on your PATH and Poppler on the test host. For Forge changes, also run the official pinned generation procedure and TypeScript/MCP/Cap'n Web qualification probe from `docs/FORGE.md`. For OCI changes, use `docs/BUILD.md` and actually execute the image and runtime smoke tests before claiming qualification. Add malformed/edge fixtures and compare complete response envelopes across CLI, HTTP and MCP; record input hashes and output validity. Never label a test “passed” without execution evidence.
+- For a shared behavior, compare CLI/HTTP/MCP envelopes and verify the artifact (or absence of a write), not just exit status. For documentation examples, exercise the documented command against a synthetic input. Live [agent evaluations](docs/AGENT-EVALS.md) answer specific usability questions; they are not release gates.
+- Contract changes also need [Forge regeneration and probes](docs/FORGE.md). For packaging changes, follow [BUILD.md](docs/BUILD.md) and smoke-test the actual package on its target; distinguish local rehearsal from published artifacts.
 
-## Public repository, attribution, and release discipline
+## Prepare and record releases
 
-**Assume every commit, branch, PR, fixture, generated artifact, log, and CI result is public forever.** Never commit personal names, emails, home/workspace paths, domains, account names, tokens, real customer documents, private scenarios, non-public prompts, or private Git history. Use only synthetic or appropriately licensed fixtures; do not include private PDFs even temporarily. Sanitize output and run `build/privacy.py` and the existing gitleaks checks before publication. The current privacy gate expects generic commit author/committer metadata (`anPDF Contributors <contributors@anpdf.invalid>`); do not weaken that gate to make an inconvenient tool pass.
-
-Do not change third-party licenses or add AGPL/dual-licensed processing backends without an explicit compatibility review, notices, and distribution analysis. Do not publish a registry image, new release, package, non-loopback service, or a production-readiness claim without separate review of OCI/build provenance, licenses, vulnerabilities, privacy and platform qualification.
-
-**When reporting work**, state what changed, which commands actually ran, the observed outcomes, known limitations, and the commit SHA. Keep planning and implementation distinct; prefer a verifiable small vertical slice to a feature checklist.
+- Keep the product version in Cargo distinct from the v1 contract version. After publication, update the README, changelog, handoff and qualification record from the release artifacts, not from a planned tag. Keep historical results dated.
+- Keep generic author and committer metadata (`anPDF Contributors <contributors@anpdf.invalid>`); run the existing full-history privacy and gitleaks gates before publication. Do not weaken them or expose private metadata to satisfy local tooling.
+- Preserve third-party licenses and notices. New AGPL or dual-licensed backends need explicit compatibility and distribution review. Review provenance, SBOMs, vulnerabilities, licenses and platform evidence before publishing. Report what actually ran, what remains unverified, and the commit if one exists. A development release is not production qualification.

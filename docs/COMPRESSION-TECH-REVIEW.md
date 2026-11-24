@@ -11,13 +11,13 @@ Versioning of claims below: **released v0.3.4** covers the scaled deadline,
 decode-once worker, exact rung bytes with interpolated midpoints, and
 best-effort publish on a miss. **Released v0.4.0:** automatic page
 rasterization on a descent miss (technique `pageRasterization`).
-**Staged 0.4.1 (this branch, unreleased):** raster-pass outcome reporting and
-measured terminal progress. Unless a claim says otherwise, mechanisms listed
+**Released v0.4.1:** raster-pass outcome reporting and measured terminal progress.
+**Released v0.4.4:** explicit lossless mode never enters the lossy descent, even with a target. Unless a claim says otherwise, mechanisms listed
 as shipped are invoked code, not proposals.
 
 ## 1. What runs today
 
-`compress --max-bytes <N>` (lossy) invokes, inside a bounded, isolated worker:
+`compress --mode lossy --max-bytes <N>` can invoke the following bounded worker passes. A bare target can still enable them for v1 compatibility; an explicit lossless request cannot.
 
 1. **Image descent.** Each embedded image is decoded once, resized and
    trial-encoded at every rung of a DPI/quality ladder plus interpolated
@@ -25,15 +25,12 @@ as shipped are invoked code, not proposals.
    applied in a single JPEG generation. RGB images whose channels never diverge
    are detected achromatic and re-encoded as grayscale JPEG
    (`achromatic_to_gray` in `src/resample.rs`). On a deadline or an unreachable
-   target, the smallest result measured is published with `SIZE_TARGET_UNMET`.
-2. **Page rasterization on miss (main only).** When the descent still exceeds
+   target, best effort can publish with `SIZE_TARGET_UNMET`; a strict target miss publishes nothing.
+2. **Page rasterization on miss.** When the descent still exceeds
    target, pages carrying **positive evidence of traced vector art** are
    re-rendered to a JPEG and their `Contents`/`Resources` rebuilt in place at
    the gentlest fitting rung; the technique is reported as
-   `pageRasterization` with a `PAGE_RASTERIZED` warning. The preceding lossless
-   passes (`--recompress-flate`, `--object-streams=generate`,
-   `--remove-unreferenced-resources`, lossy `--optimize-images --jpeg-quality`)
-   run unchanged around both worker passes.
+   `pageRasterization` with a `PAGE_RASTERIZED` warning. Lossless qpdf stream and object rewrites are separate from lossy image optimization. The opt-in `layered` mode uses a fixed 400 DPI rather than this descent; see [protocols](PROTOCOLS.md#preservation-and-compression).
 
 Both passes respect the job deadline, which scales with input size
 (`compress_deadline_targeted` in `src/backend.rs`), and run under the worker's
@@ -154,8 +151,8 @@ From the original classification survey, still without a case:
 - **Text-dominant docs with TIFF/PS-derived bitmaps** — monochrome or CCITT
   sources: codec re-selection (CCITT G4 / JBIG2 lossless) is the likely lever,
   not shipped.
-- **Mixed traced + live content at the same page** — currently retained whole;
-  region granularity is the open question.
+
+**Existing mixed-page coverage:** `mixed_page_pdf()` in `fixtures/generate.py` pairs a traced-only page with a second page containing a photo, live text, a link and sparse line art. The full `tests/integration.py` corpus checks rasterization and skip warnings, surviving selectable text and the annotation count. This does not establish region-level compression or cover every dense traced/text combination.
 
 ## 5. Case template (copy per new class)
 

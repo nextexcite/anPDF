@@ -4,13 +4,13 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
-## [0.4.4] - Unpublished
+## [0.4.4] - 2026-11-24
 
 ### Fixed
 - Explicit lossless compression never enables lossy passes, even when a size target is set. Target-only requests retain their v1 behavior.
 
 ### Changed
-- Clarify CLI help and shared operation discovery. MCP omits tools that cannot run in the current session.
+- Clarify CLI help and shared operation discovery. In destination-restricted MCP sessions, discovery omits split and writers excluded by the session policy.
 - Strict compression size misses explain the measured candidate size and whether any output was published.
 - Verify password protection in the staged macOS package and restricted OCI image before publication.
 
