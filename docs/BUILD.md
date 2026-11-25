@@ -7,7 +7,7 @@ Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on 
 tag pushes except PDFOxide preview tags, and on `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
 tag alignment on tag pushes), so untrusted PRs never receive package or release write permissions.
 
-The published `0.4.4` milestone includes opt-in layered compression alongside the
+The `0.5.0` release line includes page reordering, grouped command help, opt-in layered compression, and the
 capability registry, default PDFium content operations, qpdf preservation reporting,
 size-targeted compression with automatic page rasterization, AES-256 encrypt/decrypt,
 and the synthetic comparison harness in `docs/BENCHMARK.md`. Status and the

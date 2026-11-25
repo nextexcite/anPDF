@@ -17,6 +17,38 @@ input/output filesystem-race rejection, MCP cancellation/EOF worker cleanup,
 and raw HTTP disconnect cancellation. These are local engineering results, not
 yet release evidence.
 
+Engineering license/advisory inventory for the same candidate inputs:
+
+- The runtime dependency and packaging inputs are byte-identical to v0.4.4 for
+  `Cargo.toml`, `Cargo.lock`, `containers/Dockerfile`, the qpdf/PDFium/Forge
+  pins, `license-manifest.json`, and `THIRD_PARTY_LICENSES`.
+- `build/licenses.py --check` passed for the default graph (196 native Rust
+  components) and for the all-features inventory basis with `pdfoxide` (287
+  native Rust components). The Rust expressions resolve only to the reviewed
+  permissive set already represented in `license-manifest.json`; legal notice
+  hashes are retained in `THIRD_PARTY_LICENSES`.
+- qpdf 12.4.2 is Apache-2.0. Standard releases dynamically load the pinned
+  `pdfium-binaries` chromium/8165 archive and retain its upstream notice bundle.
+  The OCI image copies the qpdf, PDFium, Rust and Debian copyright/notice files.
+- The v0.4.4 per-architecture OCI scans are the current baseline because those
+  inputs did not change: amd64 had 269 SBOM packages/81 Debian entries/186 Rust
+  crates; arm64 had 267/81/184. Both had no missing expected Debian packages,
+  no uninventoried Rust crates, no AGPL-like licenses, and no fixable
+  High/Critical vulnerability. Total matches were 81 High and 64 Medium on each
+  architecture: 27 High and 12 Medium were `not-fixed`; 54 High and 52 Medium
+  were `wont-fix`. This is evidence tracking, not a vulnerability-free claim.
+- Debian copyright metadata includes GPL/LGPL-family expressions from the base
+  runtime package set. The packages are unmodified Debian binaries with their
+  copyright files retained, but this engineering inventory is not formal legal
+  sign-off or a copyleft/source-offer opinion.
+- Build-time TypeScript qualification uses 36 locked npm package entries: 24
+  Apache-2.0, 10 MIT, and 2 ISC. Node/npm, Forge, TypeScript, MCP client/server,
+  and Cap'n Web packages are build-time qualification tools, not product runtime
+  dependencies or embedded release components.
+- The 0.5.0 release workflow must regenerate these scans from the exact release
+  images and retain the per-architecture reports before publication evidence is
+  cited.
+
 ## 0.4.4
 
 [v0.4.4](https://github.com/nextexcite/anPDF/releases/tag/v0.4.4) was published on 2026-11-24 after the [release workflow](https://github.com/nextexcite/anPDF/actions/runs/45366810966) passed. The GHCR `0.4.4` index digest was `sha256:41081c3e31c8ae12f529e51f32c6312e2dc808b92bd91df7fca33b4e3614f207`; it contains the release builds for Linux amd64 and arm64. The downloaded macOS arm64 tarball, published checksum, and updated Homebrew formula agreed on SHA-256 `9c85e6c97ad4b6dce2f4e4f75a882bcb70e31f86d79c7d3e254f893dbd2f3a46`.
@@ -191,7 +223,7 @@ Remaining release gates:
 - Forge's runtime boundary is now explicit in `docs/FORGE.md`: checked-in generated artifacts are qualified build outputs, Node/npm are build-time-only, and the handwritten Rust adapters independently validate runtime requests/responses. The accepted residual is limited to the executable probe's documented upstream schema-fidelity gaps.
 - Deterministic input/output filesystem races, MCP cancellation/EOF cleanup, raw HTTP disconnect cancellation, malformed object/stream cases and compression bombs now have passing local evidence in the unreleased candidate branch. Complex widget appearances and incremental/expired-signature variants remain out of scope because form filling and signing remain unsupported.
 - Cross-version golden PDFs and additional visual/page semantics; independent structural success does not establish every PDF's visual correctness.
-- Formal target-specific OS/backend/build-tool license review remains. The OCI audit now records Debian license counts and fix-state/severity vulnerability counts separately from the pass/fail fixable High/Critical gate, but a release run must still capture and review those artifacts.
+- Engineering target-specific license/advisory inventory is recorded above. Formal legal sign-off, especially copyleft/source-offer treatment of GPL/LGPL-family Debian metadata, remains an owner-accepted residual rather than an engineering conclusion. The OCI audit records Debian license counts and fix-state/severity vulnerability counts separately from the pass/fail fixable High/Critical gate, and the release run must still capture those exact artifacts.
 
 Check scripts remain in the repository. Raw execution logs and sensitive scan
 particulars are not public-bound.

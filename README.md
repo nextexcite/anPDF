@@ -1,6 +1,6 @@
 # anPDF
 
-Inspect, assemble, compress, and protect PDFs locally from a terminal, script, or AI agent. The CLI and MCP server need no account or background service. [v0.4.4](https://github.com/nextexcite/anPDF/releases/tag/v0.4.4) is a published development milestone, not a production qualification.
+Inspect, assemble, compress, and protect PDFs locally from a terminal, script, or AI agent. The CLI and MCP server need no account or background service. [v0.5.0](https://github.com/nextexcite/anPDF/releases/tag/v0.5.0) is a published milestone with recorded qualification evidence, not production qualification.
 
 ## Install
 
@@ -16,14 +16,14 @@ anpdf --version
 **Linux amd64 or arm64:** the OCI image includes qpdf and PDFium. Try discovery without mounting any files:
 
 ```sh
-docker run --rm --network=none --read-only ghcr.io/nextexcite/anpdf:0.4.4 operations
+docker run --rm --network=none --read-only ghcr.io/nextexcite/anpdf:0.5.0 operations
 ```
 
 For input/output mounts and non-root permissions, see the [container instructions](docs/BUILD.md). For a source build, use `cargo build --locked` with the [pinned Rust toolchain](rust-toolchain.toml), qpdf 12.x ≥12.4.2 (12.4.2 qualified), and [PDFium setup](docs/BUILD.md#default-content-engine) for text extraction and rendering.
 
 ## Try it on a document
 
-From a private working directory containing your own `report.pdf` (at least three pages). The `reorder` line requires a current source build; it is not in the published v0.4.4 package:
+From a private working directory containing your own `report.pdf` (at least three pages):
 
 ```sh
 anpdf inspect report.pdf

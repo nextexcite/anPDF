@@ -6,11 +6,21 @@ SemVer prerelease suffixes, not production-qualified releases.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-25
+
+This is the first plain 0.5.0 milestone. The historical `v0.5.0-alpha.1` tag was an earlier layered-compression prerelease; this release supersedes that prerelease lineage and the intervening 0.4.x milestones.
+
 ### Added
 - `reorderPages` / `anpdf reorder` writes every input page exactly once in a caller-specified output order across CLI, HTTP, and MCP. Invalid or incomplete permutations fail without publishing; extract keeps its ascending-subset semantics.
+- Deterministic qualification coverage for in-flight filesystem races, MCP cancellation and EOF cleanup, raw HTTP disconnect cancellation, malformed input cases, compression bombs, pinned-backend deterministic structural output goldens, and an official TypeScript MCP client conformance probe.
 
 ### Changed
 - Top-level CLI help groups the existing flat commands by task (inspect, organize pages, reduce size, read content, protect, serve, discover) and shared options by purpose. Command syntax is unchanged; there are no nested action families. Per-command operation notes and examples now precede grouped output, operation, credential, safety/server, and shared backend/transport options, and `compress --help` shows the strict lossless size-limit recipe with `--on-target-miss error`.
+- Non-identity reordering of tagged PDFs fails closed as preservation-unknown rather than risking a stale logical reading-order tree. Identity reorder remains valid.
+- Full qualification now includes a bounded native Linux arm64 lane in addition to Linux amd64 and macOS arm64.
+
+### Deferred
+- Form filling, visual signing, certificate signing, OCR, existing-text replacement, and remote multi-user hosting remain outside this release.
 
 ## [0.4.4] - 2026-11-24
 
@@ -246,6 +256,7 @@ SemVer prerelease suffixes, not production-qualified releases.
 ### Changed
 - Development milestone versioning without prerelease suffixes below 0.5.0.
 
+[0.5.0]: https://github.com/nextexcite/anPDF/compare/v0.4.4...v0.5.0
 [0.4.3]: https://github.com/nextexcite/anPDF/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/nextexcite/anPDF/compare/v0.4.1...v0.4.2
 [0.5.0-alpha.1]: https://github.com/nextexcite/anPDF/compare/v0.4.1...v0.5.0-alpha.1
