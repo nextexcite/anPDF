@@ -14,8 +14,10 @@ the full cross-surface integration corpus. That run completed 154 cross-surface
 cases across CLI, HTTP and MCP with input preservation, Poppler page-order
 verification, HTTP policy and MCP lifecycle checks; it also passed deterministic
 input/output filesystem-race rejection, MCP cancellation/EOF worker cleanup,
-and raw HTTP disconnect cancellation. These are local engineering results, not
-yet release evidence.
+and raw HTTP disconnect cancellation. The same local run passed deterministic
+pinned-backend byte-for-byte structural goldens for merge, extract/subset,
+remove-pages, and three reorder permutations. These are local engineering
+results, not yet release evidence.
 
 Engineering license/advisory inventory for the same candidate inputs:
 
@@ -222,7 +224,7 @@ Remaining release gates:
 - macOS virtual-address vs RSS limits are implemented in the worker watchdog (`proc_pidinfo` RSS polling plus kernel CPU/file-size/file-count limits), but remain subject to final hosted macOS evidence review.
 - Forge's runtime boundary is now explicit in `docs/FORGE.md`: checked-in generated artifacts are qualified build outputs, Node/npm are build-time-only, and the handwritten Rust adapters independently validate runtime requests/responses. The accepted residual is limited to the executable probe's documented upstream schema-fidelity gaps.
 - Deterministic input/output filesystem races, MCP cancellation/EOF cleanup, raw HTTP disconnect cancellation, malformed object/stream cases and compression bombs now have passing local evidence in the unreleased candidate branch. Complex widget appearances and incremental/expired-signature variants remain out of scope because form filling and signing remain unsupported.
-- Cross-version golden PDFs and additional visual/page semantics; independent structural success does not establish every PDF's visual correctness.
+- Deterministic pinned-backend structural goldens now have passing local evidence and are part of the hosted corpus. Broader cross-version backend comparison remains outside the exact-qpdf release boundary; independent structural success still does not establish every PDF's visual correctness.
 - Engineering target-specific license/advisory inventory is recorded above. Formal legal sign-off, especially copyleft/source-offer treatment of GPL/LGPL-family Debian metadata, remains an owner-accepted residual rather than an engineering conclusion. The OCI audit records Debian license counts and fix-state/severity vulnerability counts separately from the pass/fail fixable High/Critical gate, and the release run must still capture those exact artifacts.
 
 Check scripts remain in the repository. Raw execution logs and sensitive scan
