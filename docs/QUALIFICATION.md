@@ -4,65 +4,42 @@ Only the newest section describes the current baseline; older sections are
 historical evidence kept for audit. Status and the prioritized queue live in
 [HANDOFF.md](HANDOFF.md).
 
-## Unreleased 0.5.0 candidate evidence
+## 0.5.0
 
-The reorder/grouped-help feature branch was merged after PR review and hosted
-non-full CI. The in-progress qualification branch additionally passed locally
-on macOS arm64: format, Clippy, 41 unit tests, debug build, pinned Forge
-regeneration/probes, the official TypeScript MCP client probe (11 tools), and
-the full cross-surface integration corpus. That run completed 154 cross-surface
-cases across CLI, HTTP and MCP with input preservation, Poppler page-order
-verification, HTTP policy and MCP lifecycle checks; it also passed deterministic
-input/output filesystem-race rejection, MCP cancellation/EOF worker cleanup,
-and raw HTTP disconnect cancellation. The same local run passed deterministic
-pinned-backend byte-for-byte structural goldens for merge, extract/subset,
-remove-pages, and three reorder permutations. These are local engineering
-results, not yet release evidence.
+[v0.5.0](https://github.com/nextexcite/anPDF/releases/tag/v0.5.0) was published on 2026-11-25 as a prerelease/development milestone, not production qualification. Tag `v0.5.0` points at merge commit `76ae8214e7a0cd4f897372cc8306d139ed977a48`. Release workflow run [45629808514](https://github.com/nextexcite/anPDF/actions/runs/45629808514) validated the tag/version, reran qualification on that exact tree, and only then built and published artifacts. Every qualification lane completed successfully: `native`, `pdfium (ubuntu-26.04)`, `pdfium (ubuntu-26.04-arm)`, `pdfium (macos-26)`, `oci-smoke`, `forge-output`, and `privacy`. This is the first exact-release-tree hosted native Linux arm64 full-corpus evidence; the macOS lane also exercised the hosted unit suite containing the RSS-limit test.
 
-A manual hosted full-qualification dispatch at merge commit `d5e406a` (workflow
-run [45614123002](https://github.com/nextexcite/anPDF/actions/runs/45614123002))
-completed successfully on 2026-11-25. Its green lanes were `native`,
-`pdfium (ubuntu-26.04)`, `pdfium (ubuntu-26.04-arm)`, `pdfium (macos-26)`,
-`oci-smoke`, `forge-output`, and `privacy`. This is the first successful hosted
-native Linux arm64 full-corpus evidence and also exercised the hosted macOS unit
-suite containing the RSS-limit test. That validation run predates the later
-release-candidate documentation/version commit and the deterministic golden
-assertions, so it does not replace the exact-tree qualification embedded in the
-0.5.0 release workflow.
+Before tagging, the candidate branch passed locally on macOS arm64: format, Clippy, 41 unit tests, debug build, pinned Forge regeneration/probes, the official TypeScript MCP client probe (11 tools), and 154 cross-surface integration cases across CLI, HTTP and MCP. That local run included input preservation, Poppler page-order verification, deterministic input/output filesystem-race rejection, MCP cancellation/EOF worker cleanup, raw HTTP disconnect cancellation, malformed-input/compression-bomb cases, and deterministic pinned-backend byte-for-byte structural goldens for merge, extract/subset, remove-pages, and three reorder permutations. Manual hosted validation run [45614123002](https://github.com/nextexcite/anPDF/actions/runs/45614123002) also passed every lane at merge commit `d5e406a`; it predates the release-candidate commit, so the exact release evidence is run 45629808514.
 
-Engineering license/advisory inventory for the same candidate inputs:
+### Published artifact verification
 
-- Apart from the intentional root package version edits, the dependency and
-  packaging inputs are unchanged from v0.4.4: Cargo dependency resolution,
-  `containers/Dockerfile`, the qpdf/PDFium/Forge pins,
-  `license-manifest.json`, and `THIRD_PARTY_LICENSES` are byte-identical.
-- `build/licenses.py --check` passed for the default graph (196 native Rust
-  components) and for the all-features inventory basis with `pdfoxide` (287
-  native Rust components). The Rust expressions resolve only to the reviewed
-  permissive set already represented in `license-manifest.json`; legal notice
-  hashes are retained in `THIRD_PARTY_LICENSES`.
-- qpdf 12.4.2 is Apache-2.0. Standard releases dynamically load the pinned
-  `pdfium-binaries` chromium/8165 archive and retain its upstream notice bundle.
-  The OCI image copies the qpdf, PDFium, Rust and Debian copyright/notice files.
-- The v0.4.4 per-architecture OCI scans are a reference baseline for the
-  unchanged OS/runtime dependency posture, not evidence for 0.5.0 images:
-  amd64 had 269 SBOM packages/81 Debian entries/186 Rust
-  crates; arm64 had 267/81/184. Both had no missing expected Debian packages,
-  no uninventoried Rust crates, no AGPL-like licenses, and no fixable
-  High/Critical vulnerability. Total matches were 81 High and 64 Medium on each
-  architecture: 27 High and 12 Medium were `not-fixed`; 54 High and 52 Medium
-  were `wont-fix`. This is evidence tracking, not a vulnerability-free claim.
-- Debian copyright metadata includes GPL/LGPL-family expressions from the base
-  runtime package set. The packages are unmodified Debian binaries with their
-  copyright files retained, but this engineering inventory is not formal legal
-  sign-off or a copyleft/source-offer opinion.
-- Build-time TypeScript qualification uses 36 locked npm package entries: 24
-  Apache-2.0, 10 MIT, and 2 ISC. Node/npm, Forge, TypeScript, MCP client/server,
-  and Cap'n Web packages are build-time qualification tools, not product runtime
-  dependencies or embedded release components.
-- The 0.5.0 release workflow must regenerate these scans from the exact release
-  images and retain the per-architecture reports before publication evidence is
-  cited.
+- GHCR multi-architecture index: `ghcr.io/nextexcite/anpdf@sha256:57e46fbee5d146b0f4cb757271621dacffc9b23449849ed22a40a300efdd9850`.
+  - linux/amd64 build digest: `sha256:087f18dfd6acb84a483a85de93aca1a20c891ff78294b7839324d3d119190533`.
+  - linux/arm64 build digest: `sha256:c4736cc2b313279818ad9dedc8a6ce91e1aefbb38fc07717bccc31ae3f1d2fd1`.
+  - The release workflow pulled each per-architecture published digest and repeated the restricted smoke test before creating the index, then inspected, pulled, and smoked the multi-architecture index.
+  - Locally on Apple Silicon, both published per-architecture digests pulled successfully. The exact linux/arm64 digest also passed merge, PDFium text extraction, PDFium rendering, and password round-trip checks with networking disabled, a read-only root filesystem, all capabilities dropped, `no-new-privileges`, pid/memory/CPU limits, and a non-root image user. The local Podman compatibility layer does not support the Docker tmpfs `uid`/`gid` mount options used by `containers/smoke.sh`, so that supplemental local run used a writable bind-mounted output directory; the hosted workflow remains the exact smoke evidence.
+- macOS arm64 tarball: `anpdf-0.5.0-macos-arm64.tar.gz`, 6,598,852 bytes, SHA-256 `7e9f38935186b4a12ed13398fc0127a843d193b2c8542d1df36a5222476e817e`. The downloaded published asset matched the published `SHA256SUMS-macos-arm64.txt`.
+- On Apple Silicon, the extracted published tarball reported `anpdf 0.5.0`; reordering `3,1,2` produced text order `PAGE-C`, `PAGE-A`, `PAGE-B`; PDFium extraction returned `PAGE-A`; and `build/smoke-protection.sh` passed with qpdf confirming that the encrypted file required a password and the decrypted copy retained `PAGE-ONE`.
+- Homebrew tap dispatch run [45633961394](https://github.com/nextexcite/homebrew-anpdf/actions/runs/45633961394) succeeded; tap commit `6bb981b70` (`update anpdf to v0.5.0`) points at the same tarball URL and SHA-256. A local `brew upgrade anpdf` installed 0.5.0 and `brew test anpdf` passed.
+- Release assets include per-architecture SPDX SBOMs, Grype reports, OCI audit reports, digest files, checksum files, the macOS tarball, and the macOS checksum file. The downloaded SPDX, Grype, audit, per-architecture digest, and index digest files all matched their published SHA-256 checksum files.
+
+### Exact OCI license/advisory audit
+
+The 0.5.0 release workflow regenerated scans from the exact release images before push. Passing the policy gate is not a vulnerability-free claim.
+
+| Architecture | SBOM packages | Debian entries | Rust crates | Missing expected Debian packages | Unexpected Rust crates | Disallowed licenses | Fixable High/Critical |
+| --- | ---: | ---: | ---: | --- | --- | --- | --- |
+| linux/amd64 | 269 | 81 | 186 | 0 | 0 | 0 | 0 |
+| linux/arm64 | 267 | 81 | 184 | 0 | 0 | 0 | 0 |
+
+Both architectures recorded 53 distinct Debian license expressions and the same Grype severity totals: 81 High, 64 Medium, 10 Low, 49 Negligible, and 6 Unknown. By fix state for High/Medium: 27 High and 12 Medium were `not-fixed`; 54 High and 52 Medium were `wont-fix`. One `fixed/Unknown` match was also recorded. The detailed per-architecture reports are published as `oci-audit-report-linux-amd64.json` and `oci-audit-report-linux-arm64.json`.
+
+### Engineering license inventory
+
+- Apart from the intentional root package version edits, the dependency and packaging inputs were unchanged from v0.4.4: Cargo dependency resolution, `containers/Dockerfile`, the qpdf/PDFium/Forge pins, `license-manifest.json`, and `THIRD_PARTY_LICENSES` are byte-identical.
+- `build/licenses.py --check` passed for the default graph (196 native Rust components) and for the all-features inventory basis with `pdfoxide` (287 native Rust components). The Rust expressions resolve only to the reviewed permissive set already represented in `license-manifest.json`; legal notice hashes are retained in `THIRD_PARTY_LICENSES`.
+- qpdf 12.4.2 is Apache-2.0. Standard releases dynamically load the pinned `pdfium-binaries` chromium/8165 archive and retain its upstream notice bundle. The OCI image copies the qpdf, PDFium, Rust and Debian copyright/notice files.
+- Debian copyright metadata includes GPL/LGPL-family expressions from the base runtime package set. The packages are unmodified Debian binaries with their copyright files retained, but this engineering inventory is not formal legal sign-off or a copyleft/source-offer opinion.
+- Build-time TypeScript qualification uses 36 locked npm package entries: 24 Apache-2.0, 10 MIT, and 2 ISC. Node/npm, Forge, TypeScript, MCP client/server, and Cap'n Web packages are build-time qualification tools, not product runtime dependencies or embedded release components.
 
 ## 0.4.4
 
@@ -231,13 +208,14 @@ clearly distinguished from real signing fixtures. Generated PDF manifests includ
 checksums, source recipes, licensing and expected counts. Visual checks are test
 evidence, not a rendering/signing product feature.
 
-Remaining release gates:
+Remaining qualification residuals:
 
-- Hosted native Linux arm64 and macOS full lanes passed in validation run 45614123002, including their unit/integration suites. Exact 0.5.0-tree evidence still depends on the release workflow rerun.
-- Forge's runtime boundary is now explicit in `docs/FORGE.md`: checked-in generated artifacts are qualified build outputs, Node/npm are build-time-only, and the handwritten Rust adapters independently validate runtime requests/responses. The accepted residual is limited to the executable probe's documented upstream schema-fidelity gaps.
-- Deterministic input/output filesystem races, MCP cancellation/EOF cleanup, raw HTTP disconnect cancellation, malformed object/stream cases and compression bombs now have passing local evidence in the unreleased candidate branch. Complex widget appearances and incremental/expired-signature variants remain out of scope because form filling and signing remain unsupported.
-- Deterministic pinned-backend structural goldens have passing local evidence and will run in the exact-tree release workflow. Broader cross-version backend comparison remains outside the exact-qpdf release boundary; independent structural success still does not establish every PDF's visual correctness.
-- Engineering target-specific license/advisory inventory is recorded above. Formal legal sign-off, especially copyleft/source-offer treatment of GPL/LGPL-family Debian metadata, remains an explicit residual risk requiring owner acceptance, not an engineering conclusion. The OCI audit records Debian license counts and fix-state/severity vulnerability counts separately from the pass/fail fixable High/Critical gate, and the release run must still capture those exact artifacts.
+- The exact 0.5.0 release workflow closed the hosted native Linux arm64 and macOS full-lane gaps for this release. This does not generalize into a support claim for other runner/backend combinations.
+- Forge's runtime boundary is explicit in `docs/FORGE.md`: checked-in generated artifacts are qualified build outputs, Node/npm are build-time-only, and the handwritten Rust adapters independently validate runtime requests/responses. The accepted residual is limited to the executable probe's documented upstream schema-fidelity gaps.
+- Deterministic input/output filesystem races, MCP cancellation/EOF cleanup, raw HTTP disconnect cancellation, malformed object/stream cases and compression bombs passed in the exact release workflow. Complex widget appearances and incremental/expired-signature variants remain out of scope because form filling and signing remain unsupported.
+- Deterministic pinned-backend structural goldens passed in the exact release workflow. Broader cross-version backend comparison remains outside the exact-qpdf release boundary; independent structural success still does not establish every PDF's visual correctness.
+- Exact release OCI license/advisory artifacts are recorded above. Formal legal sign-off, especially copyleft/source-offer treatment of GPL/LGPL-family Debian metadata, remains an explicit residual risk requiring owner acceptance, not an engineering conclusion. The OCI audit records Debian license counts and fix-state/severity vulnerability counts separately from the pass/fail fixable High/Critical gate.
+- Per-release product-engine benchmark capture beyond the workflow's comparative `backend-comparison` artifact remains optional development evidence, not a 0.5.0 qualification gate.
 
 Check scripts remain in the repository. Raw execution logs and sensitive scan
 particulars are not public-bound.

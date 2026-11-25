@@ -1,7 +1,7 @@
 # Preliminary builds and workflows
 
 Routine CI runs on `ubuntu-26.04` (Linux amd64); full qualification also
-runs on `macos-26` (Apple Silicon arm64).
+runs on `ubuntu-26.04-arm` (Linux arm64) and `macos-26` (Apple Silicon arm64).
 Release builds (`.github/workflows/oci.yml`) additionally build OCI natively on `ubuntu-26.04`
 (`linux/amd64`) and `ubuntu-26.04-arm` (`linux/arm64`). `.github/workflows/oci.yml` triggers on `v*`
 tag pushes except PDFOxide preview tags, and on `workflow_dispatch`, reading the authoritative version from `Cargo.toml` (and asserting
