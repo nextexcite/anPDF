@@ -93,10 +93,11 @@ jobs:
           name: backend-comparison
           path: build/work/bench-results/report.md
   pdfium:
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        runner: ${{ fromJSON((inputs.full || github.event_name == 'workflow_dispatch') && '["ubuntu-26.04","macos-26"]' || '["ubuntu-26.04"]') }}
+        runner: ${{ fromJSON((inputs.full || github.event_name == 'workflow_dispatch') && '["ubuntu-26.04","ubuntu-26.04-arm","macos-26"]' || '["ubuntu-26.04"]') }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -179,6 +180,18 @@ jobs:
           fi
           unset ANPDF_PDFIUM_LIB
           ANPDF_QPDF="$(cat build/work/qpdf-path)" ANPDF_TEST_FONT="$PWD/build/work/font/NotoSansSC.ttf" build/work/venv/bin/python tests/integration.py "${args[@]}"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.13.1
+          cache: npm
+          cache-dependency-path: build/qualification/package-lock.json
+      - name: Official MCP client conformance probe
+        shell: bash
+        run: |
+          npm ci --ignore-scripts --prefix build/qualification
+          rm -rf build/work/mcp-client-fixture
+          python3 fixtures/generate.py build/work/mcp-client-fixture
+          node build/qualification/mcp-client-probe.mjs target/debug/anpdf build/work/mcp-client-fixture "$(cat build/work/qpdf-path)"
   oci-smoke:
     if: inputs.full || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-26.04

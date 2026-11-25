@@ -43,10 +43,22 @@ def main() -> int:
             if DISALLOWED_LICENSE_RE.search(val):
                 disallowed.append({"extracted": ext.get("licenseId"), "field": field, "license": val})
 
+    license_counts = collections.Counter()
+    for pkg in packages:
+        if not any(ref.get("referenceLocator", "").startswith("pkg:deb/") for ref in pkg.get("externalRefs", [])):
+            continue
+        concluded = pkg.get("licenseConcluded")
+        declared = pkg.get("licenseDeclared")
+        license_name = next(
+            (value for value in (concluded, declared) if value and value != "NOASSERTION"),
+            "unrecorded",
+        )
+        license_counts[license_name] += 1
     missing_deb = sorted(EXPECTED_DEB - deb_names)
     unexpected_crates = sorted(sbom_crates - manifest_crates)
 
     severity_counts = collections.Counter()
+    state_severity_counts = collections.Counter()
     fixable_high_critical = []
     for m in grype.get("matches", []):
         vuln = m.get("vulnerability", {})
@@ -55,6 +67,7 @@ def main() -> int:
         fix = vuln.get("fix", {})
         state = fix.get("state", "unknown")
         severity_counts[sev] += 1
+        state_severity_counts[(state, sev)] += 1
         if state == "fixed" and sev in ("Critical", "High"):
             fixable_high_critical.append({
                 "id": vuln.get("id"),
@@ -67,11 +80,16 @@ def main() -> int:
     report = {
         "sbomPackageCount": len(packages),
         "debianPackageCount": len(deb_names),
+        "debianLicenseCounts": dict(sorted(license_counts.items())),
         "rustCrateCount": len(sbom_crates),
         "expectedDebianPackagesMissing": missing_deb,
         "unexpectedRustCrates": [{"name": n, "version": v} for n, v in unexpected_crates],
         "disallowedLicenses": disallowed,
         "vulnerabilitySeverityCounts": dict(sorted(severity_counts.items())),
+        "vulnerabilityFixStateSeverityCounts": {
+            f"{state}/{sev}": count
+            for (state, sev), count in sorted(state_severity_counts.items())
+        },
         "fixableHighOrCritical": fixable_high_critical,
     }
     pathlib.Path(args.out).write_text(json.dumps(report, indent=2) + "\n")
