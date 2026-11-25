@@ -1,9 +1,8 @@
 # Synthetic PDF backend comparison
 
 This development harness compares external backend providers, not the anPDF
-operation contract. It does not enable new product features. Page reordering,
-forms, signatures, OCR and existing-text replacement remain unimplemented in
-anPDF. A good score is not PDF/A, appearance, security or production qualification.
+operation contract. It does not enable new product features. Forms, signatures,
+OCR and existing-text replacement remain unimplemented in anPDF. A good score is not PDF/A, appearance, security or production qualification.
 
 ## Run
 

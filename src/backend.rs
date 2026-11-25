@@ -803,6 +803,26 @@ fn extract_pages(v: &Value, objs: &Value) -> Vec<Value> {
     }
     out
 }
+fn tagged_document(v: &Value) -> bool {
+    let objs = &v[1];
+    let Some(catalog) = objs["trailer"]["value"]["/Root"]
+        .as_str()
+        .and_then(|r| resolve_obj(objs, r))
+    else {
+        return false;
+    };
+    if catalog.get("/StructTreeRoot").is_some() {
+        return true;
+    }
+    catalog.get("/MarkInfo").is_some_and(|mark| {
+        let dict = mark
+            .as_str()
+            .and_then(|r| resolve_obj(objs, r))
+            .unwrap_or(mark);
+        dict["/Marked"] == true
+    })
+}
+
 fn inspect_json(v: &Value, warn_code: i32) -> Result<(Value, Vec<Value>)> {
     let pages = v["pages"]
         .as_array()
@@ -867,6 +887,9 @@ fn inspect_json(v: &Value, warn_code: i32) -> Result<(Value, Vec<Value>)> {
             "hasAttachments": has_attachments,
             "metadata": metadata,
             "pages": page_infos,
+            // Backend-private signal consumed and removed by the dispatcher
+            // before contract validation/output.
+            "_tagged": tagged_document(&v["qpdf"]),
         }),
         warnings,
     ))

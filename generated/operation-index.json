@@ -8,5 +8,6 @@
   "mergePdf",
   "removePages",
   "renderPage",
+  "reorderPages",
   "splitPdf"
 ]

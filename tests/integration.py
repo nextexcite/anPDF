@@ -47,6 +47,7 @@ def check_mcp_destination_guard(root):
             call('inspectPdf',{'input':request['input']})
             call('compressPdf',dict(request,output={'path':'probe.pdf'}),'ACCESS_DENIED')
             call('extractPdf',{'input':request['input'],'pages':[1],'output':request['output']},'ACCESS_DENIED')
+            call('reorderPages',{'input':request['input'],'pages':[2,1],'output':request['output']},'ACCESS_DENIED')
             call('splitPdf',{'input':request['input'],'parts':[
                 {'pages':[1],'output':request['output']},{'pages':[2],'output':{'path':'probe.pdf'}}]},'ACCESS_DENIED')
             miss=call('compressPdf',dict(request,maxOutputBytes=50000,onTargetMiss='error'),'SIZE_TARGET_UNMET')
@@ -252,6 +253,12 @@ def run(routine=False):
             assert op['status'].startswith('implemented' if engines else 'unavailable')
             tool=next(t for t in tools if t['name']==name);assert tool['annotations']['readOnlyHint']==read_only
         cli=json.loads(subprocess.check_output([str(BIN),'operations']));assert cli==discovery
+        assert len(discovery['operations'])==11
+        assert discovery['unsupported']==['fillForms','visualSigning','certificateSigning']
+        reorder_discovery=next(o for o in discovery['operations'] if o['operationId']=='reorderPages')
+        assert reorder_discovery['status'].startswith('implemented')
+        reorder_tool=next(t for t in tools if t['name']=='reorderPages')
+        assert reorder_tool['annotations']=={'readOnlyHint':False,'destructiveHint':True,'idempotentHint':False,'openWorldHint':False}
         assert http(port,'invalid','/v1/operations')[0]==401
         assert http(port,token,'/v1/operations',extra={'Origin':'https://example.invalid'})[0]==403
         assert http(port,token,'/v1/operations',extra={'Host':'example.invalid'})[0]==403
@@ -292,6 +299,17 @@ def run(routine=False):
           ('remove-pages',{'input':{'path':'three.pdf'},'pages':[4],'output':{'path':'bad.pdf'}},'INVALID_REQUEST'),
           ('remove-pages',{'input':{'path':'form.pdf'},'pages':[1],'output':{'path':'bad.pdf'}},'FORM_UNSUPPORTED'),
           ('remove-pages',{'input':{'path':'signature-marker.pdf'},'pages':[1],'output':{'path':'bad.pdf'}},'SIGNED_UNSUPPORTED'),
+          ('reorder',{'input':{'path':'three.pdf'},'pages':[3,1,2],'output':{'path':'reordered.pdf'}},None),
+          ('reorder',{'input':{'path':'three.pdf'},'pages':[1,2,3],'output':{'path':'identity-reordered.pdf'}},None),
+          ('reorder',{'input':{'path':'three.pdf'},'pages':[2,1,3],'output':{'path':'custom-reordered.pdf'}},None),
+          ('reorder',{'input':{'path':'three.pdf'},'pages':[1,2,3],'output':{'path':'reordered.pdf'}},'OUTPUT_EXISTS'),
+          ('reorder',{'input':{'path':'three.pdf'},'pages':[1,2],'output':{'path':'short-reorder.pdf'}},'INVALID_REQUEST'),
+          ('reorder',{'input':{'path':'three.pdf'},'pages':[0,1,2],'output':{'path':'zero-reorder.pdf'}},'INVALID_REQUEST'),
+          ('reorder',{'input':{'path':'three.pdf'},'pages':[1,4,3],'output':{'path':'range-reorder.pdf'}},'INVALID_REQUEST'),
+          ('reorder',{'input':{'path':'three.pdf'},'pages':[1,1,3],'output':{'path':'dupe-reorder.pdf'}},'INVALID_REQUEST'),
+          ('reorder',{'input':{'path':'one.pdf'},'pages':[1],'output':{'path':'alias.pdf','replaceExisting':True}},'ACCESS_DENIED'),
+          ('reorder',{'input':{'path':'form.pdf'},'pages':[1],'output':{'path':'bad.pdf'}},'FORM_UNSUPPORTED'),
+          ('reorder',{'input':{'path':'signature-marker.pdf'},'pages':[1],'output':{'path':'bad.pdf'}},'SIGNED_UNSUPPORTED'),
           ('compress',{'input':{'path':'three.pdf'},'output':{'path':'compressed.pdf'}},None),
           ('compress',{'input':{'path':'three.pdf'},'output':{'path':'compressed-lossy.pdf'},'mode':'lossy','jpegQuality':75},None),
           ('compress',{'input':{'path':'oversampled.pdf'},'output':{'path':'resampled.pdf'},'maxOutputBytes':400000},None),
@@ -412,6 +430,7 @@ def run(routine=False):
           ('extract',{'input':{'path':'large-attachment.pdf'},'pages':[1],'output':{'path':'large-unmet.pdf'},'preserve':{'attachments':True}},'PRESERVATION_UNMET'),
           ('extract',{'input':{'path':'primary.pdf'},'pages':[1,3],'output':{'path':'rich-extract.pdf'},'preserve':{'metadata':True,'bookmarks':True,'annotations':True,'attachments':True}},None),
           ('remove-pages',{'input':{'path':'primary.pdf'},'pages':[1,3],'output':{'path':'rich-remove.pdf'}},None),
+          ('reorder',{'input':{'path':'primary.pdf'},'pages':[3,1,2],'output':{'path':'rich-reorder.pdf'},'preserve':{'metadata':True,'bookmarks':True,'annotations':True,'attachments':True}},None),
           ('merge',{'inputs':[{'path':'primary.pdf'},{'path':'secondary.pdf'}],'output':{'path':'rich-merge.pdf'}},None),
           ('merge',{'inputs':[{'path':'primary.pdf'},{'path':'one.pdf'}],'output':{'path':'rich-primary.pdf'},'preserve':{'metadata':True,'bookmarks':True,'annotations':True,'attachments':True}},None),
           ('merge',{'inputs':[{'path':'one.pdf'},{'path':'primary.pdf'}],'output':{'path':'rich-secondary.pdf'}},None),
@@ -456,6 +475,8 @@ def run(routine=False):
         else:
             corpus.append(('compress',{'input':{'path':'layered-fixture.pdf'},'output':{'path':'layered-result.pdf'},'mode':'layered'},'BACKEND_UNAVAILABLE'))
         corpus.append(('compress',{'input':{'path':'one.pdf'},'output':{'path':'bad-layered.pdf'},'mode':'layered','compressionLevel':2},'INVALID_REQUEST'))
+        corpus.append(('reorder',{'input':{'path':'tagged-reorder.pdf'},'pages':[2,1],'output':{'path':'tagged-reordered.pdf'}},'PRESERVATION_UNKNOWN'))
+        corpus.append(('reorder',{'input':{'path':'tagged-reorder.pdf'},'pages':[1,2],'output':{'path':'tagged-identity.pdf'}},None))
         shallow=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'three.pdf'}})]))
         deep=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'three.pdf'},'deepCheck':True})]))
         assert any(w['code']=='STREAM_DECODE_UNCHECKED' for w in shallow['warnings'])
@@ -471,7 +492,7 @@ def run(routine=False):
                     if req.get('output',{}).get('path') not in full_only
                     and not (cmd=='inspect' and req['input']['path'] in {'mixed-target.pdf','traced-target.pdf'})]
         for n,(command,request,error) in enumerate(corpus,10):
-            op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf','split':'splitPdf','remove-pages':'removePages','compress':'compressPdf','extract-text':'extractText','render-page':'renderPage','encrypt':'encryptPdf','decrypt':'decryptPdf'}[command]
+            op={'inspect':'inspectPdf','merge':'mergePdf','extract':'extractPdf','split':'splitPdf','remove-pages':'removePages','reorder':'reorderPages','compress':'compressPdf','extract-text':'extractText','render-page':'renderPage','encrypt':'encryptPdf','decrypt':'decryptPdf'}[command]
             if command in ('encrypt','decrypt'):
                 # Secrets never ride argv: the CLI surface takes the request
                 # through a private file instead of --request-json.
@@ -487,7 +508,7 @@ def run(routine=False):
                 responses[output]=a
                 for name,h in originals['cli'].items():assert digest(roots['cli']/name)==h,(n,'input changed',name)
                 continue
-            try:status,b=http(port,token,'/v1/'+command,request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else (180 if command=='compress' and request.get('maxOutputBytes') else 30 if command=='compress' else 15))
+            try:status,b=http(port,token,'/v1/'+{'reorder':'reorder-pages'}.get(command,command),request,timeout=60 if request.get('input',{}).get('path')=='large-attachment.pdf' else (180 if command=='compress' and request.get('maxOutputBytes') else 30 if command=='compress' else 15))
             except TimeoutError as e:raise AssertionError((n,command,request.get('input'),'HTTP timeout')) from e
             mcp_send(mcp,{'jsonrpc':'2.0','id':n,'method':'tools/call','params':{'name':op,'arguments':request}})
             result=mcp_read(mcp)['result'];c=json.loads(result['content'][0]['text'])
@@ -580,6 +601,8 @@ def run(routine=False):
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'split-a.pdf'),'-']).decode();assert 'PAGE-A' in text and 'PAGE-B' not in text
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'split-c.pdf'),'-']).decode();assert text.index('PAGE-B')<text.index('PAGE-C') and 'PAGE-A' not in text
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'trimmed.pdf'),'-']).decode();assert 'PAGE-B' in text and 'PAGE-A' not in text and 'PAGE-C' not in text
+        for name,markers in [('reordered.pdf',['PAGE-C','PAGE-A','PAGE-B']),('identity-reordered.pdf',['PAGE-A','PAGE-B','PAGE-C']),('custom-reordered.pdf',['PAGE-B','PAGE-A','PAGE-C'])]:
+            text=subprocess.check_output(['pdftotext',str(roots['cli']/name),'-']).decode();positions=[text.index(x) for x in markers];assert positions==sorted(positions),(name,text)
         # The decrypt round trip restores the semantic page content.
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'opened.pdf'),'-']).decode();assert 'PAGE-ONE' in text
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'compressed.pdf'),'-']).decode();assert [text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C']]==sorted(text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C'])
@@ -591,6 +614,7 @@ def run(routine=False):
         expected={
           'rich-extract.pdf':('preserved','preserved','preserved','preserved'),
           'rich-remove.pdf':('preserved','omitted','absent','preserved'),
+          'rich-reorder.pdf':('preserved','preserved','preserved','preserved'),
           'rich-merge.pdf':('omitted','omitted','preserved','omitted'),
           'rich-primary.pdf':('preserved','preserved','preserved','preserved'),
           'rich-secondary.pdf':('omitted','omitted','preserved','omitted'),
@@ -602,11 +626,12 @@ def run(routine=False):
             for name,statuses in expected.items():
                 report=responses[name];features=qpdf_features(root/name)
                 assert report['result']['preservation']==dict(zip(['metadata','bookmarks','annotations','attachments'],statuses)),(name,report)
-                assert features['annotations']=={'rich-extract.pdf':[1,1],'rich-remove.pdf':[0],'rich-merge.pdf':[1,0,1,1,0,1],'rich-primary.pdf':[1,0,1,0],'rich-secondary.pdf':[0,1,0,1]}[name],(name,features)
+                assert features['annotations']=={'rich-extract.pdf':[1,1],'rich-remove.pdf':[0],'rich-reorder.pdf':[1,1,0],'rich-merge.pdf':[1,0,1,1,0,1],'rich-primary.pdf':[1,0,1,0],'rich-secondary.pdf':[0,1,0,1]}[name],(name,features)
                 if name!='rich-secondary.pdf':
                     assert features['metadata']==primary['metadata'] and features['xmp']==primary['xmp'] and features['attachments']==primary['attachments']
                 else:assert features['metadata']=={} and not features['xmp'] and not features['attachments'] and not features['outlines']
                 if name=='rich-remove.pdf':assert features['outlines']==[('First page',None),('Last page',None)]
+                elif name=='rich-reorder.pdf':assert features['outlines']==[('First page',2),('Last page',1)]
                 elif name=='rich-extract.pdf':assert features['outlines']==[('First page',1),('Last page',2)]
                 elif name!='rich-secondary.pdf':assert features['outlines']==primary['outlines']
                 omitted=[key for key,value in report['result']['preservation'].items() if value=='omitted']
@@ -713,7 +738,9 @@ def run(routine=False):
         for root in roots.values():
             assert not (root/'resampled-err.pdf').exists()
             if not routine or root==roots['cli']:assert digest(root/'resampled.pdf')!=digest(root/'oversampled.pdf')
-        for root in roots.values():assert not (root/'split-rollback.pdf').exists()
+        for root in roots.values():
+            assert not (root/'split-rollback.pdf').exists()
+            assert all(not (root/name).exists() for name in ['short-reorder.pdf','zero-reorder.pdf','range-reorder.pdf','dupe-reorder.pdf'])
         # A deadline spent mid-descent still publishes the smallest achieved
         # bytes with SIZE_TARGET_UNMET instead of failing with TIMEOUT.
         # The outcome holds whether the descent finishes at the floor or is
@@ -750,6 +777,8 @@ def run(routine=False):
         # Surface controls: request files, stdin, dry-run, invalid flags and malformed JSON.
         req={'input':{'path':'three.pdf'},'pages':[1],'output':{'path':'dry.pdf'}}
         result=subprocess.run([str(BIN),'extract','--root',str(roots['cli']),'--dry-run'],input=json.dumps(req),text=True,capture_output=True);assert result.returncode==0 and json.loads(result.stdout)['dryRun'];assert not (roots['cli']/'dry.pdf').exists()
+        req={'input':{'path':'three.pdf'},'pages':[1,2],'output':{'path':'dry-reorder.pdf'}}
+        result=subprocess.run([str(BIN),'reorder','--root',str(roots['cli']),'--dry-run'],input=json.dumps(req),text=True,capture_output=True);assert result.returncode==0 and json.loads(result.stdout)['dryRun'];assert not (roots['cli']/'dry-reorder.pdf').exists()
         sreq={'input':{'path':'three.pdf'},'parts':[{'pages':[1],'output':{'path':'dry-1.pdf'}},{'pages':[2,3],'output':{'path':'dry-2.pdf'}}]}
         result=subprocess.run([str(BIN),'split','--root',str(roots['cli']),'--dry-run'],input=json.dumps(sreq),text=True,capture_output=True);assert result.returncode==0 and json.loads(result.stdout)['dryRun'];assert not (roots['cli']/'dry-1.pdf').exists() and not (roots['cli']/'dry-2.pdf').exists()
         for args in [['inspect','--bogus'],['inspect','--request-json','{'],['completions'],['completions','bogus'],['fill-forms']]:
@@ -763,6 +792,8 @@ def run(routine=False):
         r=sh(['extract','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','1-2','-o','shorthand-sub.pdf']);assert r.returncode==0 and json.loads(r.stdout)['result']['pageCount']==2,r.stderr
         r=sh(['split','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','sh-a.pdf=1','sh-b.pdf=2-3']);assert r.returncode==0 and len(json.loads(r.stdout)['result']['outputs'])==2,r.stderr
         r=sh(['remove-pages','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','2','-o','sh-trim.pdf']);assert r.returncode==0 and json.loads(r.stdout)['result']['pageCount']==2,r.stderr
+        r=sh(['reorder','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','3,1,2','-o','sh-reordered.pdf']);assert r.returncode==0 and json.loads(r.stdout)['result']['pageCount']==3,r.stderr
+        text=subprocess.check_output(['pdftotext',str(roots['cli']/'sh-reordered.pdf'),'-']).decode();assert [text.index(x) for x in ['PAGE-C','PAGE-A','PAGE-B']]==sorted(text.index(x) for x in ['PAGE-C','PAGE-A','PAGE-B']),text
         r=sh(['compress','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf']);assert r.returncode==0 and json.loads(r.stdout)['result']['path']=='three-compressed.pdf',r.stderr
         r=sh(['extract-text','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','1']);assert (r.returncode==0)==bool(pdfium) and (r.returncode==0 or json.loads(r.stderr)['error']['code']=='BACKEND_UNAVAILABLE'),r
         r=sh(['render-page','--root',str(roots['cli']),'--qpdf',str(QPDF),'three.pdf','1','-o','sh-page.png']);assert (r.returncode==0)==bool(pdfium) and (r.returncode==0 or json.loads(r.stderr)['error']['code']=='BACKEND_UNAVAILABLE'),r

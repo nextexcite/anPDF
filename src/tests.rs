@@ -405,18 +405,20 @@ fn preservation_statuses_and_required_failure_do_not_publish() {
             .count(),
         1
     );
-    for aspect in ["metadata", "bookmarks", "attachments", "annotations"] {
-        let request = json!({"input":{"path":"in.pdf"},"pages":[1],"output":{"path":"existing.pdf","replaceExisting":true},"preserve":{aspect:true}});
-        assert_eq!(
-            d.dispatch("extractPdf", &request, false, &Control::default())
-                .unwrap_err()
-                .0,
-            "PRESERVATION_UNMET"
-        );
-        assert_eq!(
-            fs::read(t.path().join("existing.pdf")).unwrap(),
-            b"existing"
-        );
+    for operation in ["extractPdf", "reorderPages"] {
+        for aspect in ["metadata", "bookmarks", "attachments", "annotations"] {
+            let request = json!({"input":{"path":"in.pdf"},"pages":[1],"output":{"path":"existing.pdf","replaceExisting":true},"preserve":{aspect:true}});
+            assert_eq!(
+                d.dispatch(operation, &request, false, &Control::default())
+                    .unwrap_err()
+                    .0,
+                "PRESERVATION_UNMET"
+            );
+            assert_eq!(
+                fs::read(t.path().join("existing.pdf")).unwrap(),
+                b"existing"
+            );
+        }
     }
     let error = Error("PRESERVATION_UNMET", None);
     assert_eq!((error.http(), error.exit()), (422, 5));
@@ -871,7 +873,7 @@ fn atomic_competing_outputs_and_sparse_limit() {
 
 #[test]
 fn split_destination_collision_and_rollback() {
-    struct MockSplit;
+    struct MockSplit(bool);
     impl crate::backend::Backend for MockSplit {
         fn inspect(
             &self,
@@ -882,6 +884,13 @@ fn split_destination_collision_and_rollback() {
         ) -> crate::error::Result<(serde_json::Value, Vec<serde_json::Value>)> {
             let pages = if path.file_name().and_then(|s| s.to_str()) == Some("input-0.pdf") {
                 3
+            } else if let Ok(written) = fs::read_to_string(path)
+                && let Some(list) = written
+                    .strip_prefix("pages:Some([")
+                    .and_then(|v| v.strip_suffix("])"))
+                && !list.is_empty()
+            {
+                list.split(',').count() as u64
             } else {
                 1
             };
@@ -903,7 +912,8 @@ fn split_destination_collision_and_rollback() {
                     "hasOutline": false,
                     "hasAttachments": false,
                     "metadata": {},
-                    "pages": page_infos
+                    "pages": page_infos,
+                    "_tagged": self.0
                 }),
                 vec![],
             ))
@@ -956,7 +966,8 @@ fn split_destination_collision_and_rollback() {
         t.path().join("existing-b.pdf"),
     )
     .unwrap();
-    let d = crate::Dispatcher::with_backend(t.path(), std::sync::Arc::new(MockSplit)).unwrap();
+    let d =
+        crate::Dispatcher::with_backend(t.path(), std::sync::Arc::new(MockSplit(false))).unwrap();
 
     // Same destination path in two parts is rejected even on dry-run.
     assert_eq!(
@@ -1024,6 +1035,96 @@ fn split_destination_collision_and_rollback() {
     assert!(t.path().join("rollback-new.pdf").exists());
     new_dest.rollback_new();
     assert!(!t.path().join("rollback-new.pdf").exists());
+
+    // reorderPages passes its order through without sorting, requires a
+    // complete cover after document inspection, and treats dry-run as the
+    // documented preflight boundary.
+    let reordered = d
+        .dispatch(
+            "reorderPages",
+            &json!({"input": {"path": "in.pdf"}, "pages": [3, 1, 2], "output": {"path": "reordered.pdf"}}),
+            false,
+            &crate::backend::Control::default(),
+        )
+        .unwrap();
+    assert_eq!(reordered["result"]["pageCount"], 3);
+    assert_eq!(
+        fs::read(t.path().join("reordered.pdf")).unwrap(),
+        b"pages:Some([3, 1, 2])"
+    );
+    let identity = d
+        .dispatch(
+            "reorderPages",
+            &json!({"input": {"path": "in.pdf"}, "pages": [1, 2, 3], "output": {"path": "identity.pdf"}}),
+            false,
+            &crate::backend::Control::default(),
+        )
+        .unwrap();
+    assert_eq!(identity["result"]["pageCount"], 3);
+    assert!(t.path().join("identity.pdf").exists());
+    assert!(
+        d.dispatch(
+            "reorderPages",
+            &json!({"input": {"path": "in.pdf"}, "pages": [1, 2], "output": {"path": "dry-reorder.pdf"}}),
+            true,
+            &crate::backend::Control::default()
+        )
+        .unwrap()["dryRun"]
+            == true
+    );
+    assert!(!t.path().join("dry-reorder.pdf").exists());
+    for pages in [
+        serde_json::json!([1, 2]),
+        serde_json::json!([3, 1]),
+        serde_json::json!([1, 4, 3]),
+        serde_json::json!([0, 1, 2]),
+        serde_json::json!([1, 1, 3]),
+    ] {
+        assert_eq!(
+            d.dispatch(
+                "reorderPages",
+                &json!({"input": {"path": "in.pdf"}, "pages": pages, "output": {"path": "bad-reorder.pdf"}}),
+                false,
+                &crate::backend::Control::default()
+            )
+            .unwrap_err()
+            .0,
+            "INVALID_REQUEST"
+        );
+        assert!(!t.path().join("bad-reorder.pdf").exists());
+    }
+    let tagged_dispatcher =
+        crate::Dispatcher::with_backend(t.path(), std::sync::Arc::new(MockSplit(true))).unwrap();
+    for (pages, expected) in [
+        (vec![3, 1, 2], Some("PRESERVATION_UNKNOWN")),
+        (vec![1, 2, 3], None),
+    ] {
+        let result = tagged_dispatcher.dispatch(
+            "reorderPages",
+            &json!({"input": {"path": "in.pdf"}, "pages": pages, "output": {"path": "tagged-reorder-out.pdf"}}),
+            false,
+            &crate::backend::Control::default(),
+        );
+        if let Some(code) = expected {
+            let error = result.unwrap_err();
+            assert_eq!(error.0, code);
+            assert!(error.message().contains("logical reading order"));
+        } else {
+            assert!(result.is_ok());
+        }
+    }
+    assert!(crate::contract::valid_input(
+        "reorderPages",
+        &json!({"input":{"path":"in.pdf"},"pages":[3,1,2],"output":{"path":"out.pdf"}})
+    ));
+    assert!(!crate::contract::valid_input(
+        "reorderPages",
+        &json!({"input":{"path":"in.pdf"},"pages":[1,1,3],"output":{"path":"out.pdf"}})
+    ));
+    assert!(!crate::contract::valid_input(
+        "reorderPages",
+        &json!({"input":{"path":"in.pdf"},"pages":[0,1,2],"output":{"path":"out.pdf"}})
+    ));
 
     // removePages rejects removing every page of the input.
     assert_eq!(

@@ -4,6 +4,14 @@ Notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and Semantic Versioning. Versions below 0.5.0 are development milestones without
 SemVer prerelease suffixes, not production-qualified releases.
 
+## [Unreleased]
+
+### Added
+- `reorderPages` / `anpdf reorder` writes every input page exactly once in a caller-specified output order across CLI, HTTP, and MCP. Invalid or incomplete permutations fail without publishing; extract keeps its ascending-subset semantics.
+
+### Changed
+- Top-level CLI help groups the existing flat commands by task (inspect, organize pages, reduce size, read content, protect, serve, discover) and shared options by purpose. Command syntax is unchanged; there are no nested action families. Per-command operation notes and examples now precede grouped output, operation, credential, safety/server, and shared backend/transport options, and `compress --help` shows the strict lossless size-limit recipe with `--on-target-miss error`.
+
 ## [0.4.4] - 2026-11-24
 
 ### Fixed

@@ -152,6 +152,7 @@ def generate(root):
         'traced.pdf':(traced_pdf(2),2),
         'mixed-elements.pdf':(mixed_page_pdf(),2),
         'tagged.pdf':(tagged_pdf(),1),
+        'tagged-reorder.pdf':(pdf(['TAGGED-A','TAGGED-B'], '/MarkInfo << /Marked true >> /StructTreeRoot 7 0 R', ['<< /Type /StructTreeRoot /K [] >>']),2),
     }
     for name in ['@args.pdf','-flag.pdf','中文路径.pdf']:fixtures[name]=(pdf(['SAFE-PATH']),1)
     manifest=[]

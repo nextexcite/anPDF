@@ -175,6 +175,8 @@ impl Dispatcher {
         let mut parts: Option<Vec<(Vec<u64>, String, filesystem::Destination)>> = None;
         let pages = if matches!(id, "extractPdf" | "removePages") {
             Some(parse_pages(&request["pages"])?)
+        } else if id == "reorderPages" {
+            Some(parse_ordered_pages(&request["pages"])?)
         } else {
             None
         };
@@ -320,6 +322,7 @@ impl Dispatcher {
         let mut paths = Vec::new();
         let mut warnings = Vec::new();
         let mut reports = Vec::new();
+        let mut tagged_inputs = Vec::new();
         let mut total_pages = 0u64;
         let total_inputs = inputs.len() as u64;
         for (n, input) in inputs.iter_mut().enumerate() {
@@ -349,6 +352,10 @@ impl Dispatcher {
             }
             if !report.is_object() {
                 return Err(Error("INTERNAL", None));
+            }
+            tagged_inputs.push(report["_tagged"] == true);
+            if let Some(map) = report.as_object_mut() {
+                map.remove("_tagged");
             }
             report["sha256"] = json!(input.hash);
             report["bytes"] = json!(input.bytes);
@@ -1088,7 +1095,23 @@ impl Dispatcher {
                 destination.commit(&out, &inputs)?;
                 return Ok(envelope);
             }
-            if pages
+            if id == "reorderPages" {
+                let order = pages.as_ref().unwrap();
+                if order.len() as u64 != total_pages || order.iter().any(|page| *page > total_pages)
+                {
+                    return Err(Error("INVALID_REQUEST", None));
+                }
+                let identity = (1..=total_pages).collect::<Vec<_>>();
+                if tagged_inputs.first().copied().unwrap_or(false) && *order != identity {
+                    return Err(Error(
+                        "PRESERVATION_UNKNOWN",
+                        Some(
+                            "tagged PDF logical reading order cannot be verified after reordering"
+                                .into(),
+                        ),
+                    ));
+                }
+            } else if pages
                 .as_ref()
                 .is_some_and(|p| p.last().copied().unwrap_or(0) > total_pages)
             {
@@ -1162,6 +1185,23 @@ fn parse_pages(value: &Value) -> Result<Vec<u64>> {
         .map(request_integer)
         .collect::<Result<Vec<_>>>()?;
     if pages.windows(2).any(|w| w[0] >= w[1]) {
+        return Err(Error("INVALID_REQUEST", None));
+    }
+    Ok(pages)
+}
+
+fn parse_ordered_pages(value: &Value) -> Result<Vec<u64>> {
+    let pages = value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(request_integer)
+        .collect::<Result<Vec<_>>>()?;
+    if pages
+        .iter()
+        .enumerate()
+        .any(|(index, page)| pages[..index].contains(page))
+    {
         return Err(Error("INVALID_REQUEST", None));
     }
     Ok(pages)

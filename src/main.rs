@@ -87,6 +87,7 @@ SHORTHAND (paths workspace-relative to --root, or absolute/~ adapting it):
   anpdf extract <doc.pdf> <pages> -o <subset.pdf>
   anpdf split <doc.pdf> <part.pdf=pages> [<part.pdf=pages> ...]
   anpdf remove-pages <doc.pdf> <pages> -o <trimmed.pdf>
+  anpdf reorder <doc.pdf> <ordered-pages> -o <ordered.pdf>
   anpdf compress <doc.pdf> [-o <out.pdf>] [--mode lossless|lossy|layered] [--max-bytes N]
   anpdf extract-text <doc.pdf> <pages> [--engine <id>]
   anpdf render-page <doc.pdf> <page> -o <page.png> [--dpi 36-300] [--engine <id>]
@@ -94,6 +95,8 @@ SHORTHAND (paths workspace-relative to --root, or absolute/~ adapting it):
   anpdf decrypt <doc.pdf> [<out.pdf>]   strip password protection (password required)
 
 <pages> are 1-based numbers or ranges: \"1,3\", \"2-5\" (positional or --pages).
+For reorder, <ordered-pages> is a full output-order permutation such as \"3,1,2\";
+ranges still expand ascending, and the complete order is validated after inspection.
 Use -o/--output to name a destination. A trailing output path also works
 for single-output commands. Compress, encrypt and decrypt can derive an output
 name. --replace overwrites an existing destination, never an input. A size
@@ -109,21 +112,29 @@ terminal prompts hidden on /dev/tty, and scripts use a private
 --password-file/--owner-password-file, --request-file or piped stdin
 carrying the JSON fields.
 
-COMMON OPTIONS:
+`anpdf help <command>` shows the exact accepted set for that command.
+
+OUTPUT AND PAGE OPTIONS:
   -o, --output <path>  Output path
-  --pages <spec>       Page spec for extract/remove-pages/extract-text
+  --pages <spec>       Page spec/order for extract/remove-pages/reorder/extract-text
+
+SAFETY OPTIONS:
   --replace            Overwrite an existing destination, never the input
   --preserve <list>    Required aspects: metadata,bookmarks,annotations,attachments (or \"all\")
+  --dry-run            Validate request and destination policy without processing the PDF
+
+CREDENTIAL OPTIONS:
+  --password-file <f>  Private (chmod 600) file; first line is the user password —
+                       encrypt/decrypt (a lone newline supplies an empty password)
+  --owner-password-file <f> Private file with the optional owner password — encrypt
+
+COMMON OPTIONS:
   --root <dir>         Workspace root (default: .; adapts to absolute shorthand paths)
   --qpdf <abs-path>    Absolute path to qpdf 12.x >=12.4.2 (tested: 12.4.2)
   --qpdf-exact         Require exactly qpdf 12.4.2
   --pdfium-lib <path>  Optional PDFium dynamic library (overrides ANPDF_PDFIUM_LIB)
   --request-json <str> Inline JSON request payload (or pass JSON on stdin)
   --request-file <f>   Read JSON request payload from file
-  --password-file <f>  Private (chmod 600) file; first line is the user password —
-                       encrypt/decrypt (a lone newline supplies an empty password)
-  --owner-password-file <f> Private file with the optional owner password — encrypt
-  --dry-run            Validate request and destination policy without processing the PDF
   --json               On a terminal, print the JSON result envelope instead of the summary
   --                   End of flags; following arguments are positional paths
 
@@ -144,7 +155,12 @@ EXIT CODES:
 
 const HELP_TEMPLATE: &str =
     "{name} {version}\n{about}\n\nUSAGE:\n  {usage}\n\n{all-args}{after-help}";
-const SUB_HELP_TEMPLATE: &str = "USAGE: {usage}\n\n{all-args}{after-help}";
+const SUB_HELP_TEMPLATE: &str = "USAGE: {usage}{after-help}\n\n{all-args}";
+const OUTPUT_HEADING: &str = "OUTPUT OPTIONS";
+const OPERATION_HEADING: &str = "OPERATION OPTIONS";
+const SAFETY_HEADING: &str = "SAFETY OPTIONS";
+const CREDENTIAL_HEADING: &str = "CREDENTIAL OPTIONS";
+const SERVER_HEADING: &str = "SERVER OPTIONS";
 const COMMON_HEADING: &str = "COMMON OPTIONS";
 
 /// Shared backend/root options on every document operation and server.
@@ -169,6 +185,9 @@ struct Backends {
 /// Request-source and presentation options shared by document operations.
 #[derive(clap::Args)]
 struct Common {
+    #[arg(long, help_heading = SAFETY_HEADING,
+        help = "Validate request and destination policy without processing the PDF")]
+    dry_run: bool,
     #[command(flatten)]
     backends: Backends,
     #[arg(long, value_name = "json", allow_hyphen_values = true, help_heading = COMMON_HEADING,
@@ -178,9 +197,6 @@ struct Common {
         value_hint = clap::ValueHint::FilePath,
         help = "Read JSON request payload from file")]
     request_file: Option<PathBuf>,
-    #[arg(long, help_heading = COMMON_HEADING,
-        help = "Validate request and destination policy without processing the PDF")]
-    dry_run: bool,
     #[arg(long, help_heading = COMMON_HEADING,
         help = "On a terminal, print the JSON result envelope instead of the summary")]
     json: bool,
@@ -194,11 +210,10 @@ struct Out {
         value_name = "path",
         allow_hyphen_values = true,
         value_hint = clap::ValueHint::FilePath,
+        help_heading = OUTPUT_HEADING,
         help = "Output path"
     )]
     output: Option<String>,
-    #[arg(long, help = "Overwrite an existing destination, never the input")]
-    replace: bool,
 }
 
 #[derive(clap::Args)]
@@ -207,6 +222,7 @@ struct Preserve {
         long,
         value_name = "list",
         allow_hyphen_values = true,
+        help_heading = SAFETY_HEADING,
         help = "Required aspects: metadata,bookmarks,annotations,attachments (or \"all\")"
     )]
     preserve: Option<String>,
@@ -218,7 +234,20 @@ struct Pages {
         long,
         value_name = "spec",
         allow_hyphen_values = true,
+        help_heading = OPERATION_HEADING,
         help = "Page spec: 1-based numbers or ranges like '1,3' or '2-5'"
+    )]
+    pages: Option<String>,
+}
+
+#[derive(clap::Args)]
+struct OrderedPages {
+    #[arg(
+        long,
+        value_name = "spec",
+        allow_hyphen_values = true,
+        help_heading = OPERATION_HEADING,
+        help = "Full output order: every input page exactly once, e.g. '3,1,2'"
     )]
     pages: Option<String>,
 }
@@ -229,6 +258,7 @@ struct Engine {
         long,
         value_name = "id",
         allow_hyphen_values = true,
+        help_heading = OPERATION_HEADING,
         help = "Registered engine ID (see 'anpdf operations')"
     )]
     engine: Option<String>,
@@ -262,6 +292,7 @@ doc_args!(InspectArgs {
 struct DeepCheck {
     #[arg(
         long,
+        help_heading = OPERATION_HEADING,
         help = "Decode stream payloads for complete qpdf structural validation"
     )]
     deep_check: bool,
@@ -272,7 +303,7 @@ doc_args!(MergeArgs {
         num_args = 1.., required = true,
         help = "2..20 input PDFs in merge order; workspace-relative, absolute or ~/…")]
     inputs: Vec<String>,
-}, out: Out, preserve: Preserve);
+}, out: Out, replace: ReplaceOnly, preserve: Preserve);
 
 doc_args!(ExtractArgs {
     #[arg(value_name = "DOC.pdf", value_hint = clap::ValueHint::FilePath,
@@ -286,7 +317,7 @@ doc_args!(ExtractArgs {
     #[arg(value_name = "OUT.pdf", value_hint = clap::ValueHint::FilePath,
         help = "Output PDF (or -o/--output)")]
     out_pos: Option<String>,
-}, out: Out, preserve: Preserve, pages: Pages);
+}, out: Out, pages: Pages, replace: ReplaceOnly, preserve: Preserve);
 
 doc_args!(SplitArgs {
     #[arg(value_name = "DOC.pdf", value_hint = clap::ValueHint::FilePath,
@@ -311,7 +342,21 @@ doc_args!(RemoveArgs {
     #[arg(value_name = "OUT.pdf", value_hint = clap::ValueHint::FilePath,
         help = "Output PDF (or -o/--output)")]
     out_pos: Option<String>,
-}, out: Out, preserve: Preserve, pages: Pages);
+}, out: Out, pages: Pages, replace: ReplaceOnly, preserve: Preserve);
+
+doc_args!(ReorderArgs {
+    #[arg(value_name = "DOC.pdf", value_hint = clap::ValueHint::FilePath,
+        required = true,
+        help = DOC_HELP)]
+    doc: Option<String>,
+    #[arg(value_name = "ORDERED-PAGES",
+        required_unless_present_any = ["request_json", "request_file", "pages"],
+        help = "Full output order: every input page exactly once, e.g. '3,1,2'")]
+    pages_pos: Option<String>,
+    #[arg(value_name = "OUT.pdf", value_hint = clap::ValueHint::FilePath,
+        help = "Output PDF (or -o/--output)")]
+    out_pos: Option<String>,
+}, out: Out, pages: OrderedPages, replace: ReplaceOnly, preserve: Preserve);
 
 doc_args!(ExtractTextArgs {
     #[arg(value_name = "DOC.pdf", value_hint = clap::ValueHint::FilePath,
@@ -335,11 +380,11 @@ doc_args!(RenderArgs {
     #[arg(value_name = "OUT.png", value_hint = clap::ValueHint::FilePath,
         help = "Output PNG (or -o/--output)")]
     out_pos: Option<String>,
-}, out: Out, engine: Engine, dpi: Dpi);
+}, out: Out, engine: Engine, dpi: Dpi, replace: ReplaceOnly);
 
 #[derive(clap::Args)]
 struct ReplaceOnly {
-    #[arg(long, help = "Overwrite existing part destinations, never the input")]
+    #[arg(long, help_heading = SAFETY_HEADING, help = "Overwrite an existing destination, never the input")]
     replace: bool,
 }
 
@@ -349,6 +394,7 @@ struct Dpi {
         long,
         value_name = "36-300",
         allow_hyphen_values = true,
+        help_heading = OPERATION_HEADING,
         help = "Render DPI (36–300; default: 144)"
     )]
     dpi: Option<String>,
@@ -360,32 +406,39 @@ struct CompressFlags {
     out: Out,
     #[arg(long, value_name = "mode", allow_hyphen_values = true,
         value_parser = clap::builder::PossibleValuesParser::new(["lossless", "lossy", "layered"]),
-        help = "Compression strategy (see Modes below)")]
+        help_heading = OPERATION_HEADING,
+        help = "Compression strategy (see Modes)")]
     mode: Option<String>,
     #[arg(
         long,
         value_name = "0-100",
         allow_hyphen_values = true,
+        help_heading = OPERATION_HEADING,
         help = "Initial JPEG quality (lossy mode only; default: 80)"
     )]
     jpeg_quality: Option<String>,
     #[arg(long, value_name = "1-3", allow_hyphen_values = true,
         value_parser = clap::builder::PossibleValuesParser::new(["1", "2", "3"]),
+        help_heading = OPERATION_HEADING,
         help = "Resampling level: 1 keeps pixels, 2 ≈200 DPI, 3 ≈120 DPI")]
     level: Option<String>,
     #[arg(
         long,
         value_name = "N",
         allow_hyphen_values = true,
+        help_heading = OPERATION_HEADING,
         help = "Target size in bytes, decimal (3MB), or binary (3MiB)"
     )]
     max_bytes: Option<String>,
     #[arg(long, value_name = "behavior", allow_hyphen_values = true,
         value_parser = clap::builder::PossibleValuesParser::new(["bestEffort", "error"]),
+        help_heading = SAFETY_HEADING,
         help = "If over target: write the smallest result (default) or fail without writing")]
     on_target_miss: Option<String>,
-    #[arg(long, help = "Keep compressed bytes even when not smaller")]
+    #[arg(long, help_heading = SAFETY_HEADING, help = "Keep compressed bytes even when not smaller")]
     allow_larger: bool,
+    #[command(flatten)]
+    replace: ReplaceOnly,
 }
 
 #[derive(clap::Args)]
@@ -410,6 +463,7 @@ struct CompressArgs {
 struct UserSecret {
     #[arg(long, value_name = "file", allow_hyphen_values = true,
         value_hint = clap::ValueHint::FilePath,
+        help_heading = CREDENTIAL_HEADING,
         help = "Read the password from a private file (chmod 600); on a terminal, omit for a hidden prompt")]
     password_file: Option<String>,
 }
@@ -418,6 +472,7 @@ struct UserSecret {
 struct OwnerSecret {
     #[arg(long, value_name = "file", allow_hyphen_values = true,
         value_hint = clap::ValueHint::FilePath,
+        help_heading = CREDENTIAL_HEADING,
         help = "Read the optional owner password from a private file; a blank prompt or omission generates a random owner")]
     owner_password_file: Option<String>,
 }
@@ -430,7 +485,7 @@ doc_args!(EncryptArgs {
     #[arg(value_name = "OUT.pdf", value_hint = clap::ValueHint::FilePath,
         help = "Output PDF (or -o/--output; default: <name>-encrypted.pdf)")]
     out_pos: Option<String>,
-}, out: Out, preserve: Preserve, user: UserSecret, owner: OwnerSecret);
+}, out: Out, user: UserSecret, owner: OwnerSecret, replace: ReplaceOnly, preserve: Preserve);
 
 doc_args!(DecryptArgs {
     #[arg(value_name = "DOC.pdf", value_hint = clap::ValueHint::FilePath,
@@ -440,16 +495,15 @@ doc_args!(DecryptArgs {
     #[arg(value_name = "OUT.pdf", value_hint = clap::ValueHint::FilePath,
         help = "Output PDF (or -o/--output; default: <name>-decrypted.pdf)")]
     out_pos: Option<String>,
-}, out: Out, preserve: Preserve, user: UserSecret);
+}, out: Out, user: UserSecret, replace: ReplaceOnly, preserve: Preserve);
 
 #[derive(clap::Args)]
 struct ServeArgs {
-    #[command(flatten)]
-    backends: Backends,
     #[arg(
         long,
         value_name = "port",
         allow_hyphen_values = true,
+        help_heading = SERVER_HEADING,
         help = "Loopback HTTP port (default: 8787)"
     )]
     port: Option<String>,
@@ -458,30 +512,35 @@ struct ServeArgs {
         value_name = "file",
         allow_hyphen_values = true,
         value_hint = clap::ValueHint::FilePath,
+        help_heading = SERVER_HEADING,
         help = "Bearer token file: a private file holding >=32 ASCII graphic characters (required)"
     )]
     token_file: Option<PathBuf>,
+    #[command(flatten)]
+    backends: Backends,
 }
 
 #[derive(clap::Args)]
 struct McpArgs {
-    #[command(flatten)]
-    backends: Backends,
     #[arg(
         long,
         value_name = "PATH",
+        help_heading = SAFETY_HEADING,
         help = "Allow new output only at this workspace-relative path; disallow replacement"
     )]
     output_only: Option<String>,
-    #[arg(long, requires = "output_only", value_name = "BYTES", value_parser = clap::value_parser!(u64).range(1..=250 * 1024 * 1024), help = "Maximum published bytes at --output-only (integer bytes)")]
+    #[arg(long, requires = "output_only", value_name = "BYTES", value_parser = clap::value_parser!(u64).range(1..=250 * 1024 * 1024), help_heading = SAFETY_HEADING, help = "Maximum published bytes at --output-only (integer bytes)")]
     output_byte_ceiling: Option<u64>,
     #[arg(
         long,
         requires = "output_only",
         value_name = "OPERATION_ID",
+        help_heading = SAFETY_HEADING,
         help = "Allow only this operation to write the approved output"
     )]
     output_operation: Option<String>,
+    #[command(flatten)]
+    backends: Backends,
 }
 
 #[derive(clap::Args)]
@@ -542,11 +601,20 @@ enum Cmd {
         help_template = SUB_HELP_TEMPLATE,
         after_help = "Operation: removePages (strictly increasing 1-based pages to remove; at least 1 page must remain)\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[2],\"output\":{\"path\":\"trimmed.pdf\"}}")]
     RemovePages(RemoveArgs),
+    #[command(about = "Write every page in the requested output order",
+        help_template = SUB_HELP_TEMPLATE,
+        after_help = "Operation: reorderPages. The order must cover every input page exactly once;\nranges expand ascending, so use commas for a custom order.\nTagged inputs permit identity order only; other permutations fail closed.\nExample: anpdf reorder report.pdf 3,1,2 -o ordered.pdf\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[3,1,2],\"output\":{\"path\":\"ordered.pdf\"}}")]
+    Reorder(ReorderArgs),
     #[command(about = "Compress PDF streams, images, or eligible traced pages",
         help_template = SUB_HELP_TEMPLATE,
         after_help = if cfg!(feature = "lossless-only") {
-            "This build permits lossless compression only. With --max-bytes, set\n--mode lossless explicitly and use --on-target-miss error for a hard limit.\n\nExample:\n  anpdf compress input.pdf -o output.pdf --mode lossless --max-bytes 3MiB --on-target-miss error\n\nJSON schema: anpdf schema compressPdf"
-        } else { "Modes:
+            "This build permits lossless compression only. With --max-bytes, set\n--mode lossless explicitly and use --on-target-miss error for a hard limit.\n\nExample:\n  anpdf compress input.pdf -o output.pdf --mode lossless --max-bytes 3MB --on-target-miss error\n\nJSON schema: anpdf schema compressPdf"
+        } else { "Examples:
+  anpdf compress input.pdf
+  anpdf compress input.pdf -o output.pdf --mode lossless --max-bytes 3MB --on-target-miss error
+  anpdf compress input.pdf -o output.pdf --mode lossy --max-bytes 3MB
+
+Modes:
   lossless  Recompress streams without degrading images (default without a
             size target or --level 2/3). An explicit choice stays lossless
             with any target and never rasterizes pages.
@@ -561,11 +629,6 @@ enum Cmd {
 With no mode or level, --max-bytes can enable lossy processing for v1
 compatibility. Choose a mode explicitly. Use --on-target-miss error if
 the byte limit is mandatory; a miss then leaves the destination untouched.
-
-Examples:
-  anpdf compress input.pdf
-  anpdf compress input.pdf -o output.pdf --mode lossless --max-bytes 3MiB
-  anpdf compress input.pdf -o output.pdf --mode lossy --max-bytes 3MB
 
 JSON schema: anpdf schema compressPdf" })]
     Compress(CompressArgs),
@@ -692,6 +755,7 @@ const SUBCOMMANDS: &[&str] = &[
     "extract",
     "split",
     "remove-pages",
+    "reorder",
     "compress",
     "extract-text",
     "render-page",
@@ -914,8 +978,27 @@ fn parse_size(spec: &str) -> Result<u64> {
     Ok(bytes as u64)
 }
 
+/// Task groups shown in the top-level command list. Commands themselves
+/// remain flat: users still type `anpdf reorder`, not a nested action path.
+const COMMAND_GROUPS: &[(&str, &[&str])] = &[
+    ("Inspect", &["inspect", "validate"]),
+    (
+        "Organize pages",
+        &["merge", "extract", "split", "remove-pages", "reorder"],
+    ),
+    ("Reduce size", &["compress"]),
+    ("Read content", &["extract-text", "render-page"]),
+    ("Protect", &["encrypt", "decrypt"]),
+    ("Serve", &["serve", "mcp"]),
+    (
+        "Discover",
+        &["operations", "schema", "completions", "help", "version"],
+    ),
+];
+
 /// Render help for `topic` (or the overview) from the clap grammar —
-/// aligned columns, wrapped lines, per-flag help; plain text.
+/// aligned columns, wrapped lines, per-flag help; plain text. The overview's
+/// command inventory is grouped by task while keeping the command syntax flat.
 fn usage(topic: Option<&str>) -> String {
     let mut command = Cli::command();
     let text = match topic {
@@ -926,7 +1009,42 @@ fn usage(topic: Option<&str>) -> String {
             .unwrap_or_else(|| Cli::command().render_help()),
         _ => command.render_help(),
     };
-    text.to_string()
+    let mut text = text.to_string();
+    if topic.is_none() || topic == Some("help") {
+        text = group_command_list(text, &command);
+    }
+    text
+}
+
+/// Replace clap's flat overview inventory with task groups, taking each
+/// one-line description from the same clap grammar rather than duplicating it.
+fn group_command_list(text: String, command: &clap::Command) -> String {
+    let Some(start) = text.find("Commands:\n") else {
+        return text;
+    };
+    let Some(options) = text[start..].find("\nOptions:").map(|i| start + i) else {
+        return text;
+    };
+    let mut grouped = String::new();
+    for (heading, names) in COMMAND_GROUPS {
+        grouped.push_str(heading);
+        grouped.push_str(":\n");
+        for name in *names {
+            let Some(subcommand) = command.get_subcommands().find(|c| c.get_name() == *name) else {
+                continue;
+            };
+            let about = subcommand
+                .get_about()
+                .map(|a| a.to_string())
+                .unwrap_or_default();
+            grouped.push_str(&format!("  {name:<14}{about}\n"));
+        }
+        grouped.push('\n');
+    }
+    while grouped.ends_with("\n\n") {
+        grouped.pop();
+    }
+    format!("{}{}{}", &text[..start], grouped, &text[options..])
 }
 
 fn is_executable_file(path: &Path) -> bool {
@@ -1021,6 +1139,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "extract",
     "split",
     "remove-pages",
+    "reorder",
     "compress",
     "extract-text",
     "render-page",
@@ -1243,7 +1362,7 @@ fn normalize_shorthand(
     // not paths and must never be rewritten as workspace files.
     let path_slot = |i: usize, raw: &str| -> bool {
         match command {
-            "extract" | "remove-pages" | "extract-text" if i == 1 => {
+            "extract" | "remove-pages" | "reorder" | "extract-text" if i == 1 => {
                 // [1] is the pages spec — except under --pages, where a
                 // non-pages-shaped value there is the output.
                 cli.pages.is_some() && !looks_like_pages(raw)
@@ -1462,7 +1581,7 @@ fn request_from_positionals(command: &str, positionals: &[String], cli: &CliArgs
                 "output": output,
             })
         }
-        "extract" | "remove-pages" => {
+        "extract" | "remove-pages" | "reorder" => {
             let (pages, tail) = match (&cli.pages, positionals.len()) {
                 (Some(_), 1) => (pages_for(None)?, None),
                 (Some(_), 2) => (
@@ -1739,6 +1858,7 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                 if positional_seen {
                     let expected = match command.as_str() {
                         "extract" | "remove-pages" => "<doc.pdf> <pages> [<out.pdf>]",
+                        "reorder" => "<doc.pdf> <ordered-pages> [<out.pdf>]",
                         "split" => "<doc.pdf> and 2..20 parts as <part.pdf=pages>",
                         "extract-text" => "<doc.pdf> <pages>",
                         "render-page" => "<doc.pdf> <page> [<out.png>]",
@@ -1858,9 +1978,12 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
     }
     macro_rules! out {
         ($x:expr) => {{
-            let x = $x;
-            cli.output = x.output;
-            cli.replace = x.replace;
+            cli.output = $x.output;
+        }};
+    }
+    macro_rules! replace {
+        ($x:expr) => {{
+            cli.replace = $x.replace;
         }};
     }
     macro_rules! preserve {
@@ -1931,6 +2054,7 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
         Cmd::Merge(a) => {
             positionals = a.inputs;
             out!(a.out);
+            replace!(a.replace);
             preserve!(a.preserve);
             common!(a.common);
         }
@@ -1940,6 +2064,7 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                 .flatten()
                 .collect();
             out!(a.out);
+            replace!(a.replace);
             preserve!(a.preserve);
             pages!(a.pages);
             common!(a.common);
@@ -1950,6 +2075,18 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                 .flatten()
                 .collect();
             out!(a.out);
+            replace!(a.replace);
+            preserve!(a.preserve);
+            pages!(a.pages);
+            common!(a.common);
+        }
+        Cmd::Reorder(a) => {
+            positionals = [a.doc, a.pages_pos, a.out_pos]
+                .into_iter()
+                .flatten()
+                .collect();
+            out!(a.out);
+            replace!(a.replace);
             preserve!(a.preserve);
             pages!(a.pages);
             common!(a.common);
@@ -1973,12 +2110,14 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                 .collect();
             out!(a.out);
             engine!(a.engine);
+            replace!(a.replace);
             cli.dpi = parse_u64(a.dpi.dpi, "--dpi expects 36..300")?;
             common!(a.common);
         }
         Cmd::Encrypt(a) => {
             positionals = [a.doc, a.out_pos].into_iter().flatten().collect();
             out!(a.out);
+            replace!(a.replace);
             preserve!(a.preserve);
             o.password_file = a.user.password_file;
             o.owner_password_file = a.owner.owner_password_file;
@@ -1987,6 +2126,7 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
         Cmd::Decrypt(a) => {
             positionals = [a.doc, a.out_pos].into_iter().flatten().collect();
             out!(a.out);
+            replace!(a.replace);
             preserve!(a.preserve);
             o.password_file = a.user.password_file;
             common!(a.common);
@@ -1994,6 +2134,7 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
         Cmd::Compress(a) => {
             positionals = [a.doc, a.out_pos].into_iter().flatten().collect();
             out!(a.flags.out);
+            cli.replace = a.flags.replace.replace;
             cli.mode = a.flags.mode;
             cli.jpeg_quality = parse_u64(
                 a.flags.jpeg_quality,
@@ -2072,6 +2213,7 @@ fn parse_action<I: Iterator<Item = String>>(args: I) -> Result<Action> {
                 | "extract"
                 | "split"
                 | "remove-pages"
+                | "reorder"
                 | "compress"
                 | "extract-text"
                 | "render-page"
@@ -2307,6 +2449,7 @@ fn id(command: &str) -> &'static str {
         "extract" => "extractPdf",
         "split" => "splitPdf",
         "remove-pages" => "removePages",
+        "reorder" => "reorderPages",
         "compress" => "compressPdf",
         "extract-text" => "extractText",
         "render-page" => "renderPage",
@@ -2484,7 +2627,8 @@ fn human_result(v: &Value, root: Option<&Path>) -> Option<String> {
             ));
             lines.push(flags.join(" · "));
         }
-        "mergePdf" | "extractPdf" | "removePages" | "encryptPdf" | "decryptPdf" => {
+        "mergePdf" | "extractPdf" | "removePages" | "reorderPages" | "encryptPdf"
+        | "decryptPdf" => {
             lines.push(format!(
                 "wrote '{}' — {} pages, {}",
                 tty_path(root, str_field(result, "path")),
@@ -2854,8 +2998,8 @@ async fn async_main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, Cli, Shell, derived_compress_output, parse_action, parse_page_list,
-        request_from_positionals, resolve_pdfium, resolve_qpdf,
+        Action, COMMAND_GROUPS, Cli, Shell, derived_compress_output, parse_action, parse_page_list,
+        request_from_positionals, resolve_pdfium, resolve_qpdf, usage,
     };
     use clap::CommandFactory;
     use serde_json::Value;
@@ -2900,6 +3044,88 @@ mod tests {
             parse_action(["inspect"].iter().copied().map(String::from)),
             Ok(Action::Run(o)) if o.request.is_none()
         ));
+    }
+
+    #[test]
+    fn overview_groups_flat_commands_by_task() {
+        let text = usage(None);
+        assert!(!text.contains("Commands:\n"));
+        let inventory = text.split("\nOptions:").next().unwrap();
+        let mut previous = 0;
+        for (heading, names) in COMMAND_GROUPS {
+            let heading_at = inventory
+                .find(&format!("{heading}:"))
+                .unwrap_or_else(|| panic!("missing help group {heading}"));
+            assert!(heading_at >= previous);
+            previous = heading_at;
+            let mut previous_name = heading_at;
+            for name in *names {
+                let row = format!("  {name:<14}");
+                assert_eq!(
+                    inventory.matches(&row).count(),
+                    1,
+                    "missing or duplicate command row {name}"
+                );
+                let at = inventory.find(&row).unwrap();
+                assert!(at > previous_name, "{name} is outside or before {heading}");
+                previous_name = at;
+            }
+        }
+        for subcommand in Cli::command().get_subcommands() {
+            let row = format!("  {:<14}", subcommand.get_name());
+            assert_eq!(
+                inventory.matches(&row).count(),
+                1,
+                "ungrouped or duplicate command {}",
+                subcommand.get_name()
+            );
+        }
+        assert!(text.contains("anpdf reorder <doc.pdf> <ordered-pages> -o <ordered.pdf>"));
+        assert!(!text.contains("anpdf pages reorder"));
+        let output = text.find("OUTPUT AND PAGE OPTIONS:").unwrap();
+        let safety = text.find("SAFETY OPTIONS:").unwrap();
+        let credential = text.find("CREDENTIAL OPTIONS:").unwrap();
+        let common = text.find("COMMON OPTIONS:").unwrap();
+        let server = text.find("SERVER OPTIONS:").unwrap();
+        assert!(output < safety && safety < credential && credential < common && common < server);
+
+        let compress = usage(Some("compress"));
+        assert!(compress.contains("--mode lossless --max-bytes 3MB --on-target-miss error"));
+        let modes = compress.find("Modes:").unwrap();
+        let output = compress.find("OUTPUT OPTIONS:").unwrap();
+        let operation = compress.find("OPERATION OPTIONS:").unwrap();
+        let safety = compress.find("SAFETY OPTIONS:").unwrap();
+        let common = compress.find("COMMON OPTIONS:").unwrap();
+        assert!(modes < output && output < operation && operation < safety && safety < common);
+        let operation_section = &compress[operation..safety];
+        assert!(operation_section.contains("--mode <mode>"));
+        assert!(operation_section.contains("--max-bytes <N>"));
+        let safety_section = &compress[safety..common];
+        assert!(safety_section.contains("--on-target-miss <behavior>"));
+        assert!(safety_section.contains("--allow-larger"));
+        assert!(safety_section.contains("--replace"));
+        assert!(safety_section.contains("--dry-run"));
+
+        let reorder = usage(Some("reorder"));
+        let output = reorder.find("OUTPUT OPTIONS:").unwrap();
+        let operation = reorder.find("OPERATION OPTIONS:").unwrap();
+        let safety = reorder.find("SAFETY OPTIONS:").unwrap();
+        let common = reorder.find("COMMON OPTIONS:").unwrap();
+        assert!(output < operation && operation < safety && safety < common);
+        assert!(reorder[operation..safety].contains("--pages <spec>"));
+        assert!(reorder[safety..common].contains("--preserve <list>"));
+
+        let encrypt = usage(Some("encrypt"));
+        let credential = encrypt.find("CREDENTIAL OPTIONS:").unwrap();
+        let safety = encrypt.find("SAFETY OPTIONS:").unwrap();
+        let common = encrypt.find("COMMON OPTIONS:").unwrap();
+        assert!(credential < safety && safety < common);
+        assert!(encrypt[credential..safety].contains("--password-file <file>"));
+
+        let serve = usage(Some("serve"));
+        let server = serve.find("SERVER OPTIONS:").unwrap();
+        let common = serve.find("COMMON OPTIONS:").unwrap();
+        assert!(server < common && serve[server..common].contains("--token-file <file>"));
     }
 
     #[test]
@@ -2999,6 +3225,29 @@ mod tests {
                 "pages": [2, 5],
                 "output": {"path": "trimmed.pdf"},
                 "preserve": {"metadata": true, "bookmarks": true, "annotations": true, "attachments": true}
+            })
+        );
+        assert_eq!(
+            run_request(&["reorder", "doc.pdf", "3,1,2", "ordered.pdf"]),
+            serde_json::json!({
+                "input": {"path": "doc.pdf"},
+                "pages": [3, 1, 2],
+                "output": {"path": "ordered.pdf"}
+            })
+        );
+        assert_eq!(
+            run_request(&[
+                "reorder",
+                "doc.pdf",
+                "--pages",
+                "2,1,3",
+                "-o",
+                "ordered.pdf"
+            ]),
+            serde_json::json!({
+                "input": {"path": "doc.pdf"},
+                "pages": [2, 1, 3],
+                "output": {"path": "ordered.pdf"}
             })
         );
         assert_eq!(
@@ -3169,6 +3418,26 @@ mod tests {
             "INVALID_REQUEST"
         );
         assert_eq!(
+            run_request(&["reorder", "doc.pdf", "x.pdf", "--pages", "3,1,2"]),
+            serde_json::json!({
+                "input": {"path": "doc.pdf"},
+                "pages": [3, 1, 2],
+                "output": {"path": "x.pdf"}
+            })
+        );
+        assert_eq!(
+            run_request(&["reorder", "doc.pdf", "--pages", "3,1,2", "-o", "1-3"]),
+            serde_json::json!({
+                "input": {"path": "doc.pdf"},
+                "pages": [3, 1, 2],
+                "output": {"path": "1-3"}
+            })
+        );
+        assert_eq!(
+            parse_err(&["reorder", "doc.pdf", "1-3", "--pages", "3,1,2"]),
+            "INVALID_REQUEST"
+        );
+        assert_eq!(
             run_request(&["remove-pages", "doc.pdf", "--pages", "5", "out.pdf"]),
             serde_json::json!({
                 "input": {"path": "doc.pdf"},
@@ -3329,6 +3598,19 @@ mod tests {
             }
             other => panic!("expected Run, got {other:?}"),
         }
+        match parse_action(
+            ["reorder", &abs, "3,1,2", &abs_out]
+                .iter()
+                .copied()
+                .map(String::from),
+        ) {
+            Ok(Action::Run(o)) => {
+                let request: Value = serde_json::from_str(&o.request.unwrap()).unwrap();
+                assert_eq!(request["pages"], serde_json::json!([3, 1, 2]));
+                assert_eq!(request["output"], serde_json::json!({"path": "out.pdf"}));
+            }
+            other => panic!("expected Run, got {other:?}"),
+        }
         // Trailing-slash destinations are directories, not files.
         let dir_out = format!("{abs}/");
         assert_eq!(
@@ -3416,6 +3698,8 @@ mod tests {
         assert_eq!(parse_page_list("1").unwrap(), vec![1]);
         assert_eq!(parse_page_list("1,3").unwrap(), vec![1, 3]);
         assert_eq!(parse_page_list("1-3,7").unwrap(), vec![1, 2, 3, 7]);
+        assert_eq!(parse_page_list("3,1,2").unwrap(), vec![3, 1, 2]);
+        assert_eq!(parse_page_list("2-3,1").unwrap(), vec![2, 3, 1]);
         assert_eq!(parse_page_list(" 2 - 4 ").unwrap(), vec![2, 3, 4]);
         for spec in ["", "a", "3-1", "1-", "-2", "1,,2"] {
             assert!(parse_page_list(spec).is_err(), "{spec}");
@@ -3561,6 +3845,7 @@ mod tests {
                 "extract",
                 "split",
                 "remove-pages",
+                "reorder",
                 "compress",
                 "completions",
                 "serve",

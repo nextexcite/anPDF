@@ -167,7 +167,9 @@ enum Capability {
 fn capability(id: &str) -> Result<Capability> {
     match id {
         "inspectPdf" => Ok(Capability::Inspect),
-        "mergePdf" | "extractPdf" | "splitPdf" | "removePages" => Ok(Capability::Transform),
+        "mergePdf" | "extractPdf" | "splitPdf" | "removePages" | "reorderPages" => {
+            Ok(Capability::Transform)
+        }
         "compressPdf" => Ok(Capability::Compress),
         "extractText" => Ok(Capability::Text),
         "renderPage" => Ok(Capability::Render),
