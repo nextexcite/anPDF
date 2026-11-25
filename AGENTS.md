@@ -1,10 +1,10 @@
 # Developing anPDF
 
-This guide applies to the repository. For **using** the installed tool on PDFs, follow the [user guide](README.md) or the [document-processing skill](.agents/skills/processing-pdfs-with-anpdf/SKILL.md). For **changing** anPDF, start with the [maintainer handoff](docs/HANDOFF.md); it owns current status and priorities.
+This guide applies to the repository. For **using** the installed tool on PDFs, follow the [user guide](README.md) or the [document-processing skill](.agents/skills/processing-pdfs-with-anpdf/SKILL.md). For **changing** anPDF, start with the [roadmap](docs/ROADMAP.md); it owns current status and priorities.
 
 ## Change the contract once
 
-- Before changing an interface or safety property, read the README, handoff, [architecture decision](docs/ADR-002.md), [protocols](docs/PROTOCOLS.md), [Forge notes](docs/FORGE.md), [qualification record](docs/QUALIFICATION.md), and [security boundaries](SECURITY.md).
+- Before changing an interface or safety property, read the README, roadmap, [architecture decision](docs/ADR-002.md), [protocols](docs/PROTOCOLS.md), [Forge notes](docs/FORGE.md), [qualification record](docs/QUALIFICATION.md), and [security boundaries](SECURITY.md).
 - Define operation semantics in `contracts/v1/openapi.json` first. Implement them in the shared Rust dispatcher (`src/lib.rs`), validation (`src/contract.rs`), and backend planner (`src/planner.rs`). Keep the CLI, HTTP, and MCP adapters thin. CLI `--dry-run` is preflight, not an operation result. MCP discovery may hide writers disallowed by session policy; the dispatcher must still enforce that policy on direct calls.
 - Use the pinned Forge generation procedure and executable probes; never hand-edit `generated/`. If the pinned archive is unavailable, report the blocker. Generated TS/MCP/Cap’n Web artifacts do not implement the running Rust adapters.
 - Keep CLI and MCP usable without Node, an account, a listener, or a resident daemon. qpdf is the qualified structural backend, PDFium the standard content provider, and PDFOxide a separate preview. Keep unsupported operations explicit in discovery and docs.
@@ -33,6 +33,6 @@ python3 tests/integration.py
 
 ## Prepare and record releases
 
-- Keep the product version in Cargo distinct from the v1 contract version. After publication, update the README, changelog, handoff and qualification record from the release artifacts, not from a planned tag. Keep historical results dated.
+- Keep the product version in Cargo distinct from the v1 contract version. After publication, update the README, changelog, roadmap and qualification record from the release artifacts, not from a planned tag. Keep historical results dated.
 - Keep generic author and committer metadata (`anPDF Contributors <contributors@anpdf.invalid>`); run the existing full-history privacy and gitleaks gates before publication. Do not weaken them or expose private metadata to satisfy local tooling.
 - Preserve third-party licenses and notices. New AGPL or dual-licensed backends need explicit compatibility and distribution review. Review provenance, SBOMs, vulnerabilities, licenses and platform evidence before publishing. Report what actually ran, what remains unverified, and the commit if one exists. A development release is not production qualification.

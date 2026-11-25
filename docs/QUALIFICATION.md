@@ -2,7 +2,7 @@
 
 Only the newest section describes the current baseline; older sections are
 historical evidence kept for audit. Status and the prioritized queue live in
-[HANDOFF.md](HANDOFF.md).
+[ROADMAP.md](ROADMAP.md).
 
 ## 0.5.0
 

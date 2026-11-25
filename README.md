@@ -66,6 +66,6 @@ For **authenticated loopback HTTP**, see [protocol setup](docs/PROTOCOLS.md) and
 
 ## Development
 
-[Contributor instructions](AGENTS.md) · [Current progress and next work](docs/HANDOFF.md) · [Release evidence](docs/QUALIFICATION.md) · [Build and release checklist](docs/BUILD.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md)
+[Contributor instructions](AGENTS.md) · [Current progress and next work](docs/ROADMAP.md) · [Release evidence](docs/QUALIFICATION.md) · [Build and release checklist](docs/BUILD.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md)
 
 Licensed under [Apache-2.0](LICENSE). Third-party notices are distributed separately.

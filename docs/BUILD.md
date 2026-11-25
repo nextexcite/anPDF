@@ -11,7 +11,7 @@ The `0.5.0` release line includes page reordering, grouped command help, opt-in 
 capability registry, default PDFium content operations, qpdf preservation reporting,
 size-targeted compression with automatic page rasterization, AES-256 encrypt/decrypt,
 and the synthetic comparison harness in `docs/BENCHMARK.md`. Status and the
-prioritized queue live in `docs/HANDOFF.md`.
+prioritized queue live in `docs/ROADMAP.md`.
 
 The Homebrew tap tracks plain `vMAJOR.MINOR.PATCH` tags. Download suffixed
 prereleases from GitHub Releases or use their versioned OCI tags directly.
