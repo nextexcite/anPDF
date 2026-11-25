@@ -642,7 +642,7 @@ def run(routine=False):
         for name,markers in [('reordered.pdf',['PAGE-C','PAGE-A','PAGE-B']),('identity-reordered.pdf',['PAGE-A','PAGE-B','PAGE-C']),('custom-reordered.pdf',['PAGE-B','PAGE-A','PAGE-C'])]:
             text=subprocess.check_output(['pdftotext',str(roots['cli']/name),'-']).decode();positions=[text.index(x) for x in markers];assert positions==sorted(positions),(name,text)
         # Pinned-backend structural outputs are deterministic regression
-        # goldens across platforms and product versions. Encryption is
+        # regression goldens for the qualified backend. Encryption is
         # intentionally excluded because its salts are random.
         golden={
             'merged.pdf':'d176bcc423950c8ebffc1054043130a9aa420a82cb95b167fab95e31536c8cb6',
