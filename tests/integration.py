@@ -475,6 +475,8 @@ def run(routine=False):
         else:
             corpus.append(('compress',{'input':{'path':'layered-fixture.pdf'},'output':{'path':'layered-result.pdf'},'mode':'layered'},'BACKEND_UNAVAILABLE'))
         corpus.append(('compress',{'input':{'path':'one.pdf'},'output':{'path':'bad-layered.pdf'},'mode':'layered','compressionLevel':2},'INVALID_REQUEST'))
+        corpus.append(('reorder',{'input':{'path':'tagged-reorder.pdf'},'pages':[2,1],'output':{'path':'tagged-reordered.pdf'}},'PRESERVATION_UNKNOWN'))
+        corpus.append(('reorder',{'input':{'path':'tagged-reorder.pdf'},'pages':[1,2],'output':{'path':'tagged-identity.pdf'}},None))
         shallow=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'three.pdf'}})]))
         deep=json.loads(subprocess.check_output([str(BIN),'inspect','--root',str(roots['cli']),'--qpdf',str(QPDF),'--request-json',json.dumps({'input':{'path':'three.pdf'},'deepCheck':True})]))
         assert any(w['code']=='STREAM_DECODE_UNCHECKED' for w in shallow['warnings'])

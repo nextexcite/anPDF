@@ -257,8 +257,10 @@ These observations are reproduced independently with qpdf JSON/stream extraction
 in the cross-surface integration suite, not general visual preservation guarantees.
 `reorderPages` requires a complete permutation: every input page exactly once, in output
 order, written to a distinct output. It neither inserts, duplicates, nor deletes pages;
-ascending order is valid. Forms, signatures, OCR and existing-text replacement remain
-unimplemented.
+ascending order is valid. Non-identity reordering currently fails closed with
+`PRESERVATION_UNKNOWN` for tagged input because qpdf does not rewrite and verify the
+logical reading-order tree; identity order remains allowed. Forms, signatures, OCR and
+existing-text replacement remain unimplemented.
 
 `compressPdf.allowLargerOutput` defaults false. If compressed bytes are not
 smaller, the already-staged validated original is committed instead. Required

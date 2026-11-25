@@ -780,7 +780,7 @@
             }
           }
         },
-        "description": "Reorder every page of one PDF into a distinct output. The pages array is the output order: each 1-based source page must appear exactly once, so reordering neither removes nor duplicates pages. The ascending order is valid. Set preserve for any aspect that must carry over; failure to verify it returns PRESERVATION_UNMET without writing."
+        "description": "Reorder every page of one PDF into a distinct output. The pages array is the output order: each 1-based source page must appear exactly once, so reordering neither removes nor duplicates pages. The ascending order is valid. Non-identity reordering of tagged input is rejected with PRESERVATION_UNKNOWN because qpdf does not currently rewrite and verify the logical reading-order tree. Set preserve for any aspect that must carry over; failure to verify it returns PRESERVATION_UNMET without writing."
       }
     },
     "/v1/compress": {

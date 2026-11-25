@@ -873,7 +873,7 @@ fn atomic_competing_outputs_and_sparse_limit() {
 
 #[test]
 fn split_destination_collision_and_rollback() {
-    struct MockSplit;
+    struct MockSplit(bool);
     impl crate::backend::Backend for MockSplit {
         fn inspect(
             &self,
@@ -912,7 +912,8 @@ fn split_destination_collision_and_rollback() {
                     "hasOutline": false,
                     "hasAttachments": false,
                     "metadata": {},
-                    "pages": page_infos
+                    "pages": page_infos,
+                    "_tagged": self.0
                 }),
                 vec![],
             ))
@@ -965,7 +966,8 @@ fn split_destination_collision_and_rollback() {
         t.path().join("existing-b.pdf"),
     )
     .unwrap();
-    let d = crate::Dispatcher::with_backend(t.path(), std::sync::Arc::new(MockSplit)).unwrap();
+    let d =
+        crate::Dispatcher::with_backend(t.path(), std::sync::Arc::new(MockSplit(false))).unwrap();
 
     // Same destination path in two parts is rejected even on dry-run.
     assert_eq!(
@@ -1090,6 +1092,26 @@ fn split_destination_collision_and_rollback() {
             "INVALID_REQUEST"
         );
         assert!(!t.path().join("bad-reorder.pdf").exists());
+    }
+    let tagged_dispatcher =
+        crate::Dispatcher::with_backend(t.path(), std::sync::Arc::new(MockSplit(true))).unwrap();
+    for (pages, expected) in [
+        (vec![3, 1, 2], Some("PRESERVATION_UNKNOWN")),
+        (vec![1, 2, 3], None),
+    ] {
+        let result = tagged_dispatcher.dispatch(
+            "reorderPages",
+            &json!({"input": {"path": "in.pdf"}, "pages": pages, "output": {"path": "tagged-reorder-out.pdf"}}),
+            false,
+            &crate::backend::Control::default(),
+        );
+        if let Some(code) = expected {
+            let error = result.unwrap_err();
+            assert_eq!(error.0, code);
+            assert!(error.message().contains("logical reading order"));
+        } else {
+            assert!(result.is_ok());
+        }
     }
     assert!(crate::contract::valid_input(
         "reorderPages",

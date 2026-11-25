@@ -603,7 +603,7 @@ enum Cmd {
     RemovePages(RemoveArgs),
     #[command(about = "Write every page in the requested output order",
         help_template = SUB_HELP_TEMPLATE,
-        after_help = "Operation: reorderPages. The order must cover every input page exactly once;\nranges expand ascending, so use commas for a custom order.\nExample: anpdf reorder report.pdf 3,1,2 -o ordered.pdf\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[3,1,2],\"output\":{\"path\":\"ordered.pdf\"}}")]
+        after_help = "Operation: reorderPages. The order must cover every input page exactly once;\nranges expand ascending, so use commas for a custom order.\nTagged inputs permit identity order only; other permutations fail closed.\nExample: anpdf reorder report.pdf 3,1,2 -o ordered.pdf\nRequest: {\"input\":{\"path\":\"doc.pdf\"},\"pages\":[3,1,2],\"output\":{\"path\":\"ordered.pdf\"}}")]
     Reorder(ReorderArgs),
     #[command(about = "Compress PDF streams, images, or eligible traced pages",
         help_template = SUB_HELP_TEMPLATE,

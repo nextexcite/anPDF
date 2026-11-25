@@ -322,6 +322,7 @@ impl Dispatcher {
         let mut paths = Vec::new();
         let mut warnings = Vec::new();
         let mut reports = Vec::new();
+        let mut tagged_inputs = Vec::new();
         let mut total_pages = 0u64;
         let total_inputs = inputs.len() as u64;
         for (n, input) in inputs.iter_mut().enumerate() {
@@ -351,6 +352,10 @@ impl Dispatcher {
             }
             if !report.is_object() {
                 return Err(Error("INTERNAL", None));
+            }
+            tagged_inputs.push(report["_tagged"] == true);
+            if let Some(map) = report.as_object_mut() {
+                map.remove("_tagged");
             }
             report["sha256"] = json!(input.hash);
             report["bytes"] = json!(input.bytes);
@@ -1095,6 +1100,16 @@ impl Dispatcher {
                 if order.len() as u64 != total_pages || order.iter().any(|page| *page > total_pages)
                 {
                     return Err(Error("INVALID_REQUEST", None));
+                }
+                let identity = (1..=total_pages).collect::<Vec<_>>();
+                if tagged_inputs.first().copied().unwrap_or(false) && *order != identity {
+                    return Err(Error(
+                        "PRESERVATION_UNKNOWN",
+                        Some(
+                            "tagged PDF logical reading order cannot be verified after reordering"
+                                .into(),
+                        ),
+                    ));
                 }
             } else if pages
                 .as_ref()
