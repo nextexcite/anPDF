@@ -44,9 +44,15 @@ node --import ./build/qualification/register-hooks.mjs build/qualification/probe
 Generation requires Node 26 and the exact archive checksum; mismatches fail.
 `cargo build` works offline from checked-in outputs and fails on contract, pin,
 output hash or generated operation-coverage drift. It does not claim to rerun Forge.
-The source-pinned tool must be rebuilt/requalified for additional platforms and a
-reviewed redistributable artifact before release. General OpenAPI fidelity and
-upstream generator regression coverage remain open gates.
+
+For plain `v0.5.0`, Forge remains a build-time generator: the checked-in outputs
+are qualified artifacts, while Node/npm and the pinned archive are not runtime
+or redistributed product components. The accepted engineering-scope residual is
+limited to the probed upstream schema-fidelity gaps above and to upstream
+generator behavior outside the canonical contract; the handwritten Rust adapters
+remain authoritative and independently validate every running request/response.
+A redistributable Forge toolchain or broader generator conformance is explicitly
+outside the 0.5.0 runtime qualification boundary.
 
 Sources: [official pinned package/build documentation](https://github.com/cloudflare/forge/blob/b8d74e2cbe41e4afaf2acaec2903add0bc11b116/packages/forge/README.md),
 [official helper source](https://github.com/cloudflare/forge/blob/b8d74e2cbe41e4afaf2acaec2903add0bc11b116/src/bin/forge/mcp/lib/src/tool.ts).

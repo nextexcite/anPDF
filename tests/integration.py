@@ -1,5 +1,5 @@
 """Real qpdf cross-surface qualification. Requires built anpdf, qpdf 12.4.2, Poppler."""
-import argparse,hashlib,importlib.util,io,json,os,pathlib,pty,shutil,socket,subprocess,sys,tempfile,time,urllib.request,urllib.error,zlib
+import argparse,hashlib,importlib.util,io,json,os,pathlib,pty,shutil,socket,struct,subprocess,sys,tempfile,time,urllib.request,urllib.error,zlib
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from pypdf.annotations import Text, Link
@@ -11,6 +11,8 @@ PDFOXIDE=os.environ.get('ANPDF_EXPECT_PDFOXIDE')=='1'
 spec=importlib.util.spec_from_file_location('fixtures',ROOT/'fixtures/generate.py');gen=importlib.util.module_from_spec(spec);spec.loader.exec_module(gen)
 
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+def progress(message):
+    if os.environ.get('ANPDF_TEST_PROGRESS'):print(message,file=sys.stderr,flush=True)
 def mcp_send(p,v):p.stdin.write(json.dumps(v)+'\n');p.stdin.flush()
 def mcp_read(p):
     line=p.stdout.readline();assert line,'MCP closed unexpectedly';return json.loads(line)
@@ -72,6 +74,41 @@ def http(port,token,path,data=None,extra=None,timeout=15):
     try:
         with urllib.request.urlopen(r,timeout=timeout) as r:return r.status,json.load(r)
     except urllib.error.HTTPError as e:return e.code,json.load(e)
+
+def write_delayed_qpdf(path,real,log,delay=1.0):
+    script=f'''#!/usr/bin/python3
+import json,os,sys,time
+with open({str(log)!r},'a') as f:f.write(json.dumps({{'pid':os.getpid(),'args':sys.argv[1:]}})+'\\n')
+time.sleep({float(delay)!r})
+os.execv({str(real)!r},[{str(real)!r}]+sys.argv[1:])
+'''
+    path.write_text(script)
+    path.chmod(0o700)
+
+def wait_qpdf_log(log,timeout=10):
+    deadline=time.time()+timeout
+    while time.time()<deadline:
+        if log.exists():
+            rows=[json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+            work=[row for row in rows if row.get('args')!=['--version']]
+            if work:return work
+        time.sleep(.02)
+    raise AssertionError('delayed qpdf wrapper did not start')
+
+def pid_alive(pid):
+    try:os.kill(pid,0);return True
+    except (ProcessLookupError,PermissionError):return False
+
+def race_cli(root,bin,qpdf,request,mutate,expected):
+    before=digest(root/request['input']['path'])
+    proc=subprocess.Popen([str(bin),'extract','--root',str(root),'--qpdf',str(qpdf),'--request-json',json.dumps(request)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    wait_qpdf_log(root/'qpdf-log.jsonl')
+    mutate()
+    out,err=proc.communicate(timeout=15)
+    error=json.loads(err)['error']
+    assert not out and error['code']==expected,(proc.returncode,out,err)
+    assert digest(root/request['input']['path'])!=before or expected!='INPUT_CHANGED'
+    return error
 
 def build_pdf(objs):
     res=bytearray(b'%PDF-1.7\n');offs=[0]
@@ -570,6 +607,7 @@ def run(routine=False):
                         assert bounds and all(abs(a-b)<=1 for a,b in zip(bounds,(14,28,56,98))),bounds
             for surface,root in roots.items():
                 for name,h in originals[surface].items():assert digest(root/name)==h,(n,'input changed',name)
+        progress('corpus-complete')
         for root in roots.values():
             assert (root/'page.png').exists()==bool(engines)
             if PDFOXIDE:
@@ -774,6 +812,7 @@ def run(routine=False):
             env=dict(os.environ);env.pop('ANPDF_QPDF',None);env['PATH']=f"{QPDF.parent}:/usr/bin:/bin"
             r=subprocess.run([str(BIN),'inspect','--root',str(roots['cli']),'--request-json',json.dumps({'input':{'path':'one.pdf'}})],capture_output=True,text=True,env=env)
             assert r.returncode==0 and json.loads(r.stdout)['result']['pageCount']==1,r.stderr
+        progress('surface-controls')
         # Surface controls: request files, stdin, dry-run, invalid flags and malformed JSON.
         req={'input':{'path':'three.pdf'},'pages':[1],'output':{'path':'dry.pdf'}}
         result=subprocess.run([str(BIN),'extract','--root',str(roots['cli']),'--dry-run'],input=json.dumps(req),text=True,capture_output=True);assert result.returncode==0 and json.loads(result.stdout)['dryRun'];assert not (roots['cli']/'dry.pdf').exists()
@@ -889,7 +928,87 @@ def run(routine=False):
         assert b'USAGE' in out and b'anpdf inspect' in out,out
         r=sh(['inspect','--root',str(roots['cli']),'--qpdf',str(QPDF)],input=json.dumps({'input':{'path':'one.pdf'}})+'\n');assert r.returncode==0 and json.loads(r.stdout)['result']['pageCount']==1,r.stderr
         mcp_send(mcp,{'jsonrpc':'2.0','id':100,'method':'tools/call','params':{'name':'fillForms','arguments':{}}});assert mcp_read(mcp)['error']['code']==-32602
-        print(json.dumps({'crossSurfaceCases':len(corpus)-len(cli_only),'cliOnlyCases':len(cli_only),'surfaces':3,'inputPreservation':'passed','pageOrder':'Poppler text verified','httpPolicy':'passed','mcpLifecycle':'passed'}))
+
+        progress('race-tests')
+        # Deterministic in-flight filesystem races: the delayed structural
+        # backend opens a window after staging but before publication.
+        for case,mutate,expected in [
+            ('input-mutation',lambda r:(r/'three.pdf').write_bytes((r/'three.pdf').read_bytes()+b'race-mutation'),'INPUT_CHANGED'),
+            ('output-creation',lambda r:(r/'raced-output.pdf').write_bytes(b'attacker'),'OUTPUT_EXISTS'),
+            ('output-symlink',lambda r:((r/'victim.pdf').write_bytes(b'victim'),(r/'raced-output.pdf').symlink_to('victim.pdf')),'ACCESS_DENIED'),
+        ]:
+            race=base/('race-'+case);race.mkdir();(race/'three.pdf').write_bytes(gen.pdf(['RACE-A','RACE-B','RACE-C']))
+            wrapper=race/'qpdf-delayed';write_delayed_qpdf(wrapper,QPDF,race/'qpdf-log.jsonl')
+            req={'input':{'path':'three.pdf'},'pages':[1],'output':{'path':'raced-output.pdf'}}
+            error=race_cli(race,BIN,wrapper,req,lambda r=race,m=mutate:m(r),expected)
+            assert error['code']==expected
+            if case=='output-creation':assert (race/'raced-output.pdf').read_bytes()==b'attacker'
+            if case=='output-symlink':assert (race/'victim.pdf').read_bytes()==b'victim' and (race/'raced-output.pdf').is_symlink()
+
+        progress('mcp-cancel-tests')
+        # MCP cancellation reaches the active worker; EOF cancels active work
+        # during shutdown. Both leave no output and no backend process behind.
+        def cancel_mcp_run(eof=False):
+            root=base/('mcp-eof-cancel' if eof else 'mcp-notify-cancel');root.mkdir(exist_ok=True)
+            (root/'three.pdf').write_bytes(gen.pdf(['CANCEL-A','CANCEL-B','CANCEL-C']))
+            wrapper=root/'qpdf-delayed';write_delayed_qpdf(wrapper,QPDF,root/'qpdf-log.jsonl')
+            proc=subprocess.Popen([str(BIN),'mcp','--root',str(root),'--qpdf',str(wrapper)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            try:
+                mcp_send(proc,{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'cancel-test','version':'1'}}});assert mcp_read(proc)['result']['protocolVersion']=='2025-11-25'
+                mcp_send(proc,{'jsonrpc':'2.0','method':'notifications/initialized'})
+                req={'input':{'path':'three.pdf'},'pages':[1],'output':{'path':'cancelled.pdf'}}
+                mcp_send(proc,{'jsonrpc':'2.0','id':9,'method':'tools/call','params':{'name':'extractPdf','arguments':req}})
+                rows=wait_qpdf_log(root/'qpdf-log.jsonl')
+                if eof:
+                    proc.stdin.close()
+                    proc.wait(timeout=15)
+                    assert proc.returncode==0 and not proc.stderr.read(),'MCP EOF shutdown stderr leakage'
+                else:
+                    mcp_send(proc,{'jsonrpc':'2.0','method':'notifications/cancelled','params':{'requestId':9}})
+                    response=mcp_read(proc)
+                    assert response['id']==9 and response['result']['isError'],response
+                    assert json.loads(response['result']['content'][0]['text'])['error']['code']=='TIMEOUT',response
+                    mcp_send(proc,{'jsonrpc':'2.0','id':10,'method':'ping'});assert mcp_read(proc)['id']==10
+                    proc.stdin.close();proc.wait(timeout=10);assert proc.returncode==0 and not proc.stderr.read()
+                deadline=time.time()+5
+                while time.time()<deadline and any(pid_alive(row['pid']) for row in rows):time.sleep(.05)
+                assert not any(pid_alive(row['pid']) for row in rows),rows
+                assert not (root/'cancelled.pdf').exists()
+            finally:
+                if proc.poll() is None:
+                    proc.kill();proc.wait(timeout=5)
+        cancel_mcp_run(False);cancel_mcp_run(True)
+
+        progress('http-disconnect-test')
+        # A raw HTTP client reset during backend execution cancels the worker,
+        # publishes nothing, preserves input bytes, and leaves the server healthy.
+        root=base/'http-disconnect';root.mkdir();(root/'three.pdf').write_bytes(gen.pdf(['HTTP-A','HTTP-B','HTTP-C']))
+        wrapper=root/'qpdf-delayed';write_delayed_qpdf(wrapper,QPDF,root/'qpdf-log.jsonl')
+        disconnect_token_file=root/'credential';disconnect_token_file.write_text(token);disconnect_token_file.chmod(0o600)
+        with socket.socket() as unused:unused.bind(('127.0.0.1',0));disconnect_port=unused.getsockname()[1]
+        disconnect_server=subprocess.Popen([str(BIN),'serve','--root',str(root),'--qpdf',str(wrapper),'--port',str(disconnect_port),'--token-file',str(disconnect_token_file)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        try:
+            for _ in range(100):
+                try:http(disconnect_port,token,'/v1/operations');break
+                except (OSError,urllib.error.URLError):time.sleep(.05)
+            else:raise AssertionError('disconnect-test HTTP server did not start')
+            before=digest(root/'three.pdf')
+            req={'input':{'path':'three.pdf'},'pages':[1],'output':{'path':'disconnected.pdf'}}
+            body=json.dumps(req).encode()
+            raw=socket.create_connection(('127.0.0.1',disconnect_port),timeout=5)
+            raw.sendall(b'POST /v1/extract HTTP/1.1\r\nHost: 127.0.0.1:'+str(disconnect_port).encode()+b'\r\nAuthorization: Bearer '+token.encode()+b'\r\nContent-Type: application/json\r\nContent-Length: '+str(len(body)).encode()+b'\r\nConnection: close\r\n\r\n'+body)
+            rows=wait_qpdf_log(root/'qpdf-log.jsonl')
+            raw.setsockopt(socket.SOL_SOCKET,socket.SO_LINGER,struct.pack('ii',1,0));raw.close()
+            deadline=time.time()+5
+            while time.time()<deadline and any(pid_alive(row['pid']) for row in rows):time.sleep(.05)
+            assert not any(pid_alive(row['pid']) for row in rows),rows
+            time.sleep(.2)
+            assert not (root/'disconnected.pdf').exists(),'HTTP disconnect published output'
+            assert digest(root/'three.pdf')==before
+            assert http(disconnect_port,token,'/v1/operations')[0]==200
+        finally:
+            disconnect_server.terminate();disconnect_server.wait(timeout=10)
+        print(json.dumps({'crossSurfaceCases':len(corpus)-len(cli_only),'cliOnlyCases':len(cli_only),'surfaces':3,'inputPreservation':'passed','pageOrder':'Poppler text verified','httpPolicy':'passed','mcpLifecycle':'passed','transportCancellation':'passed','filesystemRaces':'passed'}))
     finally:
         mcp.stdin.close();mcp.wait(timeout=10);assert not mcp.stderr.read(),'MCP stderr leakage'
         server.terminate();server.wait(timeout=10);assert not server.stdout.read(),'HTTP stdout leakage'

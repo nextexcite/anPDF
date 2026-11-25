@@ -836,6 +836,48 @@ fn process_timeout_and_output_limits() {
     );
 }
 #[test]
+#[cfg(target_os = "macos")]
+fn process_rss_limit_kills_memory_exceeding_worker() {
+    use crate::backend::{Backend, Control, Qpdf};
+    use std::time::{Duration, Instant};
+    let root = tempfile::tempdir().unwrap();
+    let exe = root.path().join("memory-backend");
+    let pid_file = root.path().join("worker.pid");
+    fs::write(
+        &exe,
+        format!(
+            "#!/usr/bin/python3
+import ctypes,os,time,pathlib
+pathlib.Path({:?}).write_text(str(os.getpid()))
+x=ctypes.create_string_buffer(96*1024*1024)
+ctypes.memset(x,1,96*1024*1024)
+time.sleep(10)
+",
+            pid_file.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&exe, fs::Permissions::from_mode(0o700)).unwrap();
+    let q = Qpdf {
+        executable: exe.clone(),
+        exact: false,
+        as_limit: 32 * 1024 * 1024,
+        cpu_scale: 1,
+    };
+    let start = Instant::now();
+    assert_eq!(
+        q.inspect(&exe, None, &Control::default(), true)
+            .unwrap_err()
+            .0,
+        "LIMIT_EXCEEDED"
+    );
+    assert!(start.elapsed() < Duration::from_secs(3));
+    let pid: i32 = fs::read_to_string(pid_file).unwrap().parse().unwrap();
+    let alive = unsafe { libc::kill(pid, 0) } == 0;
+    assert!(!alive, "memory-exceeding worker process survived");
+}
+
+#[test]
 fn atomic_competing_outputs_and_sparse_limit() {
     use std::sync::Arc;
     let root = tempfile::tempdir().unwrap();

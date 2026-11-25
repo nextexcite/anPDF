@@ -4,6 +4,19 @@ Only the newest section describes the current baseline; older sections are
 historical evidence kept for audit. Status and the prioritized queue live in
 [HANDOFF.md](HANDOFF.md).
 
+## Unreleased 0.5.0 candidate evidence
+
+The reorder/grouped-help feature branch was merged after PR review and hosted
+non-full CI. The in-progress qualification branch additionally passed locally
+on macOS arm64: format, Clippy, 41 unit tests, debug build, pinned Forge
+regeneration/probes, the official TypeScript MCP client probe (11 tools), and
+the full cross-surface integration corpus. That run completed 154 cross-surface
+cases across CLI, HTTP and MCP with input preservation, Poppler page-order
+verification, HTTP policy and MCP lifecycle checks; it also passed deterministic
+input/output filesystem-race rejection, MCP cancellation/EOF worker cleanup,
+and raw HTTP disconnect cancellation. These are local engineering results, not
+yet release evidence.
+
 ## 0.4.4
 
 [v0.4.4](https://github.com/nextexcite/anPDF/releases/tag/v0.4.4) was published on 2026-11-24 after the [release workflow](https://github.com/nextexcite/anPDF/actions/runs/45366810966) passed. The GHCR `0.4.4` index digest was `sha256:41081c3e31c8ae12f529e51f32c6312e2dc808b92bd91df7fca33b4e3614f207`; it contains the release builds for Linux amd64 and arm64. The downloaded macOS arm64 tarball, published checksum, and updated Homebrew formula agreed on SHA-256 `9c85e6c97ad4b6dce2f4e4f75a882bcb70e31f86d79c7d3e254f893dbd2f3a46`.
@@ -173,18 +186,12 @@ evidence, not a rendering/signing product feature.
 
 Remaining release gates:
 
-- Full native `cargo test` + cross-surface corpus execution directly on `linux/arm64` (release builds currently verify `linux/arm64` via OCI build + restricted `containers/smoke.sh` + Syft/Grype audit) and formal OS/backend license sign-off.
-- macOS virtual-address vs RSS limits (`RLIMIT_AS` is rejected by XNU; `proc_pidinfo` enforces a 768 MiB RSS limit during polling, alongside kernel `RLIMIT_CPU`, `RLIMIT_FSIZE`, and `RLIMIT_NOFILE`).
-- Reproducible redistributable Forge artifact and wider generator/schema regression
-  qualification; generated schema fidelity remains insufficient for validation.
-- Extended malformed/object/stream bombs, namespace mutation/race stress, HTTP
-  disconnect cancellation, MCP cancellation negotiation with external clients,
-  complex widget appearances and incremental/expired-signature variants.
-- Cross-version golden PDFs and additional visual/page semantics; independent
-  structural success does not establish every PDF's visual correctness.
-- Full dependency vulnerability review and target-specific OS/backend license review.
-  The native Rust license manifest inventories 128 components and retains legal notices;
-  OS/backend/build-tool artifacts require separate review.
+- Full native `cargo test` + cross-surface corpus execution directly on hosted `linux/arm64`; the workflow lane is defined but has not yet produced green evidence.
+- macOS virtual-address vs RSS limits are implemented in the worker watchdog (`proc_pidinfo` RSS polling plus kernel CPU/file-size/file-count limits), but remain subject to final hosted macOS evidence review.
+- Forge's runtime boundary is now explicit in `docs/FORGE.md`: checked-in generated artifacts are qualified build outputs, Node/npm are build-time-only, and the handwritten Rust adapters independently validate runtime requests/responses. The accepted residual is limited to the executable probe's documented upstream schema-fidelity gaps.
+- Deterministic input/output filesystem races, MCP cancellation/EOF cleanup, raw HTTP disconnect cancellation, malformed object/stream cases and compression bombs now have passing local evidence in the unreleased candidate branch. Complex widget appearances and incremental/expired-signature variants remain out of scope because form filling and signing remain unsupported.
+- Cross-version golden PDFs and additional visual/page semantics; independent structural success does not establish every PDF's visual correctness.
+- Formal target-specific OS/backend/build-tool license review remains. The OCI audit now records Debian license counts and fix-state/severity vulnerability counts separately from the pass/fail fixable High/Critical gate, but a release run must still capture and review those artifacts.
 
 Check scripts remain in the repository. Raw execution logs and sensitive scan
 particulars are not public-bound.
