@@ -641,6 +641,19 @@ def run(routine=False):
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'trimmed.pdf'),'-']).decode();assert 'PAGE-B' in text and 'PAGE-A' not in text and 'PAGE-C' not in text
         for name,markers in [('reordered.pdf',['PAGE-C','PAGE-A','PAGE-B']),('identity-reordered.pdf',['PAGE-A','PAGE-B','PAGE-C']),('custom-reordered.pdf',['PAGE-B','PAGE-A','PAGE-C'])]:
             text=subprocess.check_output(['pdftotext',str(roots['cli']/name),'-']).decode();positions=[text.index(x) for x in markers];assert positions==sorted(positions),(name,text)
+        # Pinned-backend structural outputs are deterministic regression
+        # regression goldens for the qualified backend. Encryption is
+        # intentionally excluded because its salts are random.
+        golden={
+            'merged.pdf':'d176bcc423950c8ebffc1054043130a9aa420a82cb95b167fab95e31536c8cb6',
+            'subset.pdf':'4ac6aeaa2f0700f83f93015220ebcd6efaacb775855d5b851ff8600891de2e29',
+            'trimmed.pdf':'4ac6aeaa2f0700f83f93015220ebcd6efaacb775855d5b851ff8600891de2e29',
+            'reordered.pdf':'69fdbc2d70a4e300df4bc81be6f570aa3a3edaeb35ac366c0e40275cb21c73cb',
+            'identity-reordered.pdf':'375909b64c61c6dcfeadd2ba4799b44f96bc4e94c8797d7397ebf6853ca9d8f0',
+            'custom-reordered.pdf':'d4efbe6e01e8a02aaa09bb66a87074c770a59b9beba87512c9b6a0e2ef1bff55',
+        }
+        for surface,root in roots.items():
+            for name,want in golden.items():assert digest(root/name)==want,(surface,name,digest(root/name))
         # The decrypt round trip restores the semantic page content.
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'opened.pdf'),'-']).decode();assert 'PAGE-ONE' in text
         text=subprocess.check_output(['pdftotext',str(roots['cli']/'compressed.pdf'),'-']).decode();assert [text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C']]==sorted(text.index(s) for s in ['PAGE-A','PAGE-B','PAGE-C'])

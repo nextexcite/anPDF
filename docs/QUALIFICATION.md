@@ -14,8 +14,55 @@ the full cross-surface integration corpus. That run completed 154 cross-surface
 cases across CLI, HTTP and MCP with input preservation, Poppler page-order
 verification, HTTP policy and MCP lifecycle checks; it also passed deterministic
 input/output filesystem-race rejection, MCP cancellation/EOF worker cleanup,
-and raw HTTP disconnect cancellation. These are local engineering results, not
-yet release evidence.
+and raw HTTP disconnect cancellation. The same local run passed deterministic
+pinned-backend byte-for-byte structural goldens for merge, extract/subset,
+remove-pages, and three reorder permutations. These are local engineering
+results, not yet release evidence.
+
+A manual hosted full-qualification dispatch at merge commit `d5e406a` (workflow
+run [45614123002](https://github.com/nextexcite/anPDF/actions/runs/45614123002))
+completed successfully on 2026-11-25. Its green lanes were `native`,
+`pdfium (ubuntu-26.04)`, `pdfium (ubuntu-26.04-arm)`, `pdfium (macos-26)`,
+`oci-smoke`, `forge-output`, and `privacy`. This is the first successful hosted
+native Linux arm64 full-corpus evidence and also exercised the hosted macOS unit
+suite containing the RSS-limit test. That validation run predates the later
+release-candidate documentation/version commit and the deterministic golden
+assertions, so it does not replace the exact-tree qualification embedded in the
+0.5.0 release workflow.
+
+Engineering license/advisory inventory for the same candidate inputs:
+
+- Apart from the intentional root package version edits, the dependency and
+  packaging inputs are unchanged from v0.4.4: Cargo dependency resolution,
+  `containers/Dockerfile`, the qpdf/PDFium/Forge pins,
+  `license-manifest.json`, and `THIRD_PARTY_LICENSES` are byte-identical.
+- `build/licenses.py --check` passed for the default graph (196 native Rust
+  components) and for the all-features inventory basis with `pdfoxide` (287
+  native Rust components). The Rust expressions resolve only to the reviewed
+  permissive set already represented in `license-manifest.json`; legal notice
+  hashes are retained in `THIRD_PARTY_LICENSES`.
+- qpdf 12.4.2 is Apache-2.0. Standard releases dynamically load the pinned
+  `pdfium-binaries` chromium/8165 archive and retain its upstream notice bundle.
+  The OCI image copies the qpdf, PDFium, Rust and Debian copyright/notice files.
+- The v0.4.4 per-architecture OCI scans are a reference baseline for the
+  unchanged OS/runtime dependency posture, not evidence for 0.5.0 images:
+  amd64 had 269 SBOM packages/81 Debian entries/186 Rust
+  crates; arm64 had 267/81/184. Both had no missing expected Debian packages,
+  no uninventoried Rust crates, no AGPL-like licenses, and no fixable
+  High/Critical vulnerability. Total matches were 81 High and 64 Medium on each
+  architecture: 27 High and 12 Medium were `not-fixed`; 54 High and 52 Medium
+  were `wont-fix`. This is evidence tracking, not a vulnerability-free claim.
+- Debian copyright metadata includes GPL/LGPL-family expressions from the base
+  runtime package set. The packages are unmodified Debian binaries with their
+  copyright files retained, but this engineering inventory is not formal legal
+  sign-off or a copyleft/source-offer opinion.
+- Build-time TypeScript qualification uses 36 locked npm package entries: 24
+  Apache-2.0, 10 MIT, and 2 ISC. Node/npm, Forge, TypeScript, MCP client/server,
+  and Cap'n Web packages are build-time qualification tools, not product runtime
+  dependencies or embedded release components.
+- The 0.5.0 release workflow must regenerate these scans from the exact release
+  images and retain the per-architecture reports before publication evidence is
+  cited.
 
 ## 0.4.4
 
@@ -186,12 +233,11 @@ evidence, not a rendering/signing product feature.
 
 Remaining release gates:
 
-- Full native `cargo test` + cross-surface corpus execution directly on hosted `linux/arm64`; the workflow lane is defined but has not yet produced green evidence.
-- macOS virtual-address vs RSS limits are implemented in the worker watchdog (`proc_pidinfo` RSS polling plus kernel CPU/file-size/file-count limits), but remain subject to final hosted macOS evidence review.
+- Hosted native Linux arm64 and macOS full lanes passed in validation run 45614123002, including their unit/integration suites. Exact 0.5.0-tree evidence still depends on the release workflow rerun.
 - Forge's runtime boundary is now explicit in `docs/FORGE.md`: checked-in generated artifacts are qualified build outputs, Node/npm are build-time-only, and the handwritten Rust adapters independently validate runtime requests/responses. The accepted residual is limited to the executable probe's documented upstream schema-fidelity gaps.
 - Deterministic input/output filesystem races, MCP cancellation/EOF cleanup, raw HTTP disconnect cancellation, malformed object/stream cases and compression bombs now have passing local evidence in the unreleased candidate branch. Complex widget appearances and incremental/expired-signature variants remain out of scope because form filling and signing remain unsupported.
-- Cross-version golden PDFs and additional visual/page semantics; independent structural success does not establish every PDF's visual correctness.
-- Formal target-specific OS/backend/build-tool license review remains. The OCI audit now records Debian license counts and fix-state/severity vulnerability counts separately from the pass/fail fixable High/Critical gate, but a release run must still capture and review those artifacts.
+- Deterministic pinned-backend structural goldens have passing local evidence and will run in the exact-tree release workflow. Broader cross-version backend comparison remains outside the exact-qpdf release boundary; independent structural success still does not establish every PDF's visual correctness.
+- Engineering target-specific license/advisory inventory is recorded above. Formal legal sign-off, especially copyleft/source-offer treatment of GPL/LGPL-family Debian metadata, remains an explicit residual risk requiring owner acceptance, not an engineering conclusion. The OCI audit records Debian license counts and fix-state/severity vulnerability counts separately from the pass/fail fixable High/Critical gate, and the release run must still capture those exact artifacts.
 
 Check scripts remain in the repository. Raw execution logs and sensitive scan
 particulars are not public-bound.
