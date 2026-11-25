@@ -23,11 +23,12 @@ For input/output mounts and non-root permissions, see the [container instruction
 
 ## Try it on a document
 
-From a private working directory containing your own `report.pdf` (at least three pages):
+From a private working directory containing your own `report.pdf` (at least three pages). The `reorder` line requires a current source build; it is not in the published v0.4.4 package:
 
 ```sh
 anpdf inspect report.pdf
 anpdf extract report.pdf 1,3 -o selected.pdf
+anpdf reorder report.pdf 3,1,2 -o ordered.pdf
 anpdf compress report.pdf -o compact.pdf --mode lossless --max-bytes 3MB --on-target-miss error
 ```
 
@@ -40,15 +41,16 @@ The last command writes a new file **only if lossless compression meets the limi
 | Keep selected pages | `extract` | `extractPdf` |
 | Write multiple named page subsets | `split` | `splitPdf` |
 | Drop selected pages | `remove-pages` | `removePages` |
+| Write every page in a new order | `reorder` | `reorderPages` |
 | Reduce file size | `compress` | `compressPdf` |
 | Read embedded text, not OCR | `extract-text` | `extractText` |
 | Save a page as a PNG | `render-page` | `renderPage` |
 | Write a password-protected copy | `encrypt` | `encryptPdf` |
 | Write a plaintext copy with a known password | `decrypt` | `decryptPdf` |
 
-Page selections are ascending, unique, and 1-based. For page operations, check the `preservation` report or require the aspects you need; for example, merging does not combine every input's bookmarks. For password protection, use the hidden terminal prompt or a private password file (`chmod 600`), never a literal password in arguments. An intentionally empty open password does **not** keep contents confidential. See [operation details and limitations](docs/PROTOCOLS.md).
+Page selections are 1-based. Extract, remove-pages, extract-text, and each split part use ascending unique selections; split parts may overlap. Reorder is different: its list is the output order, a full permutation containing every source page exactly once, written to a distinct output. The ascending order is valid. For page operations, check the `preservation` report or require the aspects you need; for example, merging does not combine every input's bookmarks. For password protection, use the hidden terminal prompt or a private password file (`chmod 600`), never a literal password in arguments. An intentionally empty open password does **not** keep contents confidential. See [operation details and limitations](docs/PROTOCOLS.md).
 
-**Not implemented:** page reordering, form filling, signing, OCR, and existing-text replacement. Inspection is not a signature-trust, PDF/A, or malware verdict.
+**Not implemented:** form filling, signing, OCR, and existing-text replacement. Inspection is not a signature-trust, PDF/A, or malware verdict.
 
 ## Scripts and agents
 

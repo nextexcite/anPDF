@@ -15,13 +15,14 @@ schemas. The discovery wall time is an upper bound, not every job's deadline.
 | extractPdf | extract | POST /v1/extract | extractPdf |
 | splitPdf | split | POST /v1/split | splitPdf |
 | removePages | remove-pages | POST /v1/remove-pages | removePages |
+| reorderPages | reorder | POST /v1/reorder-pages | reorderPages |
 | compressPdf | compress | POST /v1/compress | compressPdf |
 | extractText | extract-text | POST /v1/extract-text | extractText |
 | renderPage | render-page | POST /v1/render-page | renderPage |
 | encryptPdf | encrypt | POST /v1/encrypt | encryptPdf |
 | decryptPdf | decrypt | POST /v1/decrypt | decryptPdf |
 
-CLI discovery/utility commands: `operations`, `schema <operationId>`, `completions <bash|zsh|fish>`, `help [command]` / `--help` / `-h`, `version` / `--version` / `-V`.
+CLI discovery/utility commands: `operations`, `schema <operationId>`, `completions <bash|zsh|fish>`, `help [command]` / `--help` / `-h`, `version` / `--version` / `-V`. Top-level help groups commands by task and shared options by purpose for discovery, but the command syntax remains flat (`anpdf reorder`, not a nested action family). Per-command help puts operation semantics and examples first, then separates output, operation-specific, credential, safety/server, and shared backend/transport options.
 When neither `--qpdf` nor `ANPDF_QPDF` is set, the CLI/server checks standard system paths (`/opt/qpdf/bin/qpdf`, `/usr/bin/qpdf`, `/opt/homebrew/bin/qpdf`, `/usr/local/bin/qpdf`) and trusted `PATH` directories (absolute, owned by the effective user or root, without group/other write bits).
 
 For a single-output agent task, start MCP with a runner-owned publication policy:
@@ -35,11 +36,11 @@ anpdf mcp --root ./workspace --output-only compact.pdf \
 - `--output-operation` optionally limits writes to one single-output operation ID. For example, `extractPdf` cannot substitute a smaller subset for a `compressPdf` job. Read-only operations are unaffected.
 - `--output-byte-ceiling` optionally caps the bytes actually published. An oversize artifact returns `LIMIT_EXCEEDED` without publishing, even if the caller omits its target or requests best effort. Strict compression still returns `SIZE_TARGET_UNMET` when it misses its own target.
 
-In a restricted session, `tools/list` omits split and any writer excluded by `--output-operation`. Read-only tools remain listed, and the available writers describe the startup policy without changing their request or response schemas. Discovery is not enforcement: a direct call to a hidden writer still goes through the publication policy. An unrestricted session still lists all ten operations.
+In a restricted session, `tools/list` omits split and any writer excluded by `--output-operation`. Read-only tools remain listed, and the available writers describe the startup policy without changing their request or response schemas. Discovery is not enforcement: a direct call to a hidden writer still goes through the publication policy. An unrestricted session still lists all eleven operations.
 
 This is not an input allowlist or a sandbox: expose only the intended input workspace and give the agent no other way to write there. Use a `lossless-only` build as well when downgrades are forbidden.
 
-CLI operations also accept positional shorthand instead of `--request-json`/`--request-file`; both forms produce the same contract request and identical envelopes. `<pages>` is a comma list of 1-based numbers and `a-b` ranges.
+CLI operations also accept positional shorthand instead of `--request-json`/`--request-file`; both forms produce the same contract request and identical envelopes. `<pages>` is a comma list of 1-based numbers and `a-b` ranges. For `reorder`, `<ordered-pages>` is output order rather than a selection: it must cover every input page exactly once. `3,1,2` is valid for reorder but invalid for extract, whose selection remains strictly increasing. Ranges expand ascending, so use explicit comma-separated numbers for non-ascending orders. The normal distinct-destination policy applies.
 
 | CLI shorthand | Request fields |
 |---|---|
@@ -48,13 +49,14 @@ CLI operations also accept positional shorthand instead of `--request-json`/`--r
 | `anpdf extract <doc.pdf> <pages> [-o <out.pdf>]` | `input`, `pages`, `output` |
 | `anpdf split <doc.pdf> <out=pages>...` | `input`, `parts` (2–20 `output=pages` pairs) |
 | `anpdf remove-pages <doc.pdf> <pages> [-o <out.pdf>]` | `input`, `pages`, `output` |
+| `anpdf reorder <doc.pdf> <ordered-pages> [-o <out.pdf>]` | `input`, `pages` (full permutation in output order), `output` |
 | `anpdf compress <doc.pdf> [<out.pdf>]` | `input`, `output` (defaults to `<name>-compressed.pdf`; `--mode`, `--jpeg-quality`, `--level`, `--max-bytes`, `--on-target-miss`, `--allow-larger` map to `mode`, `jpegQuality`, `compressionLevel`, `maxOutputBytes`, `onTargetMiss`, `allowLargerOutput`) |
 | `anpdf extract-text <doc.pdf> <pages>` | `input`, `pages` (+`--engine`) |
 | `anpdf render-page <doc.pdf> <page> [-o <image>]` | `input`, `page`, `output` (+`--dpi`, `--engine`) |
 | `anpdf encrypt <doc.pdf> [<out.pdf>]` | `input`, `output` (defaults to `<name>-encrypted.pdf`) |
 | `anpdf decrypt <doc.pdf> [<out.pdf>]` | `input`, `output` (defaults to `<name>-decrypted.pdf`) |
 
-Prefer `-o` for single-output shorthand, especially for merge: without it the final positional is the destination. `--replace` sets `output.replaceExisting` (for every part in split): it can overwrite a distinct destination, never an input, and does not grant any permission to change fidelity. `--preserve metadata,bookmarks,annotations,attachments` (or `all`) maps to `preserve`. `--` terminates flag parsing for dash-leading filenames. `extract`, `remove-pages` and `extract-text` also accept `--pages <spec>` in place of the positional. Shorthand paths may be absolute or `~/`-prefixed: the invocation's workspace root then adapts to the files' common canonical directory, while `--root` pins it and refuses inputs outside. JSON requests (inline, file, stdin, HTTP, MCP) always stay workspace-relative to `--root`.
+Prefer `-o` for single-output shorthand, especially for merge: without it the final positional is the destination. `--replace` sets `output.replaceExisting` (for every part in split): it can overwrite a distinct destination, never an input, and does not grant any permission to change fidelity. `--preserve metadata,bookmarks,annotations,attachments` (or `all`) maps to `preserve`. `--` terminates flag parsing for dash-leading filenames. `extract`, `remove-pages`, `reorder` and `extract-text` also accept `--pages <spec>` in place of the positional. Shorthand paths may be absolute or `~/`-prefixed: the invocation's workspace root then adapts to the files' common canonical directory, while `--root` pins it and refuses inputs outside. JSON requests (inline, file, stdin, HTTP, MCP) always stay workspace-relative to `--root`.
 
 Error messages may append a detail suffix (` — <detail>`) naming the failing field (a JSON pointer like `/input/path`), flag or file; the envelope schema and codes are unchanged. On a terminal, a bare operation or parse-stage misuse prints usage instead of a JSON envelope or blocking on stdin, successful results print a short plain summary (the pretty envelope via `--json`), and errors print `anpdf <command>: <reason>` leading with the specific detail; non-terminal stdout/stderr keep the canonical envelopes byte-identical, and piped stdin still supplies the request. Non-UTF-8 arguments fail with `INVALID_REQUEST`.
 
@@ -215,7 +217,7 @@ read. Signed inputs are rejected; forms/XFA ride through intact.
 
 ## Preservation and compression
 
-`mergePdf`, `extractPdf`, `splitPdf`, and `removePages` use the first input as
+`mergePdf`, `extractPdf`, `splitPdf`, `removePages`, and `reorderPages` use the first input as
 qpdf's primary document, never `--empty`. Optional closed-object `preserve`
 accepts `metadata`, `bookmarks`, `annotations`, and `attachments` booleans,
 default false. False means best effort, not removal. True requires full carryover
@@ -225,7 +227,7 @@ statuses: `preserved`, `omitted` (also unverified), or `absent`.
 
 Comparisons use complete Info dictionary/XMP hashes, normalized outline structure
 and mapped destinations, attachment descriptors and content hashes, and the sum
-of optional per-page `annotationCount` over selected pages. Optional inspect
+of optional per-page `annotationCount` over the pages included in each output. Optional inspect
 `hasMetadata` and `preservationEvidence` support these comparisons without changing
 backend trait signatures. Missing evidence is conservative: omitted, not success.
 Secondary merge metadata differing from output is omitted; secondary bookmarks
@@ -246,13 +248,16 @@ outlines to pages 1 and 3, embedded text file, text/link annotations on pages 1/
 |---|---|---|---|---|
 | Extract pages 1,3 | Primary retained | Both retained, destinations remapped to 1,2 | Primary retained | 1,1 |
 | Remove pages 1,3 | Primary retained | Entries retained but destinations no longer in page tree; reported omitted | Primary retained | 0 (absent on selected page) |
+| Reorder pages 3,1,2 | Primary retained | Both retained, destinations remapped to 2,1 | Primary retained | 1,1,0 |
 | Merge two enriched documents | Primary retained; differing secondary metadata omitted | Primary only; secondary omitted | Primary only; secondary omitted | 1,0,1,1,0,1 |
 | Merge enriched primary + plain page | Primary retained | Primary retained | Primary retained | 1,0,1,0 |
 | Merge plain primary + enriched secondary | Secondary omitted | Secondary omitted | Secondary omitted | 0,1,0,1 |
 
 These observations are reproduced independently with qpdf JSON/stream extraction
 in the cross-surface integration suite, not general visual preservation guarantees.
-Page reordering, forms, signatures, OCR and existing-text replacement remain
+`reorderPages` requires a complete permutation: every input page exactly once, in output
+order, written to a distinct output. It neither inserts, duplicates, nor deletes pages;
+ascending order is valid. Forms, signatures, OCR and existing-text replacement remain
 unimplemented.
 
 `compressPdf.allowLargerOutput` defaults false. If compressed bytes are not
